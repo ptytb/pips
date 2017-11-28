@@ -50,9 +50,7 @@ Function Add-Buttons {
     Add-Button "Execute" { Execute-PipAction }
 }
 
-Function Generate-Form {
-    Add-Buttons
-
+Function Add-ComboBox {
     Function Make-PipActionItem($name, $code) {
         $action = New-Object psobject -Property @{Name=$name}
         $action | Add-Member ScriptMethod ToString { $this.Name } -Force
@@ -69,13 +67,79 @@ Function Generate-Form {
     $actionList.DataSource = $actionsModel
     $actionList.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
     $Script:actionsList = $actionList
-    Add-TopWidget($actionList)
+    Add-TopWidget($actionList)    
+}
 
-    $virtualenvCheckBox = New-Object System.Windows.Forms.CheckBox
-    $virtualenvCheckBox.Text = 'virtualenv'
-    $Script:virtualenvCheckBox = $virtualenvCheckBox
-    Add-TopWidget($virtualenvCheckBox)
+Function Add-CheckBox($text, $code) {
+    $checkBox = New-Object System.Windows.Forms.CheckBox
+    $checkBox.Text = $text
+    $checkBox.Add_Click($code)
+    Add-TopWidget($checkBox)
+    return ($checkBox)
+}
 
+Function Toggle-VirtualEnv ($state) {
+    Function Guess-EnvPath ($fileName) {
+        $paths = @('.\env\Scripts\', '.\Scripts\')
+        foreach ($tryPath in $paths) {
+            if (Test-Path ($tryPath + $fileName)) {
+                return ($tryPath + $fileName)
+            }
+        }
+        return $null
+    }
+
+    $pipEnvActivate = Guess-EnvPath 'activate.ps1'
+    $pipEnvDeactivate = Guess-EnvPath 'deactivate.bat'
+
+    if ($pipEnvActivate -eq $null -or $pipEnvDeactivate -eq $null) {
+        Write-PipLog 'virtualenv not found. Run me from where "pip -m virtualenv env" command has been executed.'
+        return
+    }
+
+    if ($state) {
+        $env:_OLD_VIRTUAL_PROMPT = "$env:PROMPT"
+        $env:_OLD_VIRTUAL_PYTHONHOME = "$env:PYTHONHOME"
+        $env:_OLD_VIRTUAL_PATH = "$env:PATH"
+
+        Write-PipLog ('Activating: ' + $pipEnvActivate)
+        . $pipEnvActivate
+    }
+    else {
+        Write-PipLog ('Deactivating: "' + $pipEnvDeactivate + '" and unsetting environment')
+        
+        &$pipEnvDeactivate
+
+        $env:VIRTUAL_ENV = ''
+        
+        if ($env:_OLD_VIRTUAL_PROMPT) {
+            $env:PROMPT = "$env:_OLD_VIRTUAL_PROMPT"
+            $env:_OLD_VIRTUAL_PROMPT = ''
+        }
+
+        if ($env:_OLD_VIRTUAL_PYTHONHOME) {
+            $env:PYTHONHOME = "$env:_OLD_VIRTUAL_PYTHONHOME"
+            $env:_OLD_VIRTUAL_PYTHONHOME = ''
+        }
+
+        if ($env:_OLD_VIRTUAL_PATH) {
+            $env:PATH = "$env:_OLD_VIRTUAL_PATH"
+            $env:_OLD_VIRTUAL_PATH = ''
+        }
+    }
+
+    #Write-PipLog "PROMPT=" $env:PROMPT
+    #Write-PipLog "PYTHONHOME=" $env:PYTHONHOME
+    #Write-PipLog "PATH=" $env:PATH
+}
+
+Function Generate-Form {
+    Add-Buttons
+
+    Add-ComboBox
+
+    $Script:virtualenvCheckBox = Add-CheckBox 'virtualenv' { Toggle-VirtualEnv $Script:virtualenvCheckBox.Checked }
+    
     $dataGridView = New-Object System.Windows.Forms.DataGridView
     $dataGridView.Location = New-Object Drawing.Point 7,40
     $dataGridView.Size = New-Object Drawing.Point 800,450
@@ -124,7 +188,6 @@ Function Generate-Form {
         $args.Add('--isolated')
     }
 
-    #$pip_list = (pip3 list --outdated --format=columns)
     $pip_list = (&pip3 $args)
     $packages = $pip_list | Select-Object -Skip 2 | % { $_ -replace '\s+', ' ' }  | ConvertFrom-Csv -Header $header -Delimiter ' '
     $Script:procInfo = $packages
