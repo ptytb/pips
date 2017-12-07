@@ -243,6 +243,9 @@ Function Execute-PipAction($action) {
             Write-PipLog $result
        }
     }
+
+    Write-PipLog "----"
+    Write-PipLog "Finished ${action.Name}"
 }
 
 Generate-Form
