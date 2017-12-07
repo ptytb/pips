@@ -20,6 +20,8 @@ $form.Size = New-Object Drawing.Point 830, 840
 $form.topmost = $false
 $form.Icon = [system.drawing.icon]::ExtractAssociatedIcon($python_path)
 
+$formLoaded = $false
+
 Function Write-PipLog() {
     foreach ($obj in $args) {
         $logView.AppendText("$obj")
@@ -66,7 +68,7 @@ Function Add-ComboBox {
     $actionList = New-Object System.Windows.Forms.ComboBox
     $actionList.DataSource = $actionsModel
     $actionList.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-    $Script:actionsList = $actionList
+    $Script:actionList = $actionList
     Add-TopWidget($actionList)    
 }
 
@@ -79,6 +81,10 @@ Function Add-CheckBox($text, $code) {
 }
 
 Function Toggle-VirtualEnv ($state) {
+    if (! $Script:formLoaded) {
+    	return
+    }
+
     Function Guess-EnvPath ($fileName) {
         $paths = @('.\env\Scripts\', '.\Scripts\')
         foreach ($tryPath in $paths) {
@@ -158,7 +164,7 @@ Function Generate-Form {
     $Script:logView = $logView
     $form.Controls.Add($logView)
     
-  #  $form.Add_Load({ Get-PythonPackages })
+    $form.Add_Load({ $Script:formLoaded = $true })
     $form.ShowDialog()
 }
 
@@ -184,7 +190,7 @@ Function Generate-Form {
     $args.Add('list')
     $args.Add('--outdated')
     $args.Add('--format=columns')
-    if ($virtualenvCheckBox.Checked) {
+    if ($Script:virtualenvCheckBox.Checked) {
         $args.Add('--isolated')
     }
 
@@ -224,11 +230,11 @@ Function Execute-PipAction($action) {
     for ($i = 0; $i -lt $dataGridView.RowCount; $i++) {
        if ($dataGridView.Rows[$i].Cells['Update'].Value -eq $true) {
             $package = $arrayModel[$i]
-            $action = $actionsModel[$actionList.SelectedIndex]
+            $action = $Script:actionsModel[$actionList.SelectedIndex]
             Write-PipLog $action.Name ' ' $package.Package
 
             $args = New-Object System.Collections.ArrayList
-            if ($virtualenvCheckBox.Checked) {
+            if ($Script:virtualenvCheckBox.Checked) {
                 $args.add('--isolated')
             }
             $args.Add($package.Package)
