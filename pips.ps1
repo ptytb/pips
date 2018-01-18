@@ -45,24 +45,32 @@ Function Add-Button ($name, $handler) {
 }
 
 Function Add-Buttons {
-    Add-Button "Refresh" { Get-PythonPackages }
-    Add-Button "All" { Select-PipPackages($true) }
-    Add-Button "None" { Select-PipPackages($false) }
+    Add-Button "Check Updates" { Get-PythonPackages }
+    Add-Button "Select All" { Select-PipPackages($true) }
+    Add-Button "Select None" { Select-PipPackages($false) }
     Add-Button "Check Deps" { Check-PipDependencies }
-    Add-Button "Execute" { Execute-PipAction }
+    Add-Button "Execute:" { Execute-PipAction }
 }
 
 Function Add-ComboBox {
-    Function Make-PipActionItem($name, $code) {
-        $action = New-Object psobject -Property @{Name=$name}
+    Function Make-PipActionItem($name, $code, $validation) {
+        $action = New-Object psobject -Property @{Name=$name; Validation=$validation}
         $action | Add-Member ScriptMethod ToString { $this.Name } -Force
         $action | Add-Member ScriptMethod Execute $code
         return $action
     }
 
     $actionsModel = New-Object System.Collections.ArrayList
-    $actionsModel.Add( (Make-PipActionItem 'Show'   {return (&pip show       $args)}) )
-    $actionsModel.Add( (Make-PipActionItem 'Update' {return (&pip install -U $args)}) )
+
+    $actionsModel.Add( (Make-PipActionItem 'Show'      {return (&pip show       $args)} $null ) )
+
+    $actionsModel.Add( (Make-PipActionItem 'Update'    {return (&pip install -U $args)} `
+        'Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' ) )
+
+    $actionsModel.Add( (Make-PipActionItem 'Download'  {return (&pip download   $args)} 'Successfully downloaded ' ) )
+
+    $actionsModel.Add( (Make-PipActionItem 'Uninstall' {return (&pip uninstall  $args)} 'Successfully uninstalled ' ) )
+
     $Script:actionsModel = $actionsModel
 
     $actionList = New-Object System.Windows.Forms.ComboBox
@@ -154,6 +162,9 @@ Function Generate-Form {
     $dataGridView.ColumnHeadersVisible = $true
     $dataGridView.RowHeadersVisible = $false
     $dataGridView.ReadOnly = $false
+    $dataGridView.AllowUserToResizeRows = $false
+    $dataGridView.AllowUserToResizeColumns = $false
+    $dataGridView.AutoSizeColumnsMode = [System.Windows.Forms.DataGridViewAutoSizeColumnsMode]::AllCells
     $Script:dataGridView = $dataGridView
     $form.Controls.Add($dataGridView)
 
@@ -161,9 +172,27 @@ Function Generate-Form {
     $logView.Location = New-Object Drawing.Point 7,500
     $logView.Size = New-Object Drawing.Point 800,280
     $logView.ReadOnly = $true
+    $logView.Multiline = $true
+    $logView.Font = New-Object System.Drawing.Font("Consolas", 11)
     $Script:logView = $logView
     $form.Controls.Add($logView)
+
+    Function Highlight-LogFragment() {
+        $rowIndex = $Script:dataGridView.CurrentRow.Index
+        $row = $Script:dataGridView.Rows[$rowIndex]
+
+        $Script:logView.SelectAll()
+        $Script:logView.SelectionBackColor = $Script:logView.BackColor
+
+        if (Get-Member -inputobject $row -name "LogFrom" -Membertype Properties) {
+            $Script:logView.Select($row.LogFrom, $row.LogTo)
+            $Script:logView.SelectionBackColor = [Drawing.Color]::Yellow
+            $Script:logView.ScrollToCaret()
+        }
+    }
     
+    $dataGridView.Add_CellMouseClick({Highlight-LogFragment})
+
     $form.Add_Load({ $Script:formLoaded = $true })
     $form.ShowDialog()
 }
@@ -184,7 +213,7 @@ Function Generate-Form {
     $DataGridView.Columns.Add($Column1) 
 
     $arrayModel = New-Object System.Collections.ArrayList
-    $header = ("Package", "Version", "Latest", "Type")
+    $header = ("Package", "Installed", "Latest", "Type", "Status")
 
     $args = New-Object System.Collections.ArrayList
     $args.Add('list')
@@ -231,6 +260,8 @@ Function Execute-PipAction($action) {
        if ($dataGridView.Rows[$i].Cells['Update'].Value -eq $true) {
             $package = $arrayModel[$i]
             $action = $Script:actionsModel[$actionList.SelectedIndex]
+            
+            Write-PipLog ""
             Write-PipLog $action.Name ' ' $package.Package
 
             $args = New-Object System.Collections.ArrayList
@@ -240,12 +271,25 @@ Function Execute-PipAction($action) {
             $args.Add($package.Package)
             $result = $action.Execute($args)
 
+            $logFrom = $Script:logView.TextLength 
             Write-PipLog $result
+            $logTo = $Script:logView.TextLength - $logFrom
+            $dataGridView.Rows[$i] | Add-Member -MemberType NoteProperty -Name LogFrom -Value $logFrom
+            $dataGridView.Rows[$i] | Add-Member -MemberType NoteProperty -Name LogTo -Value $logTo
+
+            if ($result -match ($action.Validation + $package.Package)) {
+                 $dataGridView.Rows[$i].Cells['Status'].Value = "OK"
+            } else {
+                 $dataGridView.Rows[$i].Cells['Status'].Value = "Failed"
+            }
        }
     }
 
-    Write-PipLog "----"
-    Write-PipLog "Finished ${action.Name}"
+    Write-PipLog ''
+    Write-PipLog '----'
+    Write-PipLog 'All tasks finished'
+    Write-PipLog '----'
+    Write-PipLog ''
 }
 
 Generate-Form
