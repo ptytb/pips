@@ -7,18 +7,12 @@ Function Get-Bin($command) {
 $python_path = Get-Bin 'python'
 $pip_path = Get-Bin 'pip'
 
-$pos = 5
+$lastWidgetLeft = 5
 $dataGridView = $null
 $logView = $null
 $arrayModel = $null
 $actionsModel = $null
 $virtualenvCheckBox = $null
-
-$form = New-Object Windows.Forms.Form
-$form.Text = "pip package browser"
-$form.Size = New-Object Drawing.Point 830, 840
-$form.topmost = $false
-$form.Icon = [system.drawing.icon]::ExtractAssociatedIcon($python_path)
 
 $formLoaded = $false
 
@@ -31,10 +25,10 @@ Function Write-PipLog() {
 }
 
 Function Add-TopWidget($widget) {
-    $widget.Location = New-Object Drawing.Point $pos,15
+    $widget.Location = New-Object Drawing.Point $lastWidgetLeft,15
     $widget.size = New-Object Drawing.Point 90,23
-    $form.Controls.Add($widget)
-    $Script:pos = $pos + 100
+    $Script:form.Controls.Add($widget)
+    $Script:lastWidgetLeft = $lastWidgetLeft + 100
 }
 
 Function Add-Button ($name, $handler) {
@@ -62,14 +56,17 @@ Function Add-ComboBox {
 
     $actionsModel = New-Object System.Collections.ArrayList
 
-    $actionsModel.Add( (Make-PipActionItem 'Show'      {return (&pip show       $args)} $null ) )
+    $actionsModel.Add( (Make-PipActionItem 'Show'      {return (&pip show       $args)} `
+        '.*' ) )
 
     $actionsModel.Add( (Make-PipActionItem 'Update'    {return (&pip install -U $args)} `
         'Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' ) )
 
-    $actionsModel.Add( (Make-PipActionItem 'Download'  {return (&pip download   $args)} 'Successfully downloaded ' ) )
+    $actionsModel.Add( (Make-PipActionItem 'Download'  {return (&pip download   $args)} `
+        'Successfully downloaded ' ) )
 
-    $actionsModel.Add( (Make-PipActionItem 'Uninstall' {return (&pip uninstall  $args)} 'Successfully uninstalled ' ) )
+    $actionsModel.Add( (Make-PipActionItem 'Uninstall' {return (&pip uninstall  $args)} `
+        'Successfully uninstalled ' ) )
 
     $Script:actionsModel = $actionsModel
 
@@ -147,12 +144,22 @@ Function Toggle-VirtualEnv ($state) {
     #Write-PipLog "PATH=" $env:PATH
 }
 
+Function Generate-FormInstall {
+    
+}
+
 Function Generate-Form {
+    $form = New-Object Windows.Forms.Form
+    $form.Text = "pip package browser"
+    $form.Size = New-Object Drawing.Point 830, 840
+    $form.topmost = $false
+    $form.Icon = [system.drawing.icon]::ExtractAssociatedIcon($python_path)
+    $Script:form = $form
+
     Add-Buttons
-
     Add-ComboBox
-
     $Script:virtualenvCheckBox = Add-CheckBox 'virtualenv' { Toggle-VirtualEnv $Script:virtualenvCheckBox.Checked }
+    Add-Button "Install..." { Generate-FormInstall }
     
     $dataGridView = New-Object System.Windows.Forms.DataGridView
     $dataGridView.Location = New-Object Drawing.Point 7,40
@@ -234,7 +241,7 @@ Function Generate-Form {
         $dataGridView.Columns[$i].ReadOnly = $true
     }
 
-    $form.refresh()    
+    $Script:form.refresh()    
     Write-PipLog 'Package list updated.'
 }
 
@@ -244,14 +251,27 @@ Function Select-PipPackages($value) {
     }
 }
 
+Function Set-Unchecked($index) {
+    return $datagridview.Rows[$index].Cells['Update'].Value = $false
+}
+
+Function Tidy-Output($text) {
+    $result = ($text -replace '(\.?\s*$)', "`n")
+    return $result
+}
+
 Function Check-PipDependencies {
     Write-PipLog 'Checking dependencies...'
 
     $result = (pip3 check)
+    $result = Tidy-Output $result
+    
     if ($result.StartsWith('No broken')) {
-        Write-PipLog "OK", $result
+        Write-PipLog "OK"
+        Write-PipLog $result
     } else {
-        Write-PipLog "NOT OK", $result
+        Write-PipLog "NOT OK"
+        Write-PipLog $result
     }
 }
 
@@ -272,13 +292,14 @@ Function Execute-PipAction($action) {
             $result = $action.Execute($args)
 
             $logFrom = $Script:logView.TextLength 
-            Write-PipLog $result
+            Write-PipLog (Tidy-Output $result)
             $logTo = $Script:logView.TextLength - $logFrom
-            $dataGridView.Rows[$i] | Add-Member -MemberType NoteProperty -Name LogFrom -Value $logFrom
-            $dataGridView.Rows[$i] | Add-Member -MemberType NoteProperty -Name LogTo -Value $logTo
+            $dataGridView.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $logFrom
+            $dataGridView.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
 
             if ($result -match ($action.Validation + $package.Package)) {
                  $dataGridView.Rows[$i].Cells['Status'].Value = "OK"
+                 Set-Unchecked $i
             } else {
                  $dataGridView.Rows[$i].Cells['Status'].Value = "Failed"
             }
