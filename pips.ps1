@@ -35,6 +35,10 @@ Function Add-TopWidget($widget) {
     $Script:lastWidgetLeft = $lastWidgetLeft + 100
 }
 
+Function Add-HorizontalSpacer() {
+    $Script:lastWidgetLeft = $lastWidgetLeft + 100
+}
+
 Function NewLine-TopLayout() {
     $Script:lastWidgetTop  = $Script:lastWidgetTop + $widgetLineHeight + 5
     $Script:lastWidgetLeft = 5
@@ -69,7 +73,7 @@ Function Add-Buttons {
     Add-Button "Execute:" { Execute-PipAction }
 }
 
-Function Add-ComboBox {
+Function Add-ComboBoxActions {
     Function Make-PipActionItem($name, $code, $validation) {
         $action = New-Object psobject -Property @{Name=$name; Validation=$validation}
         $action | Add-Member ScriptMethod ToString { $this.Name } -Force
@@ -90,6 +94,36 @@ Function Add-ComboBox {
 
     $actionsModel.Add( (Make-PipActionItem 'Uninstall' {return (&pip uninstall  $args)} `
         'Successfully uninstalled ' ) )
+
+    $Script:actionsModel = $actionsModel
+
+    $actionList = New-Object System.Windows.Forms.ComboBox
+    $actionList.DataSource = $actionsModel
+    $actionList.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    $Script:actionList = $actionList
+    Add-TopWidget($actionList)    
+}
+
+Function Find-Interpreters() {
+    return @("Python 3.6")
+}
+
+Function Add-ComboBoxInterpreters {
+    $interpreters = Find-Interpreters
+
+    Function Make-PipActionItem($name, $code, $validation) {
+        $action = New-Object psobject -Property @{Name=$name; Validation=$validation}
+        $action | Add-Member ScriptMethod ToString { $this.Name } -Force
+        $action | Add-Member ScriptMethod Execute $code
+        return $action
+    }
+
+    $actionsModel = New-Object System.Collections.ArrayList
+
+    foreach ($interpreter in $interpreters) {
+        $actionsModel.Add( (Make-PipActionItem $interpreter      {return (&pip show       $args)} `
+            '.*' ) )
+        }
 
     $Script:actionsModel = $actionsModel
 
@@ -180,7 +214,7 @@ Function Generate-Form {
     $Script:form = $form
 
     Add-Buttons
-    Add-ComboBox
+    Add-ComboBoxActions
     $Script:virtualenvCheckBox = Add-CheckBox 'virtualenv' { Toggle-VirtualEnv $Script:virtualenvCheckBox.Checked }
     Add-Button "Search..." { Clear-Rows; Generate-FormInstall }
 
@@ -189,17 +223,33 @@ Function Generate-Form {
     Add-Label "Filter results:"
     Add-Input {
         param($input)
+        
+        if ($Script:dataGridView.CurrentRow) {
+            $selectedRow = $Script:dataGridView.CurrentRow.DataBoundItem.Row
+            $Script:dataGridView.ClearSelection()
+        }
+
         $searchText = $input.Text
         $query = "Package LIKE '%{0}%'" -f $searchText
         if ($searchText.Length -gt 0) {
             $Script:dataModel.DefaultView.RowFilter = $query
         } else {
             $Script:dataModel.DefaultView.RowFilter = $null
-        }        
-        
-        #$Script:dataGridView.Refresh()
-        #$Script:dataGridView.Update()
+        }
+
+        if ($selectedRow) {
+            foreach ($vRow in $dataGridView.Rows) {
+                if ($vRow.DataBoundItem.Row -eq $selectedRow) {
+                    $vRow.Selected = $true
+                    break
+                }
+            }
+        }
     }
+
+    Add-HorizontalSpacer
+    Add-Label "Interpreter:"
+    Add-ComboBoxInterpreters
     
     $dataGridView = New-Object System.Windows.Forms.DataGridView
     $dataGridView.Location = New-Object Drawing.Point 7,($Script:lastWidgetTop + $Script:widgetLineHeight)
@@ -214,43 +264,27 @@ Function Generate-Form {
     $dataGridView.AutoSizeColumnsMode = [System.Windows.Forms.DataGridViewAutoSizeColumnsMode]::AllCells
     
     $dataModel = New-Object System.Data.DataTable
+    $dataGridView.DataSource = $null
     $dataGridView.DataSource = $dataModel
     $Script:dataModel = $dataModel
 
-    if ($dataGridView.columncount -gt 0) {
-#        $dataGridView.DataSource = $null
-#        $dataGridView.Columns.RemoveAt(0) 
-    }
-    
-
     foreach ($c in $header) {
         if ($c -eq "Update") {
-            #$Column = New-Object System.Windows.Forms.DataGridViewCheckBoxColumn
             $column = New-Object System.Data.DataColumn $c, ([bool])
         } else {
-            #$Column = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
             $column = New-Object System.Data.DataColumn $c, ([string])
             $column.ReadOnly = $true
         }
-        #$Column.width = 100
-        #$Column.name = $c    
-        #$DataGridView.Columns.Add($Column)
-        
         $dataModel.Columns.Add($column)
     }
 
-    #for ($i = 1; $i -lt $dataGridView.ColumnCount; $i++) {
-    #    $dataGridView.Columns[$i].ReadOnly = $true
-    #}
-
-    $arrayModel = New-Object System.Collections.ArrayList
+    $Script:arrayModel = New-Object System.Collections.ArrayList
 
     $Script:dataGridView = $dataGridView
-    $form.Controls.Add($dataGridView)
-    
+    $form.Controls.Add($dataGridView)    
 
     $logView = New-Object System.Windows.Forms.RichTextBox
-    $logView.Location = New-Object Drawing.Point 7,500
+    $logView.Location = New-Object Drawing.Point 7,520
     $logView.Size = New-Object Drawing.Point 800,280
     $logView.ReadOnly = $true
     $logView.Multiline = $true
@@ -259,8 +293,11 @@ Function Generate-Form {
     $form.Controls.Add($logView)
 
     Function Highlight-LogFragment() {
-        $rowIndex = $Script:dataGridView.CurrentRow.Index
-        $row = $Script:dataGridView.Rows[$rowIndex]
+        if ($Script:dataModel.Rows.Count -eq 0) {
+            return
+        }
+        
+        $row = $Script:dataGridView.CurrentRow.DataBoundItem.Row
 
         $Script:logView.SelectAll()
         $Script:logView.SelectionBackColor = $Script:logView.BackColor
@@ -273,7 +310,6 @@ Function Generate-Form {
     }
     
     $dataGridView.Add_CellMouseClick({Highlight-LogFragment})
-
     $form.Add_Load({ $Script:formLoaded = $true })
     $form.ShowDialog()
 }
@@ -298,15 +334,14 @@ Function Generate-Form {
     $Script:procInfo = $packages
     $arrayModel.AddRange($procInfo)
     $Script:arrayModel = $arrayModel
-    #$dataGridView.DataSource = $arrayModel
     
     for ($n = 0; $n -lt $procInfo.Count; $n++) {
-        $row = $dataGridView.DataSource.NewRow()        
+        $row = $dataModel.NewRow()        
         $row['Package'] = $arrayModel[$n].Package
         $row['Installed'] = $arrayModel[$n].Installed
         $row['Latest'] = $arrayModel[$n].Latest
         $row['Type'] = $arrayModel[$n].Type
-        $dataGridView.DataSource.Rows.Add($row)
+        $dataModel.Rows.Add($row)
     }
 
     $Script:form.refresh()
@@ -314,13 +349,13 @@ Function Generate-Form {
 }
 
 Function Select-PipPackages($value) {
-    for ($i = 0; $i -lt $dataGridView.RowCount; $i++) {
-       $datagridview.Rows[$i].Cells['Update'].Value = $value
+    for ($i = 0; $i -lt $dataModel.Rows.Count; $i++) {
+       $dataModel.Rows[$i].Update = $value
     }
 }
 
 Function Set-Unchecked($index) {
-    return $datagridview.Rows[$index].Cells['Update'].Value = $false
+    return $dataModel.Rows[$index].Update = $false
 }
 
 Function Tidy-Output($text) {
@@ -329,10 +364,7 @@ Function Tidy-Output($text) {
 }
 
 Function Clear-Rows() {
-    $count = $dataModel.Rows.Count
-    for ($i = 0; $i -lt $count; $i++) {
-        $Script:dataModel.Rows[0].Delete()
-    }
+    $Script:dataModel.Clear()
 }
 
 Function Check-PipDependencies {
@@ -351,8 +383,8 @@ Function Check-PipDependencies {
 }
 
 Function Execute-PipAction($action) {
-    for ($i = 0; $i -lt $dataGridView.RowCount; $i++) {
-       if ($dataGridView.Rows[$i].Cells['Update'].Value -eq $true) {
+    for ($i = 0; $i -lt $dataModel.Rows.Count; $i++) {
+       if ($dataModel.Rows[$i].Update -eq $true) {
             $package = $arrayModel[$i]
             $action = $Script:actionsModel[$actionList.SelectedIndex]
             
@@ -369,15 +401,17 @@ Function Execute-PipAction($action) {
             $logFrom = $Script:logView.TextLength 
             Write-PipLog (Tidy-Output $result)
             $logTo = $Script:logView.TextLength - $logFrom
-            $dataGridView.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $logFrom
-            $dataGridView.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
+            $dataModel.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $logFrom
+            $dataModel.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
 
+            $dataModel.Columns['Status'].ReadOnly = $false
             if ($result -match ($action.Validation + $package.Package)) {
-                 $dataGridView.Rows[$i].Cells['Status'].Value = "OK"
+                 $dataModel.Rows[$i].Status = "OK"
                  Set-Unchecked $i
             } else {
-                 $dataGridView.Rows[$i].Cells['Status'].Value = "Failed"
+                 $dataModel.Rows[$i].Status = "Failed"
             }
+            $dataModel.Columns['Status'].ReadOnly = $true
        }
     }
 
