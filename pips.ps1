@@ -17,8 +17,9 @@ $actionsModel = $null
 $virtualenvCheckBox = $null
 $header = ("Update", "Package", "Installed", "Latest", "Type", "Status")
 $csv_header = ("Package", "Installed", "Latest", "Type", "Status")
-
 $formLoaded = $false
+Generate-Form
+
 
 Function Write-PipLog() {
     foreach ($obj in $args) {
@@ -28,9 +29,9 @@ Function Write-PipLog() {
     $logView.ScrollToCaret()
 }
 
-Function Add-TopWidget($widget) {
+Function Add-TopWidget($widget, $span=1) {
     $widget.Location = New-Object Drawing.Point $lastWidgetLeft,$lastWidgetTop
-    $widget.size = New-Object Drawing.Point 90,$widgetLineHeight
+    $widget.size = New-Object Drawing.Point ($span*100-5),$widgetLineHeight
     $Script:form.Controls.Add($widget)
     $Script:lastWidgetLeft = $lastWidgetLeft + 100
 }
@@ -48,20 +49,20 @@ Function Add-Button ($name, $handler) {
     $button = New-Object Windows.Forms.Button
     $button.Text = $name
     $button.Add_Click($handler)
-    Add-TopWidget($button)
+    Add-TopWidget $button
 }
 
 Function Add-Label ($name) {
     $label = New-Object Windows.Forms.Label
     $label.Text = $name
     $label.TextAlign = [System.Drawing.ContentAlignment]::MiddleRight
-    Add-TopWidget($label)
+    Add-TopWidget $label
 }
 
 Function Add-Input ($handler) {
     $input = New-Object Windows.Forms.TextBox
     $input.Add_TextChanged({ $handler.Invoke( @($Script:input) ) }.GetNewClosure())
-    Add-TopWidget($input)
+    Add-TopWidget $input
 }
 
 
@@ -82,18 +83,19 @@ Function Add-ComboBoxActions {
     }
 
     $actionsModel = New-Object System.Collections.ArrayList
+    $Add = { param($a) $actionsModel.Add($a) | Out-Null }
 
-    $actionsModel.Add( (Make-PipActionItem 'Show'      {return (&pip show       $args)} `
-        '.*' ) )
+    & $Add (Make-PipActionItem 'Show'      {return (&pip show       $args)} `
+        '.*' ) 
 
-    $actionsModel.Add( (Make-PipActionItem 'Update'    {return (&pip install -U $args)} `
-        'Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' ) )
+    & $Add (Make-PipActionItem 'Update'    {return (&pip install -U $args)} `
+        'Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' )
 
-    $actionsModel.Add( (Make-PipActionItem 'Download'  {return (&pip download   $args)} `
-        'Successfully downloaded ' ) )
+    & $Add (Make-PipActionItem 'Download'  {return (&pip download   $args)} `
+        'Successfully downloaded ' )
 
-    $actionsModel.Add( (Make-PipActionItem 'Uninstall' {return (&pip uninstall  $args)} `
-        'Successfully uninstalled ' ) )
+    & $Add (Make-PipActionItem 'Uninstall' {return (&pip uninstall  $args)} `
+        'Successfully uninstalled ' )
 
     $Script:actionsModel = $actionsModel
 
@@ -104,14 +106,23 @@ Function Add-ComboBoxActions {
     Add-TopWidget($actionList)    
 }
 
-Function Find-Interpreters() {
-    return @("Python 3.6")
+Function Find-Interpreters {
+    $list = (where.exe 'python')
+    $items = New-Object System.Collections.ArrayList
+
+    foreach ($path in $list) {
+        $arch = Test-is64Bit $path
+        $hint = "[{0}] {1}" -f $arch.FileType,$path
+        $items.Add($hint) | Out-Null
+    }
+
+    return $items
 }
 
 Function Add-ComboBoxInterpreters {
     $interpreters = Find-Interpreters
 
-    Function Make-PipActionItem($name, $code, $validation) {
+    Function Make-PipActionItem($name, $code) {
         $action = New-Object psobject -Property @{Name=$name; Validation=$validation}
         $action | Add-Member ScriptMethod ToString { $this.Name } -Force
         $action | Add-Member ScriptMethod Execute $code
@@ -119,19 +130,19 @@ Function Add-ComboBoxInterpreters {
     }
 
     $actionsModel = New-Object System.Collections.ArrayList
+    $Add = { param($a) $actionsModel.Add($a) | Out-Null }
 
-    foreach ($interpreter in $interpreters) {
-        $actionsModel.Add( (Make-PipActionItem $interpreter      {return (&pip show       $args)} `
-            '.*' ) )
-        }
+    for ($i = 0; $i -lt $interpreters.Count; $i++) {
+        & $Add (Make-PipActionItem $interpreters[$i] {return (&pip show       $args)} )
+    }
 
-    $Script:actionsModel = $actionsModel
+    #$Script:actionsModel = $actionsModel
 
     $actionList = New-Object System.Windows.Forms.ComboBox
     $actionList.DataSource = $actionsModel
     $actionList.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-    $Script:actionList = $actionList
-    Add-TopWidget($actionList)    
+    #$Script:actionList = $actionList
+    Add-TopWidget $actionList 4
 }
 
 Function Add-CheckBox($text, $code) {
@@ -285,7 +296,7 @@ Function Generate-Form {
 
     $logView = New-Object System.Windows.Forms.RichTextBox
     $logView.Location = New-Object Drawing.Point 7,520
-    $logView.Size = New-Object Drawing.Point 800,280
+    $logView.Size = New-Object Drawing.Point 800,270
     $logView.ReadOnly = $true
     $logView.Multiline = $true
     $logView.Font = New-Object System.Drawing.Font("Consolas", 11)
@@ -422,4 +433,31 @@ Function Execute-PipAction($action) {
     Write-PipLog ''
 }
 
-Generate-Form
+function Test-is64Bit {
+    param($FilePath="$env:windir\notepad.exe")
+
+    [int32]$MACHINE_OFFSET = 4
+    [int32]$PE_POINTER_OFFSET = 60
+
+    [byte[]]$data = New-Object -TypeName System.Byte[] -ArgumentList 4096
+    $stream = New-Object -TypeName System.IO.FileStream -ArgumentList ($FilePath, 'Open', 'Read')
+    $stream.Read($data, 0, 4096) | Out-Null
+
+    [int32]$PE_HEADER_ADDR = [System.BitConverter]::ToInt32($data, $PE_POINTER_OFFSET)
+    [int32]$machineUint = [System.BitConverter]::ToUInt16($data, $PE_HEADER_ADDR + $MACHINE_OFFSET)
+    $stream.Close()
+
+    $result = "" | select FilePath, FileType, Is64Bit
+    $result.FilePath = $FilePath
+    $result.Is64Bit = $false
+
+    switch ($machineUint) 
+    {
+        0      { $result.FileType = 'Native' }
+        0x014c { $result.FileType = 'x86' }
+        0x0200 { $result.FileType = 'Itanium' }
+        0x8664 { $result.FileType = 'x64'; $result.is64Bit = $true; }
+    }
+
+    $result
+}
