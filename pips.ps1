@@ -8,11 +8,15 @@ $python_path = Get-Bin 'python'
 $pip_path = Get-Bin 'pip'
 
 $lastWidgetLeft = 5
+$lastWidgetTop = 5
+$widgetLineHeight = 23
 $dataGridView = $null
 $logView = $null
 $arrayModel = $null
 $actionsModel = $null
 $virtualenvCheckBox = $null
+$header = ("Update", "Package", "Installed", "Latest", "Type", "Status")
+$csv_header = ("Package", "Installed", "Latest", "Type", "Status")
 
 $formLoaded = $false
 
@@ -25,10 +29,15 @@ Function Write-PipLog() {
 }
 
 Function Add-TopWidget($widget) {
-    $widget.Location = New-Object Drawing.Point $lastWidgetLeft,15
-    $widget.size = New-Object Drawing.Point 90,23
+    $widget.Location = New-Object Drawing.Point $lastWidgetLeft,$lastWidgetTop
+    $widget.size = New-Object Drawing.Point 90,$widgetLineHeight
     $Script:form.Controls.Add($widget)
     $Script:lastWidgetLeft = $lastWidgetLeft + 100
+}
+
+Function NewLine-TopLayout() {
+    $Script:lastWidgetTop  = $Script:lastWidgetTop + $widgetLineHeight + 5
+    $Script:lastWidgetLeft = 5
 }
 
 Function Add-Button ($name, $handler) {
@@ -37,6 +46,20 @@ Function Add-Button ($name, $handler) {
     $button.Add_Click($handler)
     Add-TopWidget($button)
 }
+
+Function Add-Label ($name) {
+    $label = New-Object Windows.Forms.Label
+    $label.Text = $name
+    $label.TextAlign = [System.Drawing.ContentAlignment]::MiddleRight
+    Add-TopWidget($label)
+}
+
+Function Add-Input ($handler) {
+    $input = New-Object Windows.Forms.TextBox
+    $input.Add_TextChanged({ $handler.Invoke( @($Script:input) ) }.GetNewClosure())
+    Add-TopWidget($input)
+}
+
 
 Function Add-Buttons {
     Add-Button "Check Updates" { Get-PythonPackages }
@@ -159,10 +182,27 @@ Function Generate-Form {
     Add-Buttons
     Add-ComboBox
     $Script:virtualenvCheckBox = Add-CheckBox 'virtualenv' { Toggle-VirtualEnv $Script:virtualenvCheckBox.Checked }
-    Add-Button "Install..." { Generate-FormInstall }
+    Add-Button "Search..." { Clear-Rows; Generate-FormInstall }
+
+    NewLine-TopLayout
+
+    Add-Label "Filter results:"
+    Add-Input {
+        param($input)
+        $searchText = $input.Text
+        $query = "Package LIKE '%{0}%'" -f $searchText
+        if ($searchText.Length -gt 0) {
+            $Script:dataModel.DefaultView.RowFilter = $query
+        } else {
+            $Script:dataModel.DefaultView.RowFilter = $null
+        }        
+        
+        #$Script:dataGridView.Refresh()
+        #$Script:dataGridView.Update()
+    }
     
     $dataGridView = New-Object System.Windows.Forms.DataGridView
-    $dataGridView.Location = New-Object Drawing.Point 7,40
+    $dataGridView.Location = New-Object Drawing.Point 7,($Script:lastWidgetTop + $Script:widgetLineHeight)
     $dataGridView.Size = New-Object Drawing.Point 800,450
     $dataGridView.MultiSelect = $false
     $dataGridView.SelectionMode = [System.Windows.Forms.SelectionMode]::One
@@ -172,8 +212,42 @@ Function Generate-Form {
     $dataGridView.AllowUserToResizeRows = $false
     $dataGridView.AllowUserToResizeColumns = $false
     $dataGridView.AutoSizeColumnsMode = [System.Windows.Forms.DataGridViewAutoSizeColumnsMode]::AllCells
+    
+    $dataModel = New-Object System.Data.DataTable
+    $dataGridView.DataSource = $dataModel
+    $Script:dataModel = $dataModel
+
+    if ($dataGridView.columncount -gt 0) {
+#        $dataGridView.DataSource = $null
+#        $dataGridView.Columns.RemoveAt(0) 
+    }
+    
+
+    foreach ($c in $header) {
+        if ($c -eq "Update") {
+            #$Column = New-Object System.Windows.Forms.DataGridViewCheckBoxColumn
+            $column = New-Object System.Data.DataColumn $c, ([bool])
+        } else {
+            #$Column = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
+            $column = New-Object System.Data.DataColumn $c, ([string])
+            $column.ReadOnly = $true
+        }
+        #$Column.width = 100
+        #$Column.name = $c    
+        #$DataGridView.Columns.Add($Column)
+        
+        $dataModel.Columns.Add($column)
+    }
+
+    #for ($i = 1; $i -lt $dataGridView.ColumnCount; $i++) {
+    #    $dataGridView.Columns[$i].ReadOnly = $true
+    #}
+
+    $arrayModel = New-Object System.Collections.ArrayList
+
     $Script:dataGridView = $dataGridView
     $form.Controls.Add($dataGridView)
+    
 
     $logView = New-Object System.Windows.Forms.RichTextBox
     $logView.Location = New-Object Drawing.Point 7,500
@@ -209,18 +283,7 @@ Function Generate-Form {
     Write-PipLog (&"$python_path" --version)
     Write-PipLog (&"$pip_path" --version)
 
-    if ($dataGridView.columncount -gt 0) {
-        $dataGridView.DataSource = $null
-        $dataGridView.Columns.RemoveAt(0) 
-    }
-    
-    $Column1 = New-Object System.Windows.Forms.DataGridViewCheckBoxColumn
-    $Column1.width = 100
-    $Column1.name = "Update"
-    $DataGridView.Columns.Add($Column1) 
-
-    $arrayModel = New-Object System.Collections.ArrayList
-    $header = ("Package", "Installed", "Latest", "Type", "Status")
+    Clear-Rows
 
     $args = New-Object System.Collections.ArrayList
     $args.Add('list')
@@ -231,17 +294,22 @@ Function Generate-Form {
     }
 
     $pip_list = (&pip3 $args)
-    $packages = $pip_list | Select-Object -Skip 2 | % { $_ -replace '\s+', ' ' }  | ConvertFrom-Csv -Header $header -Delimiter ' '
+    $packages = $pip_list | Select-Object -Skip 2 | % { $_ -replace '\s+', ' ' }  | ConvertFrom-Csv -Header $csv_header -Delimiter ' '
     $Script:procInfo = $packages
     $arrayModel.AddRange($procInfo)
     $Script:arrayModel = $arrayModel
-    $dataGridView.DataSource = $arrayModel
+    #$dataGridView.DataSource = $arrayModel
     
-    for ($i = 1; $i -lt $dataGridView.ColumnCount; $i++) {
-        $dataGridView.Columns[$i].ReadOnly = $true
+    for ($n = 0; $n -lt $procInfo.Count; $n++) {
+        $row = $dataGridView.DataSource.NewRow()        
+        $row['Package'] = $arrayModel[$n].Package
+        $row['Installed'] = $arrayModel[$n].Installed
+        $row['Latest'] = $arrayModel[$n].Latest
+        $row['Type'] = $arrayModel[$n].Type
+        $dataGridView.DataSource.Rows.Add($row)
     }
 
-    $Script:form.refresh()    
+    $Script:form.refresh()
     Write-PipLog 'Package list updated.'
 }
 
@@ -258,6 +326,13 @@ Function Set-Unchecked($index) {
 Function Tidy-Output($text) {
     $result = ($text -replace '(\.?\s*$)', "`n")
     return $result
+}
+
+Function Clear-Rows() {
+    $count = $dataModel.Rows.Count
+    for ($i = 0; $i -lt $count; $i++) {
+        $Script:dataModel.Rows[0].Delete()
+    }
 }
 
 Function Check-PipDependencies {
