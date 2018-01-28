@@ -91,16 +91,16 @@ Function Add-ComboBoxActions {
     $actionsModel = New-Object System.Collections.ArrayList
     $Add = { param($a) $actionsModel.Add($a) | Out-Null }
 
-    & $Add (Make-PipActionItem 'Show'      {return (&pip show       $args)} `
+    & $Add (Make-PipActionItem 'Show'      {return (& (Get-PipExe) show       $args)} `
         '.*' ) 
 
-    & $Add (Make-PipActionItem 'Update'    {return (&pip install -U $args)} `
+    & $Add (Make-PipActionItem 'Update'    {return (& (Get-PipExe) install -U $args)} `
         'Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' )
 
-    & $Add (Make-PipActionItem 'Download'  {return (&pip download   $args)} `
+    & $Add (Make-PipActionItem 'Download'  {return (& (Get-PipExe) download   $args)} `
         'Successfully downloaded ' )
 
-    & $Add (Make-PipActionItem 'Uninstall' {return (&pip uninstall  $args)} `
+    & $Add (Make-PipActionItem 'Uninstall' {return (& (Get-PipExe) uninstall  $args)} `
         'Successfully uninstalled ' )
 
     $Script:actionsModel = $actionsModel
@@ -249,7 +249,6 @@ Function Generate-Form {
         if ($Script:dataGridView.CurrentRow) {
             # Keep selection while filter is being changed
             $selectedRow = $Script:dataGridView.CurrentRow.DataBoundItem.Row
-            $Script:dataGridView.ClearSelection()
         }
 
         $searchText = $input.Text
@@ -261,12 +260,7 @@ Function Generate-Form {
         }
 
         if ($selectedRow) {
-            foreach ($vRow in $dataGridView.Rows) {
-                if ($vRow.DataBoundItem.Row -eq $selectedRow) {
-                    $vRow.Selected = $true
-                    break
-                }
-            }
+            Set-SelectedRow $selectedRow
         }
     }
 
@@ -335,8 +329,8 @@ Function Generate-Form {
         }
     }
     
-    $dataGridView.Add_CellMouseClick({Highlight-LogFragment})
-    $dataGridView.Add_SelectionChanged({Highlight-LogFragment})
+    $dataGridView.Add_CellMouseClick({ Highlight-LogFragment })
+    $dataGridView.Add_SelectionChanged({ Highlight-LogFragment })
     $form.Add_Load({ $Script:formLoaded = $true })
     $form.ShowDialog()
 }
@@ -397,6 +391,16 @@ Function Clear-Rows() {
     $Script:dataModel.Clear()
 }
 
+Function Set-SelectedRow($selectedRow) {
+    $Script:dataGridView.ClearSelection()
+    foreach ($vRow in $Script:dataGridView.Rows) {
+        if ($vRow.DataBoundItem.Row -eq $selectedRow) {
+            $vRow.Selected = $true
+            break
+        }
+    }
+}
+
 Function Check-PipDependencies {
     Write-PipLog 'Checking dependencies...'
 
@@ -442,6 +446,7 @@ Function Execute-PipAction($action) {
                  $dataModel.Rows[$i].Status = "Failed"
             }
             $dataModel.Columns['Status'].ReadOnly = $true
+            Set-SelectedRow $dataModel.Rows[$i]
        }
     }
 
