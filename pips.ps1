@@ -18,7 +18,6 @@ $virtualenvCheckBox = $null
 $header = ("Update", "Package", "Installed", "Latest", "Type", "Status")
 $csv_header = ("Package", "Installed", "Latest", "Type", "Status")
 $formLoaded = $false
-Generate-Form
 
 
 Function Write-PipLog() {
@@ -107,13 +106,23 @@ Function Add-ComboBoxActions {
 }
 
 Function Find-Interpreters {
-    $list = (where.exe 'python')
     $items = New-Object System.Collections.ArrayList
 
-    foreach ($path in $list) {
+    Function Get-InterpreterRecord($path) {
         $arch = Test-is64Bit $path
         $hint = "[{0}] {1}" -f $arch.FileType,$path
         $items.Add($hint) | Out-Null
+    }
+
+    $list = (where.exe 'python')
+    foreach ($path in $list) {
+        Get-InterpreterRecord $path
+    }
+
+    foreach ($d in dir "$env:LOCALAPPDATA\Programs\Python") {
+        if ($d -is [System.IO.DirectoryInfo]) {
+            Get-InterpreterRecord (${d}.FullName + "\python.exe")
+        }
     }
 
     return $items
@@ -236,6 +245,7 @@ Function Generate-Form {
         param($input)
         
         if ($Script:dataGridView.CurrentRow) {
+            # Keep selection while filter is being changed
             $selectedRow = $Script:dataGridView.CurrentRow.DataBoundItem.Row
             $Script:dataGridView.ClearSelection()
         }
@@ -272,27 +282,29 @@ Function Generate-Form {
     $dataGridView.ReadOnly = $false
     $dataGridView.AllowUserToResizeRows = $false
     $dataGridView.AllowUserToResizeColumns = $false
+    $dataGridView.VirtualMode = $true
+    $dataGridView.AutoGenerateColumns = $true
+    $dataGridView.AllowUserToAddRows = $false
     $dataGridView.AutoSizeColumnsMode = [System.Windows.Forms.DataGridViewAutoSizeColumnsMode]::AllCells
     
     $dataModel = New-Object System.Data.DataTable
-    $dataGridView.DataSource = $null
-    $dataGridView.DataSource = $dataModel
+    $dataGridView.DataSource = $dataModel    
     $Script:dataModel = $dataModel
-
+    
     foreach ($c in $header) {
         if ($c -eq "Update") {
-            $column = New-Object System.Data.DataColumn $c, ([bool])
+            $column = New-Object System.Data.DataColumn $c,([bool])
         } else {
-            $column = New-Object System.Data.DataColumn $c, ([string])
+            $column = New-Object System.Data.DataColumn $c,([string])
             $column.ReadOnly = $true
         }
         $dataModel.Columns.Add($column)
     }
 
-    $Script:arrayModel = New-Object System.Collections.ArrayList
-
     $Script:dataGridView = $dataGridView
-    $form.Controls.Add($dataGridView)    
+    $form.Controls.Add($dataGridView)
+
+    $Script:arrayModel = New-Object System.Collections.ArrayList
 
     $logView = New-Object System.Windows.Forms.RichTextBox
     $logView.Location = New-Object Drawing.Point 7,520
@@ -375,6 +387,9 @@ Function Tidy-Output($text) {
 }
 
 Function Clear-Rows() {
+    for ($i = $dataModel.Rows.Count; $i -ge 1; $i--) {
+        $dataModel.Rows[$i - 1].Delete()
+    }
     $Script:dataModel.Clear()
 }
 
@@ -461,3 +476,5 @@ function Test-is64Bit {
 
     $result
 }
+
+Generate-Form
