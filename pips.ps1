@@ -16,12 +16,13 @@ $lastWidgetLeft = 5
 $lastWidgetTop = 5
 $widgetLineHeight = 23
 $dataGridView = $null
+$inputFilter = $null
 $logView = $null
-$arrayModel = $null
 $actionsModel = $null
 $virtualenvCheckBox = $null
-$header = ("Update", "Package", "Installed", "Latest", "Type", "Status")
+$header = ("Select", "Package", "Installed", "Latest", "Type", "Status")
 $csv_header = ("Package", "Installed", "Latest", "Type", "Status")
+$search_columns = ("Select", "Package", "Version", "Description", "Status")
 $formLoaded = $false
 
 
@@ -67,6 +68,7 @@ Function Add-Input ($handler) {
     $input = New-Object Windows.Forms.TextBox
     $input.Add_TextChanged({ $handler.Invoke( @($Script:input) ) }.GetNewClosure())
     Add-TopWidget $input
+    return $input
 }
 
 
@@ -93,6 +95,9 @@ Function Add-ComboBoxActions {
         '.*' ) 
 
     & $Add (Make-PipActionItem 'Update'    {return (& (Get-PipExe) install -U $args)} `
+        'Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' )
+
+    & $Add (Make-PipActionItem 'Install'    {return (& (Get-PipExe) install   $args)} `
         'Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' )
 
     & $Add (Make-PipActionItem 'Download'  {return (& (Get-PipExe) download   $args)} `
@@ -221,7 +226,62 @@ Function Toggle-VirtualEnv ($state) {
 }
 
 Function Generate-FormInstall {
+    $message = "Enter keywords to search PyPi`n`n* = list all packages"
+    $title = "pip search ..."
+    $default = "*"
+
+    $input = $(
+        Add-Type -AssemblyName Microsoft.VisualBasic
+        [Microsoft.VisualBasic.Interaction]::InputBox($message, $title, $default)
+    )
     
+    if (! $input) {
+        return
+    }
+
+    Write-PipLog ("Searching for " + $input)
+    Get-PipSearchResults $input
+}
+
+Function Init-PackageGridViewProperties() {
+    $dataGridView.MultiSelect = $false
+    $dataGridView.SelectionMode = [System.Windows.Forms.SelectionMode]::One
+    $dataGridView.ColumnHeadersVisible = $true
+    $dataGridView.RowHeadersVisible = $false
+    $dataGridView.ReadOnly = $false
+    $dataGridView.AllowUserToResizeRows = $false
+    $dataGridView.AllowUserToResizeColumns = $false
+    $dataGridView.VirtualMode = $true
+    $dataGridView.AutoGenerateColumns = $true
+    $dataGridView.AllowUserToAddRows = $false
+    $dataGridView.AllowUserToDeleteRows = $false
+    $dataGridView.AutoSizeColumnsMode = [System.Windows.Forms.DataGridViewAutoSizeColumnsMode]::AllCells
+}
+
+Function Init-PackageUpdateColumns() {
+    $dataModel.Columns.Clear()
+    foreach ($c in $header) {
+        if ($c -eq "Select") {
+            $column = New-Object System.Data.DataColumn $c,([bool])
+        } else {
+            $column = New-Object System.Data.DataColumn $c,([string])
+            $column.ReadOnly = $true
+        }
+        $dataModel.Columns.Add($column)
+    }
+}
+
+Function Init-PackageSearchColumns() {
+    $dataModel.Columns.Clear()
+    foreach ($c in $search_columns) {
+        if ($c -eq "Select") {
+            $column = New-Object System.Data.DataColumn $c,([bool])
+        } else {
+            $column = New-Object System.Data.DataColumn $c,([string])
+            $column.ReadOnly = $true
+        }
+        $dataModel.Columns.Add($column)
+    }
 }
 
 Function Generate-Form {
@@ -236,12 +296,13 @@ Function Generate-Form {
     Add-Buttons
     Add-ComboBoxActions
     $Script:virtualenvCheckBox = Add-CheckBox 'virtualenv' { Toggle-VirtualEnv $Script:virtualenvCheckBox.Checked }
-    Add-Button "Search..." { Clear-Rows; Generate-FormInstall }
+    Add-Button "Search..." { Generate-FormInstall }
 
     NewLine-TopLayout
 
     Add-Label "Filter results:"
-    Add-Input {
+    
+    $Script:inputFilter = Add-Input {
         param($input)
         
         if ($Script:dataGridView.CurrentRow) {
@@ -249,8 +310,14 @@ Function Generate-Form {
             $selectedRow = $Script:dataGridView.CurrentRow.DataBoundItem.Row
         }
 
+        $isInstallMode = $dataModel.Columns.Contains('Description')
         $searchText = $input.Text
-        $query = "Package LIKE '%{0}%'" -f $searchText
+        if ($isInstallMode) {
+            $query = "Package LIKE '%{0}%' OR Description LIKE '%{0}%'" -f $searchText
+        } else {
+            $query = "Package LIKE '%{0}%'" -f $searchText
+        }
+        
         if ($searchText.Length -gt 0) {
             $Script:dataModel.DefaultView.RowFilter = $query
         } else {
@@ -267,39 +334,17 @@ Function Generate-Form {
     Add-ComboBoxInterpreters
     
     $dataGridView = New-Object System.Windows.Forms.DataGridView
+    $Script:dataGridView = $dataGridView
     $dataGridView.Location = New-Object Drawing.Point 7,($Script:lastWidgetTop + $Script:widgetLineHeight)
     $dataGridView.Size = New-Object Drawing.Point 800,450
-    $dataGridView.MultiSelect = $false
-    $dataGridView.SelectionMode = [System.Windows.Forms.SelectionMode]::One
-    $dataGridView.ColumnHeadersVisible = $true
-    $dataGridView.RowHeadersVisible = $false
-    $dataGridView.ReadOnly = $false
-    $dataGridView.AllowUserToResizeRows = $false
-    $dataGridView.AllowUserToResizeColumns = $false
-    $dataGridView.VirtualMode = $true
-    $dataGridView.AutoGenerateColumns = $true
-    $dataGridView.AllowUserToAddRows = $false
-    $dataGridView.AllowUserToDeleteRows = $false
-    $dataGridView.AutoSizeColumnsMode = [System.Windows.Forms.DataGridViewAutoSizeColumnsMode]::AllCells
+    Init-PackageGridViewProperties
     
     $dataModel = New-Object System.Data.DataTable
     $dataGridView.DataSource = $dataModel    
     $Script:dataModel = $dataModel
-    
-    foreach ($c in $header) {
-        if ($c -eq "Update") {
-            $column = New-Object System.Data.DataColumn $c,([bool])
-        } else {
-            $column = New-Object System.Data.DataColumn $c,([string])
-            $column.ReadOnly = $true
-        }
-        $dataModel.Columns.Add($column)
-    }
+    Init-PackageUpdateColumns
 
-    $Script:dataGridView = $dataGridView
     $form.Controls.Add($dataGridView)
-
-    $Script:arrayModel = New-Object System.Collections.ArrayList
 
     $logView = New-Object System.Windows.Forms.RichTextBox
     $logView.Location = New-Object Drawing.Point 7,520
@@ -315,7 +360,11 @@ Function Generate-Form {
             return
         }
         
-        $row = $Script:dataGridView.CurrentRow.DataBoundItem.Row
+        $viewRow = $Script:dataGridView.CurrentRow
+        if (! $viewRow) {
+            return
+        }
+        $row = $viewRow.DataBoundItem.Row        
 
         $Script:logView.SelectAll()
         $Script:logView.SelectionBackColor = $Script:logView.BackColor
@@ -333,54 +382,81 @@ Function Generate-Form {
     $form.ShowDialog()
 }
 
- Function Get-PythonPackages {
+Function Get-PipSearchResults($request) {
+    $args = New-Object System.Collections.ArrayList
+    $args.Add('search') | Out-Null
+    $args.Add("$request") | Out-Null
+    $output = & (&Get-PipExe) $args
+
+    #$results = New-Object System.Data.DataTable
+    $results = $dataModel
+    
+    Clear-Rows
+    Init-PackageSearchColumns
+    
+    $results.BeginLoadData()
+    $r = [regex] '^(.*?)\((.*?)\)\s+-\s+(.*?)$'
+    foreach ($line in $output) {
+        $m = $r.Match($line)
+        $row = $results.NewRow()
+        $row['Select'] = $false
+        $row['Package'] = $m.Groups[1].Value
+        $row['Version'] = $m.Groups[2].Value
+        $row['Description'] = $m.Groups[3].Value
+        $results.Rows.Add($row)
+    }
+    $results.EndLoadData()
+}
+
+ Function Get-PythonPackages() {
+    Write-PipLog
     Write-PipLog 'Updating package list... '
     Write-PipLog (& (&Get-PythonExe) --version)
     Write-PipLog (& (&Get-PipExe) --version)
+    Write-PipLog
 
     Clear-Rows
+    Init-PackageUpdateColumns
 
     $args = New-Object System.Collections.ArrayList
-    $args.Add('list')
-    $args.Add('--outdated')
-    $args.Add('--format=columns')
+    $args.Add('list') | Out-Null
+    $args.Add('--outdated') | Out-Null
+    $args.Add('--format=columns') | Out-Null
     if ($Script:virtualenvCheckBox.Checked) {
-        $args.Add('--isolated')
+        $args.Add('--isolated') | Out-Null
     }
 
     $pip_list = & (&Get-PipExe) $args
     $packages = $pip_list | Select-Object -Skip 2 | % { $_ -replace '\s+', ' ' }  | ConvertFrom-Csv -Header $csv_header -Delimiter ' '
-    $Script:procInfo = $packages
-    $arrayModel.AddRange($procInfo)
-    $Script:arrayModel = $arrayModel
     
-    for ($n = 0; $n -lt $procInfo.Count; $n++) {
+    $dataModel.BeginLoadData()
+    for ($n = 0; $n -lt $packages.Count; $n++) {
         $row = $dataModel.NewRow()        
-        $row['Package'] = $arrayModel[$n].Package
-        $row['Installed'] = $arrayModel[$n].Installed
-        $row['Latest'] = $arrayModel[$n].Latest
-        $row['Type'] = $arrayModel[$n].Type
+        $row['Package'] = $packages[$n].Package
+        $row['Installed'] = $packages[$n].Installed
+        $row['Latest'] = $packages[$n].Latest
+        $row['Type'] = $packages[$n].Type
         $dataModel.Rows.Add($row)
     }
+    $dataModel.EndLoadData()
 
-    $Script:form.refresh()
     Write-PipLog 'Package list updated.'
 }
 
 Function Select-VisiblePipPackages($value) {
     for ($i = 0; $i -lt $dataGridView.Rows.Count; $i++) {
-       $dataGridView.Rows[$i].DataBoundItem.Row.Update = $value
+        $dataGridView.Rows[$i].DataBoundItem.Row.Select = $value
     }
 }
 
 Function Select-PipPackages($value) {
     for ($i = 0; $i -lt $dataModel.Rows.Count; $i++) {
-       $dataModel.Rows[$i].Update = $value
+       $dataModel.Rows[$i].Select = $value
     }
 }
 
 Function Set-Unchecked($index) {
-    return $dataModel.Rows[$index].Update = $false
+    return $dataModel.Rows[$index].Select = $false
 }
 
 Function Tidy-Output($text) {
@@ -389,10 +465,17 @@ Function Tidy-Output($text) {
 }
 
 Function Clear-Rows() {
+    $dataModel.BeginLoadData()
+    $dataGridView.ClearSelection()
+    
+    $Script:inputFilter.Clear()
+    $dataModel.DefaultView.RowFilter = $null    
+    
     for ($i = $dataModel.Rows.Count; $i -ge 1; $i--) {
         $dataModel.Rows[$i - 1].Delete()
     }
-    $Script:dataModel.Clear()
+    $dataModel.Clear()
+    $dataModel.EndLoadData()    
 }
 
 Function Set-SelectedRow($selectedRow) {
@@ -422,8 +505,8 @@ Function Check-PipDependencies {
 
 Function Execute-PipAction($action) {
     for ($i = 0; $i -lt $dataModel.Rows.Count; $i++) {
-       if ($dataModel.Rows[$i].Update -eq $true) {
-            $package = $arrayModel[$i]
+       if ($dataModel.Rows[$i].Select -eq $true) {
+            $package =  $dataModel.Rows[$i]
             $action = $Script:actionsModel[$actionList.SelectedIndex]
             
             Write-PipLog ""
@@ -490,4 +573,6 @@ function Test-is64Bit {
     $result
 }
 
-Generate-Form
+$env:PYTHONIOENCODING="utf-8"
+$env:LC_CTYPE="utf-8"
+Generate-Form | Out-Null
