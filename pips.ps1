@@ -6,12 +6,10 @@ Function Get-Bin($command) {
 
 Function Get-PythonExe() {
     $Script:interpretersComboBox.SelectedItem.PythonExe
-    #Get-Bin 'python'
 }
 
 Function Get-PipExe() {
     $Script:interpretersComboBox.SelectedItem.PipExe
-    #Get-Bin 'pip'
 }
 
 $lastWidgetLeft = 5
@@ -74,7 +72,7 @@ Function Add-Input ($handler) {
 
 Function Add-Buttons {
     Add-Button "Check Updates" { Get-PythonPackages }
-    Add-Button "Select All" { Select-PipPackages($true) }
+    Add-Button "Sel All Visible" { Select-VisiblePipPackages($true) }
     Add-Button "Select None" { Select-PipPackages($false) }
     Add-Button "Check Deps" { Check-PipDependencies }
     Add-Button "Execute:" { Execute-PipAction }
@@ -367,6 +365,12 @@ Function Generate-Form {
 
     $Script:form.refresh()
     Write-PipLog 'Package list updated.'
+}
+
+Function Select-VisiblePipPackages($value) {
+    for ($i = 0; $i -lt $dataGridView.Rows.Count; $i++) {
+       $dataGridView.Rows[$i].DataBoundItem.Row.Update = $value
+    }
 }
 
 Function Select-PipPackages($value) {
