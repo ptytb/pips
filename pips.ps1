@@ -4,8 +4,15 @@ Function Get-Bin($command) {
     (where.exe $command) | Select-Object -Index 0
 }
 
-$python_path = Get-Bin 'python'
-$pip_path = Get-Bin 'pip'
+Function Get-PythonExe() {
+    $Script:interpretersComboBox.SelectedItem.PythonExe
+    #Get-Bin 'python'
+}
+
+Function Get-PipExe() {
+    $Script:interpretersComboBox.SelectedItem.PipExe
+    #Get-Bin 'pip'
+}
 
 $lastWidgetLeft = 5
 $lastWidgetTop = 5
@@ -107,11 +114,21 @@ Function Add-ComboBoxActions {
 
 Function Find-Interpreters {
     $items = New-Object System.Collections.ArrayList
+    $trackDuplicates = New-Object System.Collections.Generic.HashSet[String]
 
     Function Get-InterpreterRecord($path) {
+        if ($trackDuplicates.Contains($path)) {
+            continue
+        }
+        $trackDuplicates.Add($path) | Out-Null
+        
         $arch = Test-is64Bit $path
-        $hint = "[{0}] {1}" -f $arch.FileType,$path
-        $items.Add($hint) | Out-Null
+        $pip = (Split-Path -Path $path) + "\Scripts\pip.exe"
+
+        $action = New-Object psobject -Property @{Arch=$arch; PythonExe=$path; PipExe=$pip}
+        $action | Add-Member ScriptMethod ToString { "[{0}] {1}" -f $this.Arch.FileType,$this.PythonExe } -Force
+
+        $items.Add($action) | Out-Null
     }
 
     $list = (where.exe 'python')
@@ -130,28 +147,12 @@ Function Find-Interpreters {
 
 Function Add-ComboBoxInterpreters {
     $interpreters = Find-Interpreters
-
-    Function Make-PipActionItem($name, $code) {
-        $action = New-Object psobject -Property @{Name=$name; Validation=$validation}
-        $action | Add-Member ScriptMethod ToString { $this.Name } -Force
-        $action | Add-Member ScriptMethod Execute $code
-        return $action
-    }
-
-    $actionsModel = New-Object System.Collections.ArrayList
-    $Add = { param($a) $actionsModel.Add($a) | Out-Null }
-
-    for ($i = 0; $i -lt $interpreters.Count; $i++) {
-        & $Add (Make-PipActionItem $interpreters[$i] {return (&pip show       $args)} )
-    }
-
-    #$Script:actionsModel = $actionsModel
-
-    $actionList = New-Object System.Windows.Forms.ComboBox
-    $actionList.DataSource = $actionsModel
-    $actionList.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-    #$Script:actionList = $actionList
-    Add-TopWidget $actionList 4
+    $Script:interpreters = $interpreters
+    $interpretersComboBox = New-Object System.Windows.Forms.ComboBox
+    $interpretersComboBox.DataSource = $interpreters
+    $interpretersComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    $Script:interpretersComboBox = $interpretersComboBox
+    Add-TopWidget $interpretersComboBox 4
 }
 
 Function Add-CheckBox($text, $code) {
@@ -230,7 +231,8 @@ Function Generate-Form {
     $form.Text = "pip package browser"
     $form.Size = New-Object Drawing.Point 830, 840
     $form.topmost = $false
-    $form.Icon = [system.drawing.icon]::ExtractAssociatedIcon($python_path)
+    $iconPath = Get-Bin 'pip'
+    $form.Icon = [system.drawing.icon]::ExtractAssociatedIcon($iconPath)
     $Script:form = $form
 
     Add-Buttons
@@ -269,7 +271,7 @@ Function Generate-Form {
     }
 
     Add-HorizontalSpacer
-    Add-Label "Interpreter:"
+    Add-Label "Active Interpreter:"
     Add-ComboBoxInterpreters
     
     $dataGridView = New-Object System.Windows.Forms.DataGridView
@@ -285,6 +287,7 @@ Function Generate-Form {
     $dataGridView.VirtualMode = $true
     $dataGridView.AutoGenerateColumns = $true
     $dataGridView.AllowUserToAddRows = $false
+    $dataGridView.AllowUserToDeleteRows = $false
     $dataGridView.AutoSizeColumnsMode = [System.Windows.Forms.DataGridViewAutoSizeColumnsMode]::AllCells
     
     $dataModel = New-Object System.Data.DataTable
@@ -333,14 +336,15 @@ Function Generate-Form {
     }
     
     $dataGridView.Add_CellMouseClick({Highlight-LogFragment})
+    $dataGridView.Add_SelectionChanged({Highlight-LogFragment})
     $form.Add_Load({ $Script:formLoaded = $true })
     $form.ShowDialog()
 }
 
  Function Get-PythonPackages {
     Write-PipLog 'Updating package list... '
-    Write-PipLog (&"$python_path" --version)
-    Write-PipLog (&"$pip_path" --version)
+    Write-PipLog (& (&Get-PythonExe) --version)
+    Write-PipLog (& (&Get-PipExe) --version)
 
     Clear-Rows
 
@@ -352,7 +356,7 @@ Function Generate-Form {
         $args.Add('--isolated')
     }
 
-    $pip_list = (&pip3 $args)
+    $pip_list = & (&Get-PipExe) $args
     $packages = $pip_list | Select-Object -Skip 2 | % { $_ -replace '\s+', ' ' }  | ConvertFrom-Csv -Header $csv_header -Delimiter ' '
     $Script:procInfo = $packages
     $arrayModel.AddRange($procInfo)
@@ -396,7 +400,7 @@ Function Clear-Rows() {
 Function Check-PipDependencies {
     Write-PipLog 'Checking dependencies...'
 
-    $result = (pip3 check)
+    $result = & (&Get-PipExe) check
     $result = Tidy-Output $result
     
     if ($result.StartsWith('No broken')) {
