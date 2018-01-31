@@ -379,6 +379,17 @@ Function Generate-Form {
     $dataGridView.Add_CellMouseClick({ Highlight-LogFragment })
     $dataGridView.Add_SelectionChanged({ Highlight-LogFragment })
     $form.Add_Load({ $Script:formLoaded = $true })
+    
+    Function Resize-Form() {
+        $dataGridView.Width = $form.ClientSize.Width - 15
+        $dataGridView.Height = $form.ClientSize.Height / 2
+        $logView.Top = $dataGridView.Bottom + 15
+        $logView.Width = $form.ClientSize.Width - 15
+        $logView.Height = $form.ClientSize.Height - $dataGridView.Bottom - $lastWidgetTop
+    }
+
+    Resize-Form
+    $form.Add_Resize({ Resize-Form })
     $form.ShowDialog()
 }
 
