@@ -226,7 +226,7 @@ Function Toggle-VirtualEnv ($state) {
 }
 
 Function Generate-FormInstall {
-    $message = "Enter keywords to search PyPi`n`n* = list all packages"
+    $message = "Enter keywords to search PyPi`n`n* = list all packages`n`nChecked items will be kept in search list"
     $title = "pip search ..."
     $default = "*"
 
@@ -258,8 +258,8 @@ Function Init-PackageGridViewProperties() {
     $dataGridView.AutoSizeColumnsMode = [System.Windows.Forms.DataGridViewAutoSizeColumnsMode]::AllCells
 }
 
-Function Init-PackageUpdateColumns() {
-    $dataModel.Columns.Clear()
+Function Init-PackageUpdateColumns($dataTable) {
+    $dataTable.Columns.Clear()
     foreach ($c in $header) {
         if ($c -eq "Select") {
             $column = New-Object System.Data.DataColumn $c,([bool])
@@ -267,12 +267,12 @@ Function Init-PackageUpdateColumns() {
             $column = New-Object System.Data.DataColumn $c,([string])
             $column.ReadOnly = $true
         }
-        $dataModel.Columns.Add($column)
+        $dataTable.Columns.Add($column)
     }
 }
 
-Function Init-PackageSearchColumns() {
-    $dataModel.Columns.Clear()
+Function Init-PackageSearchColumns($dataTable) {
+    $dataTable.Columns.Clear()
     foreach ($c in $search_columns) {
         if ($c -eq "Select") {
             $column = New-Object System.Data.DataColumn $c,([bool])
@@ -280,7 +280,7 @@ Function Init-PackageSearchColumns() {
             $column = New-Object System.Data.DataColumn $c,([string])
             $column.ReadOnly = $true
         }
-        $dataModel.Columns.Add($column)
+        $dataTable.Columns.Add($column)
     }
 }
 
@@ -313,9 +313,9 @@ Function Generate-Form {
         $isInstallMode = $dataModel.Columns.Contains('Description')
         $searchText = $input.Text
         if ($isInstallMode) {
-            $query = "Package LIKE '%{0}%' OR Description LIKE '%{0}%'" -f $searchText
+            $query = "Package LIKE '{0}%' OR Package LIKE '%{0}%' OR Description LIKE '%{0}%'" -f $searchText
         } else {
-            $query = "Package LIKE '%{0}%'" -f $searchText
+            $query = "Package LIKE '{0}%' OR Package LIKE '%{0}%'" -f $searchText
         }
         
         if ($searchText.Length -gt 0) {
@@ -342,7 +342,7 @@ Function Generate-Form {
     $dataModel = New-Object System.Data.DataTable
     $dataGridView.DataSource = $dataModel    
     $Script:dataModel = $dataModel
-    Init-PackageUpdateColumns
+    Init-PackageUpdateColumns $dataModel
 
     $form.Controls.Add($dataGridView)
 
@@ -382,20 +382,35 @@ Function Generate-Form {
     $form.ShowDialog()
 }
 
+Function Store-CheckedPipSearchResults() {
+    $selected = New-Object System.Data.DataTable
+    Init-PackageSearchColumns $selected
+    foreach ($row in $dataModel) {
+        if ($row.Select) {
+            $selected.ImportRow($row)
+        }
+    }
+    return $selected
+}
+
 Function Get-PipSearchResults($request) {
     $args = New-Object System.Collections.ArrayList
     $args.Add('search') | Out-Null
     $args.Add("$request") | Out-Null
     $output = & (&Get-PipExe) $args
 
-    #$results = New-Object System.Data.DataTable
     $results = $dataModel
+       
+    $previousSelected = Store-CheckedPipSearchResults
     
     Clear-Rows
-    Init-PackageSearchColumns
+    Init-PackageSearchColumns $dataModel
     
     $results.BeginLoadData()
     $r = [regex] '^(.*?)\((.*?)\)\s+-\s+(.*?)$'
+    foreach ($row in $previousSelected) {
+        $results.ImportRow($row)
+    }
     foreach ($line in $output) {
         $m = $r.Match($line)
         $row = $results.NewRow()
@@ -404,7 +419,7 @@ Function Get-PipSearchResults($request) {
         $row['Version'] = $m.Groups[2].Value
         $row['Description'] = $m.Groups[3].Value
         $results.Rows.Add($row)
-    }
+    }    
     $results.EndLoadData()
 }
 
@@ -416,7 +431,7 @@ Function Get-PipSearchResults($request) {
     Write-PipLog
 
     Clear-Rows
-    Init-PackageUpdateColumns
+    Init-PackageUpdateColumns $dataModel
 
     $args = New-Object System.Collections.ArrayList
     $args.Add('list') | Out-Null
