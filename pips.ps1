@@ -383,9 +383,12 @@ Function Generate-Form {
     $dataGridView.Add_SelectionChanged({ Highlight-LogFragment })
 
     Function Show-PackageInBrowser() {
-        $packageName = $dataGridView.CurrentRow.DataBoundItem.Row['Package']
-        $urlName = [System.Web.HttpUtility]::UrlEncode($packageName)
-        Start-Process -FilePath "${pypi_path}${urlName}"
+        $row = $dataGridView.CurrentRow
+        if ($row) {
+            $packageName = $row.DataBoundItem.Row['Package']
+            $urlName = [System.Web.HttpUtility]::UrlEncode($packageName)
+            Start-Process -FilePath "${pypi_path}${urlName}"
+        }
     }
 
     $dataGridView.Add_CellMouseDoubleClick({ Show-PackageInBrowser })
