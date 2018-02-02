@@ -1,4 +1,5 @@
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Web")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Web.HttpUtility")
 
 Function Get-Bin($command) {
