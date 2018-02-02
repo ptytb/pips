@@ -1,4 +1,5 @@
-﻿[Void][Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Web.HttpUtility")
 
 Function Get-Bin($command) {
     (where.exe $command) | Select-Object -Index 0
@@ -12,6 +13,7 @@ Function Get-PipExe() {
     $Script:interpretersComboBox.SelectedItem.PipExe
 }
 
+$pypi_path = 'https://pypi.python.org/pypi/'
 $lastWidgetLeft = 5
 $lastWidgetTop = 5
 $widgetLineHeight = 23
@@ -240,6 +242,7 @@ Function Generate-FormInstall {
     }
 
     Write-PipLog ("Searching for " + $input)
+    Write-PipLog 'Double click table row to open PyPi in browser'
     Get-PipSearchResults $input
 }
 
@@ -290,7 +293,7 @@ Function Generate-Form {
     $form.Size = New-Object Drawing.Point 830, 840
     $form.topmost = $false
     $iconPath = Get-Bin 'pip'
-    $form.Icon = [system.drawing.icon]::ExtractAssociatedIcon($iconPath)
+    $form.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($iconPath)
     $Script:form = $form
 
     Add-Buttons
@@ -378,6 +381,14 @@ Function Generate-Form {
     
     $dataGridView.Add_CellMouseClick({ Highlight-LogFragment })
     $dataGridView.Add_SelectionChanged({ Highlight-LogFragment })
+
+    Function Show-PackageInBrowser() {
+        $packageName = $dataGridView.CurrentRow.DataBoundItem.Row['Package']
+        $urlName = [System.Web.HttpUtility]::UrlEncode($packageName)
+        Start-Process -FilePath "${pypi_path}${urlName}"
+    }
+
+    $dataGridView.Add_CellMouseDoubleClick({ Show-PackageInBrowser })
     $form.Add_Load({ $Script:formLoaded = $true })
     
     Function Resize-Form() {
@@ -418,7 +429,7 @@ Function Get-PipSearchResults($request) {
     Init-PackageSearchColumns $dataModel
     
     $results.BeginLoadData()
-    $r = [regex] '^(.*?)\((.*?)\)\s+-\s+(.*?)$'
+    $r = [regex] '^(.*?)\s*\((.*?)\)\s+-\s+(.*?)$'
     foreach ($row in $previousSelected) {
         $results.ImportRow($row)
     }
