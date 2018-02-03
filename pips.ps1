@@ -1,6 +1,10 @@
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Web")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Web.HttpUtility")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Text")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Text.RegularExpressions")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Windows.FontStyle")
+
 
 Function Get-Bin($command) {
     (where.exe $command) | Select-Object -Index 0
@@ -77,25 +81,38 @@ Function Add-Input ($handler) {
 
 Function Add-Buttons {
     Add-Button "Check Updates" { Get-PythonPackages }
+    Add-Button "List Installed" { Get-PythonPackages($false) }
     Add-Button "Sel All Visible" { Select-VisiblePipPackages($true) }
     Add-Button "Select None" { Select-PipPackages($false) }
     Add-Button "Check Deps" { Check-PipDependencies }
     Add-Button "Execute:" { Execute-PipAction }
 }
 
+Function Get-PyDoc($request) {
+    $output = & (Get-PythonExe) -m pydoc $request
+    return $output
+}
+
+Function Get-PythonStandardPackages() {
+    
+}
+
 Function Add-ComboBoxActions {
     Function Make-PipActionItem($name, $code, $validation) {
         $action = New-Object psobject -Property @{Name=$name; Validation=$validation}
         $action | Add-Member ScriptMethod ToString { $this.Name } -Force
-        $action | Add-Member ScriptMethod Execute $code
+        $action | Add-Member ScriptMethod Execute $code  # $code takes $args which will be package name
         return $action
     }
 
     $actionsModel = New-Object System.Collections.ArrayList
     $Add = { param($a) $actionsModel.Add($a) | Out-Null }
 
-    & $Add (Make-PipActionItem 'Show'      {return (& (Get-PipExe) show       $args)} `
-        '.*' ) 
+    & $Add (Make-PipActionItem 'Show Info'      {return (& (Get-PipExe) show  $args)} `
+        '.*' )
+
+    & $Add (Make-PipActionItem 'Documentation' {Show-DocView (Get-PyDoc $args) $args[0] | Out-Null; return ''} `
+        '.*' )
 
     & $Add (Make-PipActionItem 'Update'    {return (& (Get-PipExe) install -U $args)} `
         'Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' )
@@ -291,7 +308,7 @@ Function Init-PackageSearchColumns($dataTable) {
 Function Generate-Form {
     $form = New-Object Windows.Forms.Form
     $form.Text = "pip package browser"
-    $form.Size = New-Object Drawing.Point 830, 840
+    $form.Size = New-Object Drawing.Point 1000, 840
     $form.topmost = $false
     $iconPath = Get-Bin 'pip'
     $form.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($iconPath)
@@ -403,9 +420,82 @@ Function Generate-Form {
         $logView.Height = $form.ClientSize.Height - $dataGridView.Bottom - $lastWidgetTop
     }
 
+    $form.Add_Closed({ $formDoc.Close() })
+
     Resize-Form
     $form.Add_Resize({ Resize-Form })
     $form.ShowDialog()
+}
+
+Function Resize-FormDoc() {
+    $docView.Width = $formDoc.ClientSize.Width - 15
+    $docView.Height = $formDoc.ClientSize.Height - 15
+}
+
+Function Generate-FormDocView($title) {
+    $formDoc = New-Object Windows.Forms.Form
+    $formDoc.Text = $title
+    $formDoc.Size = New-Object Drawing.Point 830, 840
+    $formDoc.topmost = $false
+    $iconPath = Get-Bin 'pip'
+    $formDoc.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($iconPath)
+    $Script:formDoc = $formDoc
+
+    $docView = New-Object System.Windows.Forms.RichTextBox
+    $docView.Location = New-Object Drawing.Point 7,7
+    $docView.Size = New-Object Drawing.Point 800,810
+    $docView.ReadOnly = $true
+    $docView.Multiline = $true
+    $docView.Font = New-Object System.Drawing.Font("Consolas", 11)
+    $Script:docView = $docView
+    $formDoc.Controls.Add($docView)
+
+    Resize-FormDoc
+    $formDoc.Add_Resize({ Resize-FormDoc })
+}
+
+Function Highlight-Output() {    
+    Function Highlight-Text($pattern, $foreground = [Drawing.Color]::DarkCyan) {
+        $regexOptions = [System.Text.RegularExpressions.RegexOptions]::ExplicitCapture 
+                      + [System.Text.RegularExpressions.RegexOptions]::Compiled
+        $matches = [regex]::Matches($docView.Text, "$pattern")
+
+        $fontBold = New-Object System.Drawing.Font("Consolas",11,[System.Drawing.FontStyle]::Bold)
+
+        foreach ($match in $matches.Groups) {
+            if ($match.Name -eq 0) {
+                continue
+            }
+            $docView.Select($match.Index, $match.Length)
+            $docView.SelectionColor = $foreground
+            $docView.SelectionFont = $fontBold
+        }
+    }
+    
+    $pydocSections = @('NAME', 'PACKAGE CONTENTS', 'CLASSES', 'FUNCTIONS', 'DATA', 'VERSION', 'AUTHOR', 'FILE')
+    $pythonKeywords = @('False', 'None', 'True', 'and', 'as', 'assert', 'break', 'class', 'continue', 'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'try', 'while', 'with', 'yield')
+    $pythonSpecialMethods = @('self', '__abs__', '__add__', '__and__', '__call__', '__class__', '__cmp__', '__coerce__', '__complex__', '__contains__', '__del__', '__delattr__', '__delete__', '__delitem__', '__delslice__', '__dict__', '__div__', '__divmod__', '__eq__', '__float__', '__floordiv__', '__ge__', '__get__', '__getattr__', '__getattribute__', '__getitem__', '__getslice__', '__gt__', '__hash__', '__hex__', '__iadd__', '__iand__', '__idiv__', '__ifloordiv__', '__ilshift__', '__imod__', '__imul__', '__index__', '__init__', '__instancecheck__', '__int__', '__invert__', '__ior__', '__ipow__', '__irshift__', '__isub__', '__iter__', '__itruediv__', '__ixor__', '__le__', '__len__', '__long__', '__lshift__', '__lt__', '__metaclass__', '__mod__', '__mro__', '__mul__', '__ne__', '__neg__', '__new__', '__nonzero__', '__oct__', '__or__', '__pos__', '__pow__', '__radd__', '__rand__', '__rcmp__', '__rdiv__', '__rdivmod__', '__repr__', '__reversed__', '__rfloordiv__', '__rlshift__', '__rmod__', '__rmul__', '__ror__', '__rpow__', '__rrshift__', '__rshift__', '__rsub__', '__rtruediv__', '__rxor__', '__set__', '__setattr__', '__setitem__', '__setslice__', '__slots__', '__str__', '__sub__', '__subclasscheck__', '__truediv__', '__unicode__', '__weakref__', '__xor__')
+
+    foreach ($text in $pydocSections) {
+        Highlight-Text "($text)"
+    }
+
+    foreach ($text in $pythonKeywords) {
+        Highlight-Text "\W($text)\W" ([Drawing.Color]::DarkRed)
+    }
+
+    foreach ($text in $pythonSpecialMethods) {
+        Highlight-Text "\W($text)\W" ([Drawing.Color]::DarkOrange)
+    }
+}
+
+Function Show-DocView($text, $packageName) {
+    Generate-FormDocView "PyDoc for $packageName"
+    $Script:docView.Text = (Tidy-Output $text)
+    Highlight-Output
+    $docView.Select(0, 0)
+    $docView.ScrollToCaret()
+    $formDoc.Show()
 }
 
 Function Store-CheckedPipSearchResults() {
@@ -449,7 +539,7 @@ Function Get-PipSearchResults($request) {
     $results.EndLoadData()
 }
 
- Function Get-PythonPackages() {
+ Function Get-PythonPackages($outdatedOnly = $true) {
     Write-PipLog
     Write-PipLog 'Updating package list... '
     Write-PipLog (& (&Get-PythonExe) --version)
@@ -461,7 +551,11 @@ Function Get-PipSearchResults($request) {
 
     $args = New-Object System.Collections.ArrayList
     $args.Add('list') | Out-Null
-    $args.Add('--outdated') | Out-Null
+
+    if ($outdatedOnly) {
+        $args.Add('--outdated') | Out-Null
+    }
+
     $args.Add('--format=columns') | Out-Null
     if ($Script:virtualenvCheckBox.Checked) {
         $args.Add('--isolated') | Out-Null
@@ -485,15 +579,19 @@ Function Get-PipSearchResults($request) {
 }
 
 Function Select-VisiblePipPackages($value) {
+    $dataModel.BeginLoadData()
     for ($i = 0; $i -lt $dataGridView.Rows.Count; $i++) {
         $dataGridView.Rows[$i].DataBoundItem.Row.Select = $value
     }
+    $dataModel.EndLoadData()
 }
 
 Function Select-PipPackages($value) {
+    $dataModel.BeginLoadData()
     for ($i = 0; $i -lt $dataModel.Rows.Count; $i++) {
        $dataModel.Rows[$i].Select = $value
     }
+    $dataModel.EndLoadData()
 }
 
 Function Set-Unchecked($index) {
@@ -520,6 +618,7 @@ Function Clear-Rows() {
 }
 
 Function Set-SelectedRow($selectedRow) {
+    $dataModel.BeginLoadData();
     $Script:dataGridView.ClearSelection()
     foreach ($vRow in $Script:dataGridView.Rows) {
         if ($vRow.DataBoundItem.Row -eq $selectedRow) {
@@ -581,6 +680,7 @@ Function Execute-PipAction($action) {
     Write-PipLog ''
     Write-PipLog '----'
     Write-PipLog 'All tasks finished'
+    Write-PipLog 'Select a row to highlight the relevant log piece'
     Write-PipLog '----'
     Write-PipLog ''
 }
