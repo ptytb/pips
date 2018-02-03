@@ -585,8 +585,9 @@ Function Execute-PipAction($action) {
     Write-PipLog ''
 }
 
+# by https://superuser.com/users/243093/megamorf
 function Test-is64Bit {
-    param($FilePath="$env:windir\notepad.exe")
+    param($FilePath)
 
     [int32]$MACHINE_OFFSET = 4
     [int32]$PE_POINTER_OFFSET = 60
