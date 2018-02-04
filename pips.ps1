@@ -16,12 +16,20 @@ Function Get-PythonPath() {
     $Script:interpretersComboBox.SelectedItem.Path
 }
 
+Function Get-PythonArchitecture() {
+    $Script:interpretersComboBox.SelectedItem.Arch
+}
+
 Function Get-PythonExe() {
     $Script:interpretersComboBox.SelectedItem.PythonExe
 }
 
 Function Get-PipExe() {
     $Script:interpretersComboBox.SelectedItem.PipExe
+}
+
+Function Get-CondaExe() {
+    $Script:interpretersComboBox.SelectedItem.CondaExe
 }
 
 Function Exists-File($path) {
@@ -59,7 +67,7 @@ $actionsModel = $null
 $virtualenvCheckBox = $null
 $header = ("Select", "Package", "Installed", "Latest", "Type", "Status")
 $csv_header = ("Package", "Installed", "Latest", "Type", "Status")
-$search_columns = ("Select", "Package", "Version", "Description", "Status")
+$search_columns = ("Select", "Package", "Version", "Description", "Type", "Status")
 $formLoaded = $false
 $outdatedOnly = $true
 
@@ -163,33 +171,75 @@ Function Get-PythonBuiltinPackages() {
     return ,$builtinLibs
 }
 
+Function Get-CondaPackages() {
+    $condaPackages = New-Object System.Collections.ArrayList
+    $conda_exe = Get-CondaExe
+
+    if ($conda_exe) {
+        $arguments =New-Object System.Collections.ArrayList
+        $arguments.Add('list') | Out-Null
+        $arguments.Add('--json') | Out-Null
+        $arguments.Add('--no-pip') | Out-Null
+
+        $items = & $conda_exe $arguments | ConvertFrom-Json 
+
+        foreach ($item in $items) {
+            $condaPackages.Add(@{Type='conda'; Package=$item.name; Version=$item.version}) | Out-Null
+        }
+    }
+
+    return ,$condaPackages
+}
+
+$actionCommands = @{
+    pip=@{
+        info          = { return (& (Get-PipExe) show       $args 2>&1) };
+        documentation = { Show-DocView (Get-PyDoc $pkg) $pkg | Out-Null; return '' };
+        update        = { return (& (Get-PipExe) install -U $args 2>&1) };
+        install       = { return (& (Get-PipExe) install    $args 2>&1) };
+        download      = { return (& (Get-PipExe) download   $args 2>&1) };
+        uninstall     = { return (& (Get-PipExe) uninstall  $args 2>&1) };
+    };
+    conda=@{
+        info          = { return (& (Get-CondaExe) list -v --json $args 2>&1) };        
+        documentation = { };
+        update        = { return (& (Get-CondaExe) update     $args 2>&1) };
+        install       = { return (& (Get-CondaExe) install    $args 2>&1) };
+        download      = { return '' };
+        uninstall     = { return (& (Get-CondaExe) uninstall  $args 2>&1) };
+    };
+}
+$actionCommands.wheel   = $actionCommands.pip
+$actionCommands.sdist   = $actionCommands.pip
+$actionCommands.builtin = $actionCommands.pip
+
 Function Add-ComboBoxActions {
     Function Make-PipActionItem($name, $code, $validation) {
         $action = New-Object psobject -Property @{Name=$name; Validation=$validation}
         $action | Add-Member ScriptMethod ToString { $this.Name } -Force
-        $action | Add-Member ScriptMethod Execute $code  # $code takes $args array which will have only package name
+        $action | Add-Member ScriptMethod Execute $code  # $code takes param($pkg,$type)
         return $action
     }
 
     $actionsModel = New-Object System.Collections.ArrayList
     $Add = { param($a) $actionsModel.Add($a) | Out-Null }
 
-    & $Add (Make-PipActionItem 'Show Info'      {return (& (Get-PipExe) show  $args 2>&1)} `
+    & $Add (Make-PipActionItem 'Show Info'     { param($pkg,$type); return $actionCommands[$type].info.Invoke($pkg) } `
         '.*' )
 
-    & $Add (Make-PipActionItem 'Documentation' {Show-DocView (Get-PyDoc $args) $args[0] | Out-Null; return ''} `
+    & $Add (Make-PipActionItem 'Documentation' { param($pkg,$type); return $actionCommands[$type].documentation.Invoke($pkg) } `
         '.*' )
 
-    & $Add (Make-PipActionItem 'Update'    {return (& (Get-PipExe) install -U $args 2>&1)} `
+    & $Add (Make-PipActionItem 'Update'        { param($pkg,$type); return $actionCommands[$type].update.Invoke($pkg) } `
         'Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' )
 
-    & $Add (Make-PipActionItem 'Install'    {return (& (Get-PipExe) install   $args) 2>&1} `
+    & $Add (Make-PipActionItem 'Install'       { param($pkg,$type); return $actionCommands[$type].install.Invoke($pkg) } `
         'Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' )
 
-    & $Add (Make-PipActionItem 'Download'  {return (& (Get-PipExe) download   $args) 2>&1} `
+    & $Add (Make-PipActionItem 'Download'      { param($pkg,$type); return $actionCommands[$type].download.Invoke($pkg) } `
         'Successfully downloaded ' )
 
-    & $Add (Make-PipActionItem 'Uninstall' {return (& (Get-PipExe) uninstall  $args) 2>&1} `
+    & $Add (Make-PipActionItem 'Uninstall'     { param($pkg,$type); return $actionCommands[$type].uninstall.Invoke($pkg) } `
         'Successfully uninstalled ' )
 
     $Script:actionsModel = $actionsModel
@@ -324,8 +374,8 @@ Function Toggle-VirtualEnv ($state) {
 }
 
 Function Generate-FormInstall {
-    $message = "Enter keywords to search PyPi`n`n* = list all packages`n`nChecked items will be kept in the search list"
-    $title = "pip search ..."
+    $message = "Enter keywords to search PyPi and Conda`n`n* = list all packages`n`nChecked items will be kept in the search list"
+    $title = "pip search ... & conda search ..."
     $default = "*"
 
     $input = $(
@@ -340,9 +390,9 @@ Function Generate-FormInstall {
     Write-PipLog ("Searching for " + $input)
     Write-PipLog 'Double click a table row to open PyPi in browser (online)'
     
-    Get-PipSearchResults $input
-    
-    Write-PipPackageCounter
+    Write-PipLog
+    $stats = Get-SearchResults $input
+    Write-PipLog "Found $($stats.Total) packages: $($stats.PipCount) pip, $($stats.CondaCount) conda. Total $($dataModel.Rows.Count) packages in list."
 }
 
 Function Init-PackageGridViewProperties() {
@@ -409,7 +459,11 @@ Function Generate-Form {
 
     Add-Buttons
     Add-ComboBoxActions
+    
     $Script:virtualenvCheckBox = Add-CheckBox 'virtualenv' { Toggle-VirtualEnv $Script:virtualenvCheckBox.Checked }
+    $toolTip = New-Object System.Windows.Forms.ToolTip
+    $toolTip.SetToolTip($virtualenvCheckBox, "--virtualenv")
+
     Add-Button "Search..." { Generate-FormInstall }
 
     NewLine-TopLayout
@@ -569,13 +623,13 @@ Function Generate-FormDocView($title) {
     $formDoc.Add_Resize({ Resize-FormDoc })
 }
 
-Function Highlight-Output() {    
-    Function Highlight-Text($pattern, $foreground = [Drawing.Color]::DarkCyan) {
+Function Highlight-Output() {
+    $fontBold = New-Object System.Drawing.Font("Consolas",11,[System.Drawing.FontStyle]::Bold)
+
+    Function Highlight-Text($pattern, $foreground = [Drawing.Color]::DarkCyan, $useBold = $true) {
         $regexOptions = [System.Text.RegularExpressions.RegexOptions]::ExplicitCapture 
                       + [System.Text.RegularExpressions.RegexOptions]::Compiled
-        $matches = [regex]::Matches($docView.Text, "$pattern")
-
-        $fontBold = New-Object System.Drawing.Font("Consolas",11,[System.Drawing.FontStyle]::Bold)
+        $matches = [regex]::Matches($docView.Text, "$pattern")        
 
         foreach ($match in $matches.Groups) {
             if ($match.Name -eq 0) {
@@ -583,13 +637,19 @@ Function Highlight-Output() {
             }
             $docView.Select($match.Index, $match.Length)
             $docView.SelectionColor = $foreground
-            $docView.SelectionFont = $fontBold
+            if ($useBold) {
+                $docView.SelectionFont = $fontBold
+            }
         }
     }
     
     $pydocSections = @('NAME', 'DESCRIPTION', 'PACKAGE CONTENTS', 'CLASSES', 'FUNCTIONS', 'DATA', 'VERSION', 'AUTHOR', 'FILE')
     $pythonKeywords = @('False', 'None', 'True', 'and', 'as', 'assert', 'break', 'class', 'continue', 'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'try', 'while', 'with', 'yield')
-    $pythonSpecialMethods = @('self', '__all__', '__abs__', '__add__', '__and__', '__call__', '__class__', '__cmp__', '__coerce__', '__complex__', '__contains__', '__del__', '__delattr__', '__delete__', '__delitem__', '__delslice__', '__dict__', '__div__', '__divmod__', '__eq__', '__float__', '__floordiv__', '__ge__', '__get__', '__getattr__', '__getattribute__', '__getitem__', '__getslice__', '__gt__', '__hash__', '__hex__', '__iadd__', '__iand__', '__idiv__', '__ifloordiv__', '__ilshift__', '__imod__', '__imul__', '__index__', '__init__', '__instancecheck__', '__int__', '__invert__', '__ior__', '__ipow__', '__irshift__', '__isub__', '__iter__', '__itruediv__', '__ixor__', '__le__', '__len__', '__long__', '__lshift__', '__lt__', '__metaclass__', '__mod__', '__mro__', '__mul__', '__ne__', '__neg__', '__new__', '__nonzero__', '__oct__', '__or__', '__pos__', '__pow__', '__radd__', '__rand__', '__rcmp__', '__rdiv__', '__rdivmod__', '__repr__', '__reversed__', '__rfloordiv__', '__rlshift__', '__rmod__', '__rmul__', '__ror__', '__rpow__', '__rrshift__', '__rshift__', '__rsub__', '__rtruediv__', '__rxor__', '__set__', '__setattr__', '__setitem__', '__setslice__', '__slots__', '__str__', '__sub__', '__subclasscheck__', '__truediv__', '__unicode__', '__weakref__', '__xor__')
+    $pythonSpecial = @('self', 'async', 'await', '__main__', '__all__', '__abs__', '__add__', '__and__', '__call__', '__class__', '__cmp__', '__coerce__', '__complex__', '__contains__', '__del__', '__delattr__', '__delete__', '__delitem__', '__delslice__', '__dict__', '__div__', '__divmod__', '__eq__', '__float__', '__floordiv__', '__ge__', '__get__', '__getattr__', '__getattribute__', '__getitem__', '__getslice__', '__gt__', '__hash__', '__hex__', '__iadd__', '__iand__', '__idiv__', '__ifloordiv__', '__ilshift__', '__imod__', '__imul__', '__index__', '__init__', '__instancecheck__', '__int__', '__invert__', '__ior__', '__ipow__', '__irshift__', '__isub__', '__iter__', '__itruediv__', '__ixor__', '__le__', '__len__', '__long__', '__lshift__', '__lt__', '__metaclass__', '__mod__', '__mro__', '__mul__', '__ne__', '__neg__', '__new__', '__nonzero__', '__oct__', '__or__', '__pos__', '__pow__', '__radd__', '__rand__', '__rcmp__', '__rdiv__', '__rdivmod__', '__repr__', '__reversed__', '__rfloordiv__', '__rlshift__', '__rmod__', '__rmul__', '__ror__', '__rpow__', '__rrshift__', '__rshift__', '__rsub__', '__rtruediv__', '__rxor__', '__set__', '__setattr__', '__setitem__', '__setslice__', '__slots__', '__str__', '__sub__', '__subclasscheck__', '__truediv__', '__unicode__', '__weakref__', '__xor__')
+
+    Highlight-Text "('[^\n'\\]*?')" ([Drawing.Color]::DarkGreen) $false
+    Highlight-Text '("[^\n"\\]*?")' ([Drawing.Color]::DarkGreen) $false
+    Highlight-Text '([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)' ([Drawing.Color]::DarkMagenta) $false
 
     foreach ($text in $pydocSections) {
         Highlight-Text "\W($text)\W"
@@ -599,7 +659,7 @@ Function Highlight-Output() {
         Highlight-Text "\W($text)\W" ([Drawing.Color]::DarkRed)
     }
 
-    foreach ($text in $pythonSpecialMethods) {
+    foreach ($text in $pythonSpecial) {
         Highlight-Text "\W($text)\W" ([Drawing.Color]::DarkOrange)
     }
 }
@@ -639,7 +699,7 @@ Function Get-PipSearchResults($request) {
     $pip_exe = Get-PipExe
     if (!$pip_exe) {
         Write-PipLog 'pip is not found!'
-        return
+        return 0
     }
 
     $args = New-Object System.Collections.ArrayList
@@ -647,35 +707,80 @@ Function Get-PipSearchResults($request) {
     $args.Add("$request") | Out-Null
     $output = & $pip_exe $args
 
-    $results = $dataModel
-       
-    $previousSelected = Store-CheckedPipSearchResults
-    
-    Clear-Rows
-    Init-PackageSearchColumns $dataModel
-    
-    $dataGridView.BeginInit()
-    $results.BeginLoadData()
-
     $r = [regex] '^(.*?)\s*\((.*?)\)\s+-\s+(.*?)$'
 
-    foreach ($row in $previousSelected) {
-        $results.ImportRow($row)
-    }
-
+    $count = 0
     foreach ($line in $output) {
         $m = $r.Match($line)
-        $row = $results.NewRow()
+        $row = $dataModel.NewRow()
         $row.Select = $false
         $row.Package = $m.Groups[1].Value
         $row.Version = $m.Groups[2].Value
         $row.Description = $m.Groups[3].Value
+        $row.Type = 'pip'
         $row.Status = ''
-        $results.Rows.Add($row)
-    }    
+        $dataModel.Rows.Add($row)
+        $count += 1
+    }
+
+    return $count
+}
+
+Function Get-CondaSearchResults($request) {
+    $conda_exe = Get-CondaExe
+    if (! $conda_exe) {
+        Write-PipLog 'conda is not found!'
+        return 0
+    }
+    $arch = Get-PythonArchitecture
+
+    $items = & $conda_exe search --json $request | ConvertFrom-Json
+
+    $count = 0
+    $items.PSObject.Properties | forEach-Object {
+        $name = $_.Name
+        $item = $_.Value
+
+        $row = $dataModel.NewRow()
+        $row.Select = $false
+        $row.Package = $name
+
+        if ($item.GetType().BaseType -eq [System.Array]) {
+            # If we've a list of versions, take only the first for now
+            $item = $item[0]
+        }
+
+        $row.Version = $item.version
+        $row.Description = $item.license_family
+        $row.Type = 'conda'
+        $row.Status = ''
+        $dataModel.Rows.Add($row)
+
+        $count += 1
+    }
+
+    return $count
+}
+
+Function Get-SearchResults($request) {
+    $previousSelected = Store-CheckedPipSearchResults    
+    Clear-Rows
+    Init-PackageSearchColumns $dataModel
+
+    $dataGridView.BeginInit()
+    $dataModel.BeginLoadData()
     
-    $results.EndLoadData()
+    foreach ($row in $previousSelected) {
+        $dataModel.ImportRow($row)
+    }
+    
+    $pipCount = Get-PipSearchResults $request
+    $condaCount = Get-CondaSearchResults $request
+
+    $dataModel.EndLoadData()
     $dataGridView.EndInit()
+
+    return @{PipCount=$pipCount; CondaCount=$condaCount; Total=($pipCount + $condaCount)}
 }
 
  Function Get-PythonPackages($outdatedOnly = $true) {
@@ -684,6 +789,7 @@ Function Get-PipSearchResults($request) {
     
     $python_exe = Get-PythonExe
     $pip_exe = Get-PipExe
+    $conda_exe = Get-CondaExe
     
     if ($python_exe) {
         Write-PipLog (& $python_exe --version 2>&1)
@@ -717,10 +823,10 @@ Function Get-PipSearchResults($request) {
         }
 
         $pip_list = & $pip_exe $args
-        $packages = $pip_list | Select-Object -Skip 2 | % { $_ -replace '\s+', ' ' }  | ConvertFrom-Csv -Header $csv_header -Delimiter ' '
+        $pipPackages = $pip_list | Select-Object -Skip 2 | % { $_ -replace '\s+', ' ' }  | ConvertFrom-Csv -Header $csv_header -Delimiter ' '
     }
 
-    Function Add-PackagesToTable($packages) {        
+    Function Add-PackagesToTable($packages, $defaultType = [String]::Empty) {        
         for ($n = 0; $n -lt $packages.Count; $n++) {
             $row = $dataModel.NewRow()        
             $row.Select = $false
@@ -728,17 +834,24 @@ Function Get-PipSearchResults($request) {
             $row.Installed = $packages[$n].Installed
             $row.Latest = $packages[$n].Latest
             $row.Type = $packages[$n].Type
+            if ([String]::IsNullOrEmpty($row.Type)) {
+                $row.Type = $defaultType
+            } 
             $dataModel.Rows.Add($row)
         }        
     }
 
     $dataModel.BeginLoadData()
     if ($pip_exe) {
-        Add-PackagesToTable $packages
+        Add-PackagesToTable $pipPackages 'pip'
     }
     if (! $outdatedOnly) {
         $builtinPackages = Get-PythonBuiltinPackages
-        Add-PackagesToTable $builtinPackages
+        Add-PackagesToTable $builtinPackages 'builtin'
+    }
+    if ($conda_exe) {
+        $condaPackages = Get-CondaPackages
+        Add-PackagesToTable $condaPackages 'conda'
     }
     $dataModel.EndLoadData()
 
@@ -749,8 +862,10 @@ Function Get-PipSearchResults($request) {
     Write-PipLog 'Double click a table row to open PyPi in browser (online)'
     
     $count = $dataModel.Rows.Count
+    $pipCount = $pipPackages.Count
     $builtinCount = $builtinPackages.Count
-    Write-PipLog "Now $count packages in the list, $builtinCount builtin"
+    $condaCount = $condaPackages.Count
+    Write-PipLog "Total $count packages: $builtinCount builtin, $pipCount pip, $condaCount conda"
 }
 
 Function Select-VisiblePipPackages($value) {
@@ -843,12 +958,7 @@ Function Execute-PipAction($action) {
             Write-PipLog ""
             Write-PipLog $action.Name ' ' $package.Package
 
-            $args = New-Object System.Collections.ArrayList
-            if ($Script:virtualenvCheckBox.Checked) {
-                $args.add('--isolated')
-            }
-            $args.Add($package.Package)
-            $result = $action.Execute($args)
+            $result = $action.Execute($package.Package, $package.Type)
 
             $logFrom = $Script:logView.TextLength 
             Write-PipLog (Tidy-Output $result)
