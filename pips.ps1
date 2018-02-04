@@ -565,7 +565,9 @@ Function Get-PipSearchResults($request) {
     Clear-Rows
     Init-PackageSearchColumns $dataModel
     
+    $dataGridView.BeginInit()
     $results.BeginLoadData()
+
     $r = [regex] '^(.*?)\s*\((.*?)\)\s+-\s+(.*?)$'
     foreach ($row in $previousSelected) {
         $results.ImportRow($row)
@@ -579,7 +581,9 @@ Function Get-PipSearchResults($request) {
         $row['Description'] = $m.Groups[3].Value
         $results.Rows.Add($row)
     }    
+    
     $results.EndLoadData()
+    $dataGridView.EndInit()
 }
 
  Function Get-PythonPackages($outdatedOnly = $true) {
