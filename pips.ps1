@@ -4,6 +4,8 @@
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Text")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Text.RegularExpressions")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Windows.FontStyle")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Collections")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Collections.ArrayList")
 
 
 Function Get-Bin($command) {
@@ -26,8 +28,20 @@ Function Exists-File($path) {
     return [System.IO.File]::Exists($path)
 }
 
+Function Exists-Directory($path) {
+    return [System.IO.Directory]::Exists($path)
+}
+
 Function Get-ExistingFilePathOrNull($path) {
     if (Exists-File $path) {
+        return $path
+    } else {
+        return $null
+    }
+}
+
+Function Get-ExistingPathOrNull($path) {
+    if (Exists-Directory $path) {
         return $path
     } else {
         return $null
@@ -62,7 +76,7 @@ Function Add-TopWidget($widget, $span=1) {
     $widget.Location = New-Object Drawing.Point $lastWidgetLeft,$lastWidgetTop
     $widget.size = New-Object Drawing.Point ($span*100-5),$widgetLineHeight
     $Script:form.Controls.Add($widget)
-    $Script:lastWidgetLeft = $lastWidgetLeft + 100
+    $Script:lastWidgetLeft = $lastWidgetLeft + ($span*100)
 }
 
 Function Add-HorizontalSpacer() {
@@ -187,45 +201,50 @@ Function Add-ComboBoxActions {
     Add-TopWidget($actionList)    
 }
 
-Function Find-Interpreters {
-    $items = New-Object System.Collections.ArrayList
-    $trackDuplicates = New-Object System.Collections.Generic.HashSet[String]
 
-    Function Get-InterpreterRecord($path) {
-        if ($trackDuplicates.Contains($path)) {
-            continue
-        }
-        $trackDuplicates.Add($path) | Out-Null
-        
-        $python = Get-ExistingFilePathOrNull "${path}\python.exe"
-        $pip = Get-ExistingFilePathOrNull "${path}\Scripts\pip.exe"
-        $conda = Get-ExistingFilePathOrNull "${path}\Scripts\conda.exe"
-        
-        if ($python) {
-            $arch = Test-is64Bit $python
-        } else {
-            $arch = $null
-        }
+$trackDuplicates = New-Object System.Collections.Generic.HashSet[String]
 
-        $action = New-Object psobject -Property @{Path=$path; Arch=$arch; PythonExe=$python; PipExe=$pip; CondaExe=$conda}
-        $action | Add-Member ScriptMethod ToString { "[{0}] {1}" -f $this.Arch.FileType,$this.PythonExe } -Force
-
-        $items.Add($action) | Out-Null
+Function Get-InterpreterRecord($path, $items) {
+    if ($trackDuplicates.Contains($path)) {
+        continue
     }
 
+    $python = Get-ExistingFilePathOrNull "${path}\python.exe"
+    if (! $python) {
+        $python = Get-ExistingFilePathOrNull "${path}\Scripts\python.exe"
+    }    
+    if (! $python) {
+        return
+    }
+
+    $pip = Get-ExistingFilePathOrNull "${path}\Scripts\pip.exe"
+    $conda = Get-ExistingFilePathOrNull "${path}\Scripts\conda.exe"
+    $arch = Test-is64Bit $python
+
+    $action = New-Object psobject -Property @{Path=$path; Arch=$arch; PythonExe=$python; PipExe=$pip; CondaExe=$conda}
+    $action | Add-Member ScriptMethod ToString { "[{0}] {1}" -f $this.Arch.FileType,$this.PythonExe } -Force
+
+    $items.Add($action) | Out-Null
+    $trackDuplicates.Add($path) | Out-Null
+}
+
+Function Find-Interpreters {
+    $items = New-Object System.Collections.ArrayList
+    
     $list = (where.exe 'python')
     foreach ($path in $list) {
-        Get-InterpreterRecord (Split-Path -Parent $path)
+        Get-InterpreterRecord (Split-Path -Parent $path) $items
     }
 
     foreach ($d in dir "$env:LOCALAPPDATA\Programs\Python") {
         if ($d -is [System.IO.DirectoryInfo]) {
-            Get-InterpreterRecord (${d}.FullName)
+            Get-InterpreterRecord (${d}.FullName) $items
         }
     }
 
-    return $items
+    return ,$items  # keep comma to prevent conversion to an @() array
 }
+
 
 Function Add-ComboBoxInterpreters {
     $interpreters = Find-Interpreters
@@ -429,7 +448,23 @@ Function Generate-Form {
     Add-HorizontalSpacer
     Add-Label "Active Interpreter:"
     Add-ComboBoxInterpreters
-    Add-Button "Add venv dir..." { Write-PipLog 'Not implemented yet...' }
+    Add-Button "Add venv path..." {
+        $selectFolderDialog = New-Object System.Windows.Forms.FolderBrowserDialog
+        $selectFolderDialog.ShowDialog()
+        $path = $selectFolderDialog.SelectedPath
+        $path = Get-ExistingPathOrNull $path
+        if ($path) {
+            $oldCount = $interpreters.Count
+            Get-InterpreterRecord $path $interpreters
+            if ($interpreters.Count -gt $oldCount) {
+                $interpretersComboBox.DataSource = $null
+                $interpretersComboBox.DataSource = $interpreters
+                Write-PipLog "Added virtual environment location: $path"
+            } else {
+                Write-PipLog "No python found in $path"
+            }
+        }
+    }
     
     $dataGridView = New-Object System.Windows.Forms.DataGridView
     $Script:dataGridView = $dataGridView
