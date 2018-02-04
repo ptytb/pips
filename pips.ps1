@@ -160,7 +160,7 @@ Function Get-PythonBuiltinPackages() {
         $builtinLibs.Add(@{Package=$builtinModule; Type='builtin'}) | Out-Null
     }
 
-    return $builtinLibs
+    return ,$builtinLibs
 }
 
 Function Add-ComboBoxActions {
@@ -516,7 +516,7 @@ Function Generate-Form {
     Function Show-PackageInBrowser() {
         $row = $dataGridView.CurrentRow
         if ($row) {
-            $packageName = $row.DataBoundItem.Row['Package']
+            $packageName = $row.DataBoundItem.Row.Package
             $urlName = [System.Web.HttpUtility]::UrlEncode($packageName)
             Start-Process -FilePath "${pypi_path}${urlName}"
         }
@@ -622,12 +622,17 @@ Function Write-PipPackageCounter {
 Function Store-CheckedPipSearchResults() {
     $selected = New-Object System.Data.DataTable
     Init-PackageSearchColumns $selected
-    foreach ($row in $dataModel) {
-        if ($row.Select) {
-            $selected.ImportRow($row)
+
+    $isInstallMode = $dataModel.Columns.Contains('Description')
+    if ($isInstallMode) {
+        foreach ($row in $dataModel) {
+            if ($row.Select) {
+                $selected.ImportRow($row)
+            }
         }
     }
-    return $selected
+
+    return ,$selected
 }
 
 Function Get-PipSearchResults($request) {
@@ -661,10 +666,11 @@ Function Get-PipSearchResults($request) {
     foreach ($line in $output) {
         $m = $r.Match($line)
         $row = $results.NewRow()
-        $row['Select'] = $false
-        $row['Package'] = $m.Groups[1].Value
-        $row['Version'] = $m.Groups[2].Value
-        $row['Description'] = $m.Groups[3].Value
+        $row.Select = $false
+        $row.Package = $m.Groups[1].Value
+        $row.Version = $m.Groups[2].Value
+        $row.Description = $m.Groups[3].Value
+        $row.Status = ''
         $results.Rows.Add($row)
     }    
     
@@ -717,11 +723,11 @@ Function Get-PipSearchResults($request) {
     Function Add-PackagesToTable($packages) {        
         for ($n = 0; $n -lt $packages.Count; $n++) {
             $row = $dataModel.NewRow()        
-            $row['Select'] = $false
-            $row['Package'] = $packages[$n].Package
-            $row['Installed'] = $packages[$n].Installed
-            $row['Latest'] = $packages[$n].Latest
-            $row['Type'] = $packages[$n].Type
+            $row.Select = $false
+            $row.Package = $packages[$n].Package
+            $row.Installed = $packages[$n].Installed
+            $row.Latest = $packages[$n].Latest
+            $row.Type = $packages[$n].Type
             $dataModel.Rows.Add($row)
         }        
     }
@@ -767,7 +773,7 @@ Function Select-PipPackages($value) {
 }
 
 Function Set-Unchecked($index) {
-    return $dataModel.Rows[$index].Select = $false
+    $dataModel.Rows[$index].Select = $false
 }
 
 Function Tidy-Output($text) {
@@ -777,14 +783,20 @@ Function Tidy-Output($text) {
 
 Function Clear-Rows() {
     $Script:outdatedOnly = $true
-    $dataGridView.BeginInit()
-    $dataModel.BeginLoadData()    
+    $Script:inputFilter.Clear()
+    $dataModel.DefaultView.RowFilter = $null
     $dataGridView.ClearSelection()
     
-    $Script:inputFilter.Clear()
-    $dataModel.DefaultView.RowFilter = $null    
+    #if ($dataGridView.SortedColumn) {
+    #    $dataGridView.SortedColumn.SortMode = [System.Windows.Forms.DataGridViewColumnSortMode]::NotSortable
+    #}
+
+    $dataModel.DefaultView.Sort = [String]::Empty
+
+    $dataGridView.BeginInit()
+    $dataModel.BeginLoadData()
     
-    $dataModel.Clear()
+    $dataModel.Rows.Clear()
 
     $dataModel.EndLoadData()
     $dataGridView.EndInit()   
