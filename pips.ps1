@@ -10,6 +10,10 @@ Function Get-Bin($command) {
     (where.exe $command) | Select-Object -Index 0
 }
 
+Function Get-PythonPath() {
+    $Script:interpretersComboBox.SelectedItem.Path
+}
+
 Function Get-PythonExe() {
     $Script:interpretersComboBox.SelectedItem.PythonExe
 }
@@ -31,6 +35,7 @@ $header = ("Select", "Package", "Installed", "Latest", "Type", "Status")
 $csv_header = ("Package", "Installed", "Latest", "Type", "Status")
 $search_columns = ("Select", "Package", "Version", "Description", "Status")
 $formLoaded = $false
+$outdatedOnly = $true
 
 
 Function Write-PipLog() {
@@ -94,14 +99,33 @@ Function Get-PyDoc($request) {
 }
 
 Function Get-PythonStandardPackages() {
-    
+    $standardLibs = New-Object System.Collections.ArrayList
+    $path = Get-PythonPath
+    $libs = "${path}\Lib"
+    $ignore = [regex] '^_'
+    foreach ($item in dir $libs) {
+        if ($item -cmatch $ignore) {
+            continue
+        }
+        
+        $fullItem = "$libs\$item"
+        
+        if ($item -is [System.IO.DirectoryInfo]) {
+            $packageName = "$item"
+        } elseif ($item -is [System.IO.FileInfo]) {
+            $packageName = "$item" -replace '.py$',''
+        }
+        
+        $standardLibs.Add(@{Package=$packageName; Type='standard'}) | Out-Null
+    }
+    return $standardLibs
 }
 
 Function Add-ComboBoxActions {
     Function Make-PipActionItem($name, $code, $validation) {
         $action = New-Object psobject -Property @{Name=$name; Validation=$validation}
         $action | Add-Member ScriptMethod ToString { $this.Name } -Force
-        $action | Add-Member ScriptMethod Execute $code  # $code takes $args which will be package name
+        $action | Add-Member ScriptMethod Execute $code  # $code takes $args array which will have only package name
         return $action
     }
 
@@ -145,10 +169,11 @@ Function Find-Interpreters {
         }
         $trackDuplicates.Add($path) | Out-Null
         
-        $arch = Test-is64Bit $path
-        $pip = (Split-Path -Path $path) + "\Scripts\pip.exe"
+        $python = "${path}\python.exe"
+        $arch = Test-is64Bit $python
+        $pip = "${path}\Scripts\pip.exe"
 
-        $action = New-Object psobject -Property @{Arch=$arch; PythonExe=$path; PipExe=$pip}
+        $action = New-Object psobject -Property @{Path=$path; Arch=$arch; PythonExe=$python; PipExe=$pip}
         $action | Add-Member ScriptMethod ToString { "[{0}] {1}" -f $this.Arch.FileType,$this.PythonExe } -Force
 
         $items.Add($action) | Out-Null
@@ -156,12 +181,12 @@ Function Find-Interpreters {
 
     $list = (where.exe 'python')
     foreach ($path in $list) {
-        Get-InterpreterRecord $path
+        Get-InterpreterRecord (Split-Path -Parent $path)
     }
 
     foreach ($d in dir "$env:LOCALAPPDATA\Programs\Python") {
         if ($d -is [System.IO.DirectoryInfo]) {
-            Get-InterpreterRecord (${d}.FullName + "\python.exe")
+            Get-InterpreterRecord (${d}.FullName)
         }
     }
 
@@ -260,7 +285,7 @@ Function Generate-FormInstall {
     }
 
     Write-PipLog ("Searching for " + $input)
-    Write-PipLog 'Double click table row to open PyPi in browser'
+    Write-PipLog 'Double click a table row to open PyPi in browser (online)'
     Get-PipSearchResults $input
 }
 
@@ -303,6 +328,18 @@ Function Init-PackageSearchColumns($dataTable) {
         }
         $dataTable.Columns.Add($column)
     }
+}
+
+Function Highlight-PythonStandardPackages {
+    if (! $outdatedOnly) {
+        $dataGridView.BeginInit()
+        foreach ($row in $dataGridView.Rows) {
+            if ($row.DataBoundItem.Row.Type -eq 'standard') {
+                $row.DefaultCellStyle.BackColor = [Drawing.Color]::LightGreen
+            }
+        }
+        $dataGridView.EndInit()
+    }    
 }
 
 Function Generate-Form {
@@ -348,6 +385,8 @@ Function Generate-Form {
         if ($selectedRow) {
             Set-SelectedRow $selectedRow
         }
+
+        Highlight-PythonStandardPackages
     }
 
     Add-HorizontalSpacer
@@ -358,6 +397,7 @@ Function Generate-Form {
     $Script:dataGridView = $dataGridView
     $dataGridView.Location = New-Object Drawing.Point 7,($Script:lastWidgetTop + $Script:widgetLineHeight)
     $dataGridView.Size = New-Object Drawing.Point 800,450
+    $dataGridView.Add_Sorted({ Highlight-PythonStandardPackages })
     Init-PackageGridViewProperties
     
     $dataModel = New-Object System.Data.DataTable
@@ -425,6 +465,7 @@ Function Generate-Form {
     Resize-Form
     $form.Add_Resize({ Resize-Form })
     $form.ShowDialog()
+    $form.BringToFront()
 }
 
 Function Resize-FormDoc() {
@@ -447,6 +488,7 @@ Function Generate-FormDocView($title) {
     $docView.ReadOnly = $true
     $docView.Multiline = $true
     $docView.Font = New-Object System.Drawing.Font("Consolas", 11)
+    $docView.WordWrap = $false
     $Script:docView = $docView
     $formDoc.Controls.Add($docView)
 
@@ -474,7 +516,7 @@ Function Highlight-Output() {
     
     $pydocSections = @('NAME', 'DESCRIPTION', 'PACKAGE CONTENTS', 'CLASSES', 'FUNCTIONS', 'DATA', 'VERSION', 'AUTHOR', 'FILE')
     $pythonKeywords = @('False', 'None', 'True', 'and', 'as', 'assert', 'break', 'class', 'continue', 'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'try', 'while', 'with', 'yield')
-    $pythonSpecialMethods = @('self', '__abs__', '__add__', '__and__', '__call__', '__class__', '__cmp__', '__coerce__', '__complex__', '__contains__', '__del__', '__delattr__', '__delete__', '__delitem__', '__delslice__', '__dict__', '__div__', '__divmod__', '__eq__', '__float__', '__floordiv__', '__ge__', '__get__', '__getattr__', '__getattribute__', '__getitem__', '__getslice__', '__gt__', '__hash__', '__hex__', '__iadd__', '__iand__', '__idiv__', '__ifloordiv__', '__ilshift__', '__imod__', '__imul__', '__index__', '__init__', '__instancecheck__', '__int__', '__invert__', '__ior__', '__ipow__', '__irshift__', '__isub__', '__iter__', '__itruediv__', '__ixor__', '__le__', '__len__', '__long__', '__lshift__', '__lt__', '__metaclass__', '__mod__', '__mro__', '__mul__', '__ne__', '__neg__', '__new__', '__nonzero__', '__oct__', '__or__', '__pos__', '__pow__', '__radd__', '__rand__', '__rcmp__', '__rdiv__', '__rdivmod__', '__repr__', '__reversed__', '__rfloordiv__', '__rlshift__', '__rmod__', '__rmul__', '__ror__', '__rpow__', '__rrshift__', '__rshift__', '__rsub__', '__rtruediv__', '__rxor__', '__set__', '__setattr__', '__setitem__', '__setslice__', '__slots__', '__str__', '__sub__', '__subclasscheck__', '__truediv__', '__unicode__', '__weakref__', '__xor__')
+    $pythonSpecialMethods = @('self', '__all__', '__abs__', '__add__', '__and__', '__call__', '__class__', '__cmp__', '__coerce__', '__complex__', '__contains__', '__del__', '__delattr__', '__delete__', '__delitem__', '__delslice__', '__dict__', '__div__', '__divmod__', '__eq__', '__float__', '__floordiv__', '__ge__', '__get__', '__getattr__', '__getattribute__', '__getitem__', '__getslice__', '__gt__', '__hash__', '__hex__', '__iadd__', '__iand__', '__idiv__', '__ifloordiv__', '__ilshift__', '__imod__', '__imul__', '__index__', '__init__', '__instancecheck__', '__int__', '__invert__', '__ior__', '__ipow__', '__irshift__', '__isub__', '__iter__', '__itruediv__', '__ixor__', '__le__', '__len__', '__long__', '__lshift__', '__lt__', '__metaclass__', '__mod__', '__mro__', '__mul__', '__ne__', '__neg__', '__new__', '__nonzero__', '__oct__', '__or__', '__pos__', '__pow__', '__radd__', '__rand__', '__rcmp__', '__rdiv__', '__rdivmod__', '__repr__', '__reversed__', '__rfloordiv__', '__rlshift__', '__rmod__', '__rmul__', '__ror__', '__rpow__', '__rrshift__', '__rshift__', '__rsub__', '__rtruediv__', '__rxor__', '__set__', '__setattr__', '__setitem__', '__setslice__', '__slots__', '__str__', '__sub__', '__subclasscheck__', '__truediv__', '__unicode__', '__weakref__', '__xor__')
 
     foreach ($text in $pydocSections) {
         Highlight-Text "\W($text)\W"
@@ -495,7 +537,8 @@ Function Show-DocView($text, $packageName) {
     Highlight-Output
     $docView.Select(0, 0)
     $docView.ScrollToCaret()
-    $formDoc.Show()
+    $formDoc.ShowDialog()
+    $formDoc.BringToFront()
 }
 
 Function Store-CheckedPipSearchResults() {
@@ -564,23 +607,38 @@ Function Get-PipSearchResults($request) {
     $pip_list = & (&Get-PipExe) $args
     $packages = $pip_list | Select-Object -Skip 2 | % { $_ -replace '\s+', ' ' }  | ConvertFrom-Csv -Header $csv_header -Delimiter ' '
     
+    Function Add-PackagesToTable($packages) {        
+        for ($n = 0; $n -lt $packages.Count; $n++) {
+            $row = $dataModel.NewRow()        
+            $row['Package'] = $packages[$n].Package
+            $row['Installed'] = $packages[$n].Installed
+            $row['Latest'] = $packages[$n].Latest
+            $row['Type'] = $packages[$n].Type
+            $dataModel.Rows.Add($row)
+        }        
+    }
+
     $dataModel.BeginLoadData()
-    for ($n = 0; $n -lt $packages.Count; $n++) {
-        $row = $dataModel.NewRow()        
-        $row['Package'] = $packages[$n].Package
-        $row['Installed'] = $packages[$n].Installed
-        $row['Latest'] = $packages[$n].Latest
-        $row['Type'] = $packages[$n].Type
-        $dataModel.Rows.Add($row)
+    Add-PackagesToTable $packages
+    if (! $outdatedOnly) {
+        $standardPackages = Get-PythonStandardPackages
+        Add-PackagesToTable $standardPackages
     }
     $dataModel.EndLoadData()
 
+    $Script:outdatedOnly = $outdatedOnly
+    Highlight-PythonStandardPackages
+
     Write-PipLog 'Package list updated.'
+    Write-PipLog 'Double click a table row to open PyPi in browser (online)'
 }
 
 Function Select-VisiblePipPackages($value) {
     $dataModel.BeginLoadData()
     for ($i = 0; $i -lt $dataGridView.Rows.Count; $i++) {
+        if ($dataGridView.Rows[$i].DataBoundItem.Row.Type -eq 'standard' ) {
+            continue
+        }
         $dataGridView.Rows[$i].DataBoundItem.Row.Select = $value
     }
     $dataModel.EndLoadData()
@@ -604,7 +662,9 @@ Function Tidy-Output($text) {
 }
 
 Function Clear-Rows() {
-    $dataModel.BeginLoadData()
+    $Script:outdatedOnly = $true
+    $dataGridView.BeginInit()
+    $dataModel.BeginLoadData()    
     $dataGridView.ClearSelection()
     
     $Script:inputFilter.Clear()
@@ -614,7 +674,8 @@ Function Clear-Rows() {
         $dataModel.Rows[$i - 1].Delete()
     }
     $dataModel.Clear()
-    $dataModel.EndLoadData()    
+    $dataModel.EndLoadData()
+    $dataGridView.EndInit()   
 }
 
 Function Set-SelectedRow($selectedRow) {
@@ -679,8 +740,9 @@ Function Execute-PipAction($action) {
 
     Write-PipLog ''
     Write-PipLog '----'
-    Write-PipLog 'All tasks finished'
+    Write-PipLog 'All tasks finished.'
     Write-PipLog 'Select a row to highlight the relevant log piece'
+    Write-PipLog 'Double click a table row to open PyPi in browser (online)'
     Write-PipLog '----'
     Write-PipLog ''
 }
