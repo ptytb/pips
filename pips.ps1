@@ -22,6 +22,18 @@ Function Get-PipExe() {
     $Script:interpretersComboBox.SelectedItem.PipExe
 }
 
+Function Exists-File($path) {
+    return [System.IO.File]::Exists($path)
+}
+
+Function Get-ExistingFilePathOrNull($path) {
+    if (Exists-File $path) {
+        return $path
+    } else {
+        return $null
+    }
+}
+
 $pypi_path = 'https://pypi.python.org/pypi/'
 $lastWidgetLeft = 5
 $lastWidgetTop = 5
@@ -98,15 +110,20 @@ Function Get-PyDoc($request) {
     return $output
 }
 
-Function Get-PythonStandardPackages() {
-    $standardLibs = New-Object System.Collections.ArrayList
+Function Get-PythonBuiltinPackages() {
+    $builtinLibs = New-Object System.Collections.ArrayList
     $path = Get-PythonPath
     $libs = "${path}\Lib"
-    $ignore = [regex] '^_'
+    $ignore = [regex] '^__'
+
+    $trackDuplicates = New-Object System.Collections.Generic.HashSet[String]
+
     foreach ($item in dir $libs) {
         if ($item -cmatch $ignore) {
             continue
         }
+
+        $trackDuplicates.Add("$item") | Out-Null
         
         $fullItem = "$libs\$item"
         
@@ -116,9 +133,20 @@ Function Get-PythonStandardPackages() {
             $packageName = "$item" -replace '.py$',''
         }
         
-        $standardLibs.Add(@{Package=$packageName; Type='standard'}) | Out-Null
+        $builtinLibs.Add(@{Package=$packageName; Type='builtin'}) | Out-Null
     }
-    return $standardLibs
+
+    $getBuiltinsScript = "import sys; print(','.join(sys.builtin_module_names))"
+    $sys_builtin_module_names = & (Get-PythonExe) -c $getBuiltinsScript
+    $modules = $sys_builtin_module_names.Split(',')
+    foreach ($builtinModule in $modules) {
+        if ($trackDuplicates.Contains("$builtinModule")) {
+            continue
+        }
+        $builtinLibs.Add(@{Package=$builtinModule; Type='builtin'}) | Out-Null
+    }
+
+    return $builtinLibs
 }
 
 Function Add-ComboBoxActions {
@@ -132,22 +160,22 @@ Function Add-ComboBoxActions {
     $actionsModel = New-Object System.Collections.ArrayList
     $Add = { param($a) $actionsModel.Add($a) | Out-Null }
 
-    & $Add (Make-PipActionItem 'Show Info'      {return (& (Get-PipExe) show  $args)} `
+    & $Add (Make-PipActionItem 'Show Info'      {return (& (Get-PipExe) show  $args 2>&1)} `
         '.*' )
 
     & $Add (Make-PipActionItem 'Documentation' {Show-DocView (Get-PyDoc $args) $args[0] | Out-Null; return ''} `
         '.*' )
 
-    & $Add (Make-PipActionItem 'Update'    {return (& (Get-PipExe) install -U $args)} `
+    & $Add (Make-PipActionItem 'Update'    {return (& (Get-PipExe) install -U $args 2>&1)} `
         'Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' )
 
-    & $Add (Make-PipActionItem 'Install'    {return (& (Get-PipExe) install   $args)} `
+    & $Add (Make-PipActionItem 'Install'    {return (& (Get-PipExe) install   $args) 2>&1} `
         'Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' )
 
-    & $Add (Make-PipActionItem 'Download'  {return (& (Get-PipExe) download   $args)} `
+    & $Add (Make-PipActionItem 'Download'  {return (& (Get-PipExe) download   $args) 2>&1} `
         'Successfully downloaded ' )
 
-    & $Add (Make-PipActionItem 'Uninstall' {return (& (Get-PipExe) uninstall  $args)} `
+    & $Add (Make-PipActionItem 'Uninstall' {return (& (Get-PipExe) uninstall  $args) 2>&1} `
         'Successfully uninstalled ' )
 
     $Script:actionsModel = $actionsModel
@@ -169,11 +197,17 @@ Function Find-Interpreters {
         }
         $trackDuplicates.Add($path) | Out-Null
         
-        $python = "${path}\python.exe"
-        $arch = Test-is64Bit $python
-        $pip = "${path}\Scripts\pip.exe"
+        $python = Get-ExistingFilePathOrNull "${path}\python.exe"
+        $pip = Get-ExistingFilePathOrNull "${path}\Scripts\pip.exe"
+        $conda = Get-ExistingFilePathOrNull "${path}\Scripts\conda.exe"
+        
+        if ($python) {
+            $arch = Test-is64Bit $python
+        } else {
+            $arch = $null
+        }
 
-        $action = New-Object psobject -Property @{Path=$path; Arch=$arch; PythonExe=$python; PipExe=$pip}
+        $action = New-Object psobject -Property @{Path=$path; Arch=$arch; PythonExe=$python; PipExe=$pip; CondaExe=$conda}
         $action | Add-Member ScriptMethod ToString { "[{0}] {1}" -f $this.Arch.FileType,$this.PythonExe } -Force
 
         $items.Add($action) | Out-Null
@@ -271,7 +305,7 @@ Function Toggle-VirtualEnv ($state) {
 }
 
 Function Generate-FormInstall {
-    $message = "Enter keywords to search PyPi`n`n* = list all packages`n`nChecked items will be kept in search list"
+    $message = "Enter keywords to search PyPi`n`n* = list all packages`n`nChecked items will be kept in the search list"
     $title = "pip search ..."
     $default = "*"
 
@@ -286,7 +320,10 @@ Function Generate-FormInstall {
 
     Write-PipLog ("Searching for " + $input)
     Write-PipLog 'Double click a table row to open PyPi in browser (online)'
+    
     Get-PipSearchResults $input
+    
+    Write-PipPackageCounter
 }
 
 Function Init-PackageGridViewProperties() {
@@ -330,11 +367,11 @@ Function Init-PackageSearchColumns($dataTable) {
     }
 }
 
-Function Highlight-PythonStandardPackages {
+Function Highlight-PythonBuiltinPackages {
     if (! $outdatedOnly) {
         $dataGridView.BeginInit()
         foreach ($row in $dataGridView.Rows) {
-            if ($row.DataBoundItem.Row.Type -eq 'standard') {
+            if ($row.DataBoundItem.Row.Type -eq 'builtin') {
                 $row.DefaultCellStyle.BackColor = [Drawing.Color]::LightGreen
             }
         }
@@ -386,18 +423,19 @@ Function Generate-Form {
             Set-SelectedRow $selectedRow
         }
 
-        Highlight-PythonStandardPackages
+        Highlight-PythonBuiltinPackages
     }
 
     Add-HorizontalSpacer
     Add-Label "Active Interpreter:"
     Add-ComboBoxInterpreters
+    Add-Button "Add venv dir..." { Write-PipLog 'Not implemented yet...' }
     
     $dataGridView = New-Object System.Windows.Forms.DataGridView
     $Script:dataGridView = $dataGridView
     $dataGridView.Location = New-Object Drawing.Point 7,($Script:lastWidgetTop + $Script:widgetLineHeight)
     $dataGridView.Size = New-Object Drawing.Point 800,450
-    $dataGridView.Add_Sorted({ Highlight-PythonStandardPackages })
+    $dataGridView.Add_Sorted({ Highlight-PythonBuiltinPackages })
     Init-PackageGridViewProperties
     
     $dataModel = New-Object System.Data.DataTable
@@ -460,7 +498,7 @@ Function Generate-Form {
         $logView.Height = $form.ClientSize.Height - $dataGridView.Bottom - $lastWidgetTop
     }
 
-    $form.Add_Closed({ $formDoc.Close() })
+    $form.Add_Closed({ if ($formDoc) { $formDoc.Close() } })
 
     Resize-Form
     $form.Add_Resize({ Resize-Form })
@@ -541,6 +579,11 @@ Function Show-DocView($text, $packageName) {
     $formDoc.BringToFront()
 }
 
+Function Write-PipPackageCounter {
+    $count = $dataModel.Rows.Count
+    Write-PipLog "Now $count packages in the list."
+}
+
 Function Store-CheckedPipSearchResults() {
     $selected = New-Object System.Data.DataTable
     Init-PackageSearchColumns $selected
@@ -553,10 +596,16 @@ Function Store-CheckedPipSearchResults() {
 }
 
 Function Get-PipSearchResults($request) {
+    $pip_exe = Get-PipExe
+    if (!$pip_exe) {
+        Write-PipLog 'pip is not found!'
+        return
+    }
+
     $args = New-Object System.Collections.ArrayList
     $args.Add('search') | Out-Null
     $args.Add("$request") | Out-Null
-    $output = & (&Get-PipExe) $args
+    $output = & $pip_exe $args
 
     $results = $dataModel
        
@@ -569,9 +618,11 @@ Function Get-PipSearchResults($request) {
     $results.BeginLoadData()
 
     $r = [regex] '^(.*?)\s*\((.*?)\)\s+-\s+(.*?)$'
+
     foreach ($row in $previousSelected) {
         $results.ImportRow($row)
     }
+
     foreach ($line in $output) {
         $m = $r.Match($line)
         $row = $results.NewRow()
@@ -589,31 +640,49 @@ Function Get-PipSearchResults($request) {
  Function Get-PythonPackages($outdatedOnly = $true) {
     Write-PipLog
     Write-PipLog 'Updating package list... '
-    Write-PipLog (& (&Get-PythonExe) --version)
-    Write-PipLog (& (&Get-PipExe) --version)
+    
+    $python_exe = Get-PythonExe
+    $pip_exe = Get-PipExe
+    
+    if ($python_exe) {
+        Write-PipLog (& $python_exe --version 2>&1)
+    } else {
+        Write-PipLog 'Python is not found!'
+    }
+    
+    if ($pip_exe) {
+        Write-PipLog (& $pip_exe --version 2>&1)
+    } else {
+        Write-PipLog 'pip is not found!'
+    }
+    
     Write-PipLog
 
     Clear-Rows
     Init-PackageUpdateColumns $dataModel
 
-    $args = New-Object System.Collections.ArrayList
-    $args.Add('list') | Out-Null
-
-    if ($outdatedOnly) {
-        $args.Add('--outdated') | Out-Null
-    }
-
-    $args.Add('--format=columns') | Out-Null
-    if ($Script:virtualenvCheckBox.Checked) {
-        $args.Add('--isolated') | Out-Null
-    }
-
-    $pip_list = & (&Get-PipExe) $args
-    $packages = $pip_list | Select-Object -Skip 2 | % { $_ -replace '\s+', ' ' }  | ConvertFrom-Csv -Header $csv_header -Delimiter ' '
     
+    if ($pip_exe) {
+        $args = New-Object System.Collections.ArrayList
+        $args.Add('list') | Out-Null
+
+        if ($outdatedOnly) {
+            $args.Add('--outdated') | Out-Null
+        }
+
+        $args.Add('--format=columns') | Out-Null
+        if ($Script:virtualenvCheckBox.Checked) {
+            $args.Add('--isolated') | Out-Null
+        }
+
+        $pip_list = & $pip_exe $args
+        $packages = $pip_list | Select-Object -Skip 2 | % { $_ -replace '\s+', ' ' }  | ConvertFrom-Csv -Header $csv_header -Delimiter ' '
+    }
+
     Function Add-PackagesToTable($packages) {        
         for ($n = 0; $n -lt $packages.Count; $n++) {
             $row = $dataModel.NewRow()        
+            $row['Select'] = $false
             $row['Package'] = $packages[$n].Package
             $row['Installed'] = $packages[$n].Installed
             $row['Latest'] = $packages[$n].Latest
@@ -623,24 +692,30 @@ Function Get-PipSearchResults($request) {
     }
 
     $dataModel.BeginLoadData()
-    Add-PackagesToTable $packages
+    if ($pip_exe) {
+        Add-PackagesToTable $packages
+    }
     if (! $outdatedOnly) {
-        $standardPackages = Get-PythonStandardPackages
-        Add-PackagesToTable $standardPackages
+        $builtinPackages = Get-PythonBuiltinPackages
+        Add-PackagesToTable $builtinPackages
     }
     $dataModel.EndLoadData()
 
     $Script:outdatedOnly = $outdatedOnly
-    Highlight-PythonStandardPackages
+    Highlight-PythonBuiltinPackages
 
     Write-PipLog 'Package list updated.'
     Write-PipLog 'Double click a table row to open PyPi in browser (online)'
+    
+    $count = $dataModel.Rows.Count
+    $builtinCount = $builtinPackages.Count
+    Write-PipLog "Now $count packages in the list, $builtinCount builtin"
 }
 
 Function Select-VisiblePipPackages($value) {
     $dataModel.BeginLoadData()
     for ($i = 0; $i -lt $dataGridView.Rows.Count; $i++) {
-        if ($dataGridView.Rows[$i].DataBoundItem.Row.Type -eq 'standard' ) {
+        if ($dataGridView.Rows[$i].DataBoundItem.Row.Type -eq 'builtin' ) {
             continue
         }
         $dataGridView.Rows[$i].DataBoundItem.Row.Select = $value
@@ -661,7 +736,7 @@ Function Set-Unchecked($index) {
 }
 
 Function Tidy-Output($text) {
-    $result = ($text -replace '(\.?\s*$)', "`n")
+    $result = ($text -replace '\s*$', "`n")
     return $result
 }
 
@@ -674,10 +749,8 @@ Function Clear-Rows() {
     $Script:inputFilter.Clear()
     $dataModel.DefaultView.RowFilter = $null    
     
-    for ($i = $dataModel.Rows.Count; $i -ge 1; $i--) {
-        $dataModel.Rows[$i - 1].Delete()
-    }
     $dataModel.Clear()
+
     $dataModel.EndLoadData()
     $dataGridView.EndInit()   
 }
@@ -696,10 +769,16 @@ Function Set-SelectedRow($selectedRow) {
 Function Check-PipDependencies {
     Write-PipLog 'Checking dependencies...'
 
-    $result = & (&Get-PipExe) check
+    $pip_exe = Get-PipExe
+    if (!$pip_exe) {
+        Write-PipLog 'pip is not found!'
+        return
+    }
+
+    $result = & $pip_exe check 2>&1
     $result = Tidy-Output $result
     
-    if ($result.StartsWith('No broken')) {
+    if ($result -match 'No broken requirements found') {
         Write-PipLog "OK"
         Write-PipLog $result
     } else {
