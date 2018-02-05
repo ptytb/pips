@@ -204,16 +204,18 @@ $actionCommands = @{
         documentation = { Show-DocView (Get-PyDoc $pkg) $pkg | Out-Null; return '' };
         update        = { return (& (Get-PipExe) install -U $args 2>&1) };
         install       = { return (& (Get-PipExe) install    $args 2>&1) };
+        install_dry   = { return 'Not supported on pip' };
         download      = { return (& (Get-PipExe) download   $args 2>&1) };
         uninstall     = { return (& (Get-PipExe) uninstall  $args 2>&1) };
     };
     conda=@{
-        info          = { return (& (Get-CondaExe) list -v --json $args 2>&1) };        
-        documentation = { };
-        update        = { return (& (Get-CondaExe) update     $args 2>&1) };
-        install       = { return (& (Get-CondaExe) install    $args 2>&1) };
+        info          = { return (& (Get-CondaExe) list      -v --json             $args 2>&1) };        
+        documentation = { return '' };
+        update        = { return (& (Get-CondaExe) update    --yes                 $args 2>&1) };
+        install       = { return (& (Get-CondaExe) install   --yes --no-shortcuts  $args 2>&1) };
+        install_dry   = { return (& (Get-CondaExe) install   --dry-run             $args 2>&1) };
         download      = { return '' };
-        uninstall     = { return (& (Get-CondaExe) uninstall  $args 2>&1) };
+        uninstall     = { return (& (Get-CondaExe) uninstall --yes                 $args 2>&1) };
     };
 }
 $actionCommands.wheel   = $actionCommands.pip
@@ -231,22 +233,25 @@ Function Add-ComboBoxActions {
     $actionsModel = New-Object System.Collections.ArrayList
     $Add = { param($a) $actionsModel.Add($a) | Out-Null }
 
-    & $Add (Make-PipActionItem 'Show Info'     { param($pkg,$type); return $actionCommands[$type].info.Invoke($pkg) } `
+    & $Add (Make-PipActionItem 'Show Info'           { param($pkg,$type); return $actionCommands[$type].info.Invoke($pkg) } `
         '.*' )
 
-    & $Add (Make-PipActionItem 'Documentation' { param($pkg,$type); return $actionCommands[$type].documentation.Invoke($pkg) } `
+    & $Add (Make-PipActionItem 'Documentation'       { param($pkg,$type); return $actionCommands[$type].documentation.Invoke($pkg) } `
         '.*' )
 
-    & $Add (Make-PipActionItem 'Update'        { param($pkg,$type); return $actionCommands[$type].update.Invoke($pkg) } `
+    & $Add (Make-PipActionItem 'Update'              { param($pkg,$type); return $actionCommands[$type].update.Invoke($pkg) } `
         'Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' )
 
-    & $Add (Make-PipActionItem 'Install'       { param($pkg,$type); return $actionCommands[$type].install.Invoke($pkg) } `
+    & $Add (Make-PipActionItem 'Install (Dry Run)'   { param($pkg,$type); return $actionCommands[$type].install_dry.Invoke($pkg) } `
         'Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' )
 
-    & $Add (Make-PipActionItem 'Download'      { param($pkg,$type); return $actionCommands[$type].download.Invoke($pkg) } `
+    & $Add (Make-PipActionItem 'Install'             { param($pkg,$type); return $actionCommands[$type].install.Invoke($pkg) } `
+        'Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' )
+
+    & $Add (Make-PipActionItem 'Download'            { param($pkg,$type); return $actionCommands[$type].download.Invoke($pkg) } `
         'Successfully downloaded ' )
 
-    & $Add (Make-PipActionItem 'Uninstall'     { param($pkg,$type); return $actionCommands[$type].uninstall.Invoke($pkg) } `
+    & $Add (Make-PipActionItem 'Uninstall'           { param($pkg,$type); return $actionCommands[$type].uninstall.Invoke($pkg) } `
         'Successfully uninstalled ' )
 
     $Script:actionsModel = $actionsModel
