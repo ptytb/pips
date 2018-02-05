@@ -56,7 +56,9 @@ Function Get-ExistingPathOrNull($path) {
     }
 }
 
-$pypi_path = 'https://pypi.python.org/pypi/'
+$pypi_url = 'https://pypi.python.org/pypi/'
+$anaconda_url = 'https://anaconda.org/search?q='
+
 $lastWidgetLeft = 5
 $lastWidgetTop = 5
 $widgetLineHeight = 23
@@ -580,11 +582,17 @@ Function Generate-Form {
     $dataGridView.Add_SelectionChanged({ Highlight-LogFragment })
 
     Function Show-PackageInBrowser() {
-        $row = $dataGridView.CurrentRow
-        if ($row) {
-            $packageName = $row.DataBoundItem.Row.Package
+        $view_row = $dataGridView.CurrentRow
+        if ($view_row) {
+            $row = $view_row.DataBoundItem.Row
+            $packageName = $row.Package
             $urlName = [System.Web.HttpUtility]::UrlEncode($packageName)
-            Start-Process -FilePath "${pypi_path}${urlName}"
+            if ($row.Type -eq 'conda') {
+                $url = $anaconda_url
+            } else {
+                $url = $pypi_url
+            }
+            Start-Process -FilePath "${url}${urlName}"
         }
     }
 
