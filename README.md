@@ -28,3 +28,4 @@ This tiny script helps to keep packages updated.
 - [ ] Now assuming *utf-8* for IO whilst old(?) Python versions use cp1252, which generates empty strings for Chinese, Russian, etc.
 - [ ] Filter package search results for conda by relevant Architecture
 - [ ] Implement some missing conda commands
+- [ ] *conda* command has a nice options to work with but gives wierd output - suggests older package versions than installed. Needed intervention with channels?

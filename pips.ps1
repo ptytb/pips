@@ -180,6 +180,13 @@ Function Get-CondaPackages() {
         $arguments.Add('list') | Out-Null
         $arguments.Add('--json') | Out-Null
         $arguments.Add('--no-pip') | Out-Null
+        $arguments.Add('--show-channel-urls') | Out-Null
+
+        # This one sounds nice but could give versions older than installed
+        # conda update --dry-run --json --all
+        
+        # This one sounds nice but could give versions older than installed
+        # conda search --outdated
 
         $items = & $conda_exe $arguments | ConvertFrom-Json 
 
@@ -734,6 +741,7 @@ Function Get-CondaSearchResults($request) {
     }
     $arch = Get-PythonArchitecture
 
+    # --info should give better details but not supported on every conda
     $items = & $conda_exe search --json $request | ConvertFrom-Json
 
     $count = 0
@@ -834,6 +842,9 @@ Function Get-SearchResults($request) {
             $row.Installed = $packages[$n].Installed
             $row.Latest = $packages[$n].Latest
             $row.Type = $packages[$n].Type
+            if (! [String]::IsNullOrEmpty($packages[$n].Version)) {
+                $row.Installed = $packages[$n].Version
+            }
             if ([String]::IsNullOrEmpty($row.Type)) {
                 $row.Type = $defaultType
             } 
