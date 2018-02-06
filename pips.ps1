@@ -723,15 +723,17 @@ $pyRegexSpecial   = Compile-Regex ("\W(" + (($pydocSpecial  | foreach { "${_}"  
 $pyRegexSpecialU  = Compile-Regex ("\W(" + (($pydocSpecialU | foreach { "__${_}__" }) -join '|') + ")\W")
 $pyRegexPEP       = Compile-Regex '\W(PEP[ -]?(?:\d+))'
 
+$modifiedTextLengthDelta = 0  # We've found all matches with immutual Text, but will be changing actual document
 Function Alter-MatchingFragments($pattern, $selectionAlteringCode) {
+    $Script:modifiedTextLengthDelta = 0
     $matches = $pattern.Matches($docView.Text)
 
     foreach ($match in $matches.Groups) {
         if ($match.Name -eq 0) {
             continue
         }
-        $docView.Select($match.Index, $match.Length)
-        $selectionAlteringCode.Invoke($match.Index, $match.Length, $match.Value)
+        $docView.Select($match.Index + $modifiedTextLengthDelta, $match.Length)
+        $selectionAlteringCode.Invoke($match.Index + $modifiedTextLengthDelta, $match.Length, $match.Value)
     }
 }
 
@@ -758,15 +760,17 @@ Function Highlight-Links {
 	Alter-MatchingFragments $pyRegexPEP {
         param($index, $length, $match)
         $pep_url = "${peps_url}$(($match -replace ' ', '-').ToLower())"
+        $Script:modifiedTextLengthDelta -= $docView.TextLength
         $docView.SelectedText = "$match [$pep_url]"
+        $Script:modifiedTextLengthDelta += $docView.TextLength
 	}
 }
 
 Function Show-DocView($text, $packageName) {
     Generate-FormDocView "PyDoc for $packageName"
 	$Script:docView.Text = (Tidy-Output $text)
-    Highlight-PyDocSyntax
 	Highlight-Links
+    Highlight-PyDocSyntax
 	$docView.Select(0, 0)
     $docView.ScrollToCaret()
     $formDoc.ShowDialog()
