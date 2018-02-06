@@ -58,6 +58,7 @@ Function Get-ExistingPathOrNull($path) {
 
 $pypi_url = 'https://pypi.python.org/pypi/'
 $anaconda_url = 'https://anaconda.org/search?q='
+$peps_url = 'https://www.python.org/dev/peps/'
 
 $lastWidgetLeft = 5
 $lastWidgetTop = 5
@@ -481,6 +482,12 @@ Function Highlight-PythonBuiltinPackages {
     }    
 }
 
+Function Open-LinkInBrowser($url) {
+    if ($url -match '^https://') {
+        Start-Process -FilePath $url
+    }
+}
+
 Function Generate-Form {
     $form = New-Object Windows.Forms.Form
     $form.Text = "pip package browser"
@@ -635,7 +642,7 @@ Function Generate-Form {
             } else {
                 $url = $pypi_url
             }
-            Start-Process -FilePath "${url}${urlName}"
+            Open-LinkInBrowser "${url}${urlName}"
         }
     }
 
@@ -679,15 +686,23 @@ Function Generate-FormDocView($title) {
     $docView.Multiline = $true
     $docView.Font = New-Object System.Drawing.Font("Consolas", 11)
     $docView.WordWrap = $false
+    $docView.DetectUrls = $true
+    $docView.AllowDrop = $false
+    $docView.RichTextShortcutsEnabled = $false
     $Script:docView = $docView
     $formDoc.Controls.Add($docView)
+
+    $docView.add_LinkClicked({
+        Open-LinkInBrowser $_.LinkText
+    })
 
     Resize-FormDoc
     $formDoc.Add_Resize({ Resize-FormDoc })
 }
 
 
-$fontBold = New-Object System.Drawing.Font("Consolas",11,[System.Drawing.FontStyle]::Bold)
+$fontBold      = New-Object System.Drawing.Font("Consolas", 11, [System.Drawing.FontStyle]::Bold)
+
 $regexOptions = [System.Text.RegularExpressions.RegexOptions]::Compiled
 
 $pydocSections = @('NAME', 'DESCRIPTION', 'PACKAGE CONTENTS', 'CLASSES', 'FUNCTIONS', 'DATA', 'VERSION', 'AUTHOR', 'FILE')
@@ -704,23 +719,30 @@ $pyRegexNumber    = Compile-Regex '([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)'
 $pyRegexSection   = Compile-Regex ("\W(" + (($pydocSections | foreach { "${_}" }) -join '|') + ")\W")
 $pyRegexKeyword   = Compile-Regex ("\W(" + (($pydocKeywords | foreach { "${_}" }) -join '|') + ")\W")
 $pyRegexSpecial   = Compile-Regex ("\W(" + (($pydocSpecial  | foreach { "${_}" }) -join '|') + ")\W")
+$pyRegexPEP       = Compile-Regex '\W(PEP[ -]?(?:\d+))'
 
-Function Highlight-Output() {
-    Function Highlight-Text($pattern, $foreground = [Drawing.Color]::DarkCyan, $useBold = $true) {
-        $matches = $pattern.Matches($docView.Text)
+Function Alter-MatchingFragments($pattern, $selectionAlteringCode) {
+    $matches = $pattern.Matches($docView.Text)
 
-        foreach ($match in $matches.Groups) {
-            if ($match.Name -eq 0) {
-                continue
-            }
-            $docView.Select($match.Index, $match.Length)
-            $docView.SelectionColor = $foreground
-            if ($useBold) {
-                $docView.SelectionFont = $fontBold
-            }
+    foreach ($match in $matches.Groups) {
+        if ($match.Name -eq 0) {
+            continue
         }
+        $docView.Select($match.Index, $match.Length)
+        $selectionAlteringCode.Invoke($match.Index, $match.Length, $match.Value)
     }
-    
+}
+
+Function Highlight-Text($pattern, $foreground = [Drawing.Color]::DarkCyan, $useBold = $true) {
+    Alter-MatchingFragments $pattern {
+		$docView.SelectionColor = $foreground
+        if ($useBold) {
+            $docView.SelectionFont = $fontBold
+        }
+	}
+}
+
+Function Highlight-PyDocSyntax() {
     Highlight-Text $pyRegexStrSQuote ([Drawing.Color]::DarkGreen)   $false
     Highlight-Text $pyRegexStrDQuote ([Drawing.Color]::DarkGreen)   $false
     Highlight-Text $pyRegexNumber    ([Drawing.Color]::DarkMagenta) $false
@@ -729,10 +751,19 @@ Function Highlight-Output() {
     Highlight-Text $pyRegexSpecial   ([Drawing.Color]::DarkOrange)
 }
 
+Function Highlight-Links {
+	Alter-MatchingFragments $pyRegexPEP {
+        param($index, $length, $match)
+        $pep_url = "${peps_url}$(($match -replace ' ', '-').ToLower())"
+        $docView.SelectedText = "$match [$pep_url]"
+	}
+}
+
 Function Show-DocView($text, $packageName) {
     Generate-FormDocView "PyDoc for $packageName"
 	$Script:docView.Text = (Tidy-Output $text)
-    Highlight-Output		
+    Highlight-PyDocSyntax
+	Highlight-Links
 	$docView.Select(0, 0)
     $docView.ScrollToCaret()
     $formDoc.ShowDialog()
