@@ -225,36 +225,44 @@ $actionCommands.sdist   = $actionCommands.pip
 $actionCommands.builtin = $actionCommands.pip
 
 Function Add-ComboBoxActions {
-    Function Make-PipActionItem($name, $code, $validation) {
-        $action = New-Object psobject -Property @{Name=$name; Validation=$validation}
+    Function Make-PipActionItem($name, $code, $validator) {
+        $action = New-Object psobject -Property @{Name=$name}
         $action | Add-Member ScriptMethod ToString { $this.Name } -Force
-        $action | Add-Member ScriptMethod Execute $code  # $code takes param($pkg,$type)
+		$action | Add-Member ScriptMethod Execute  $code
+		$action | Add-Member ScriptMethod Validate $validator
         return $action
     }
 
     $actionsModel = New-Object System.Collections.ArrayList
     $Add = { param($a) $actionsModel.Add($a) | Out-Null }
 
-    & $Add (Make-PipActionItem 'Show Info'           { param($pkg,$type); return $actionCommands[$type].info.Invoke($pkg) } `
-        '.*' )
+    & $Add (Make-PipActionItem 'Show Info' `
+		{ param($pkg,$type); $actionCommands[$type].info.Invoke($pkg) } `
+        { param($pkg,$out); $out -match $pkg } )
+	
+    & $Add (Make-PipActionItem 'Documentation' `
+		{ param($pkg,$type); $actionCommands[$type].documentation.Invoke($pkg) } `
+        { param($pkg,$out); $out -match '.*' } )
 
-    & $Add (Make-PipActionItem 'Documentation'       { param($pkg,$type); return $actionCommands[$type].documentation.Invoke($pkg) } `
-        '.*' )
+    & $Add (Make-PipActionItem 'Update' `
+		{ param($pkg,$type); $actionCommands[$type].update.Invoke($pkg) } `
+        { param($pkg,$out); $out -match ('Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' + $pkg) } )
 
-    & $Add (Make-PipActionItem 'Update'              { param($pkg,$type); return $actionCommands[$type].update.Invoke($pkg) } `
-        'Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' )
+    & $Add (Make-PipActionItem 'Install (Dry Run)' `
+		{ param($pkg,$type); $actionCommands[$type].install_dry.Invoke($pkg) } `
+        { param($pkg,$out); $out -match ('Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' + $pkg) } )
 
-    & $Add (Make-PipActionItem 'Install (Dry Run)'   { param($pkg,$type); return $actionCommands[$type].install_dry.Invoke($pkg) } `
-        'Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' )
+    & $Add (Make-PipActionItem 'Install' `
+		{ param($pkg,$type); $actionCommands[$type].install.Invoke($pkg) } `
+        { param($pkg,$out); $out -match ('Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' + $pkg) } )
 
-    & $Add (Make-PipActionItem 'Install'             { param($pkg,$type); return $actionCommands[$type].install.Invoke($pkg) } `
-        'Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' )
+    & $Add (Make-PipActionItem 'Download' `
+		{ param($pkg,$type); $actionCommands[$type].download.Invoke($pkg) } `
+        { param($pkg,$out); $out -match 'Successfully downloaded ' } )
 
-    & $Add (Make-PipActionItem 'Download'            { param($pkg,$type); return $actionCommands[$type].download.Invoke($pkg) } `
-        'Successfully downloaded ' )
-
-    & $Add (Make-PipActionItem 'Uninstall'           { param($pkg,$type); return $actionCommands[$type].uninstall.Invoke($pkg) } `
-        'Successfully uninstalled ' )
+    & $Add (Make-PipActionItem 'Uninstall' `
+		{ param($pkg,$type); $actionCommands[$type].uninstall.Invoke($pkg) } `
+        { param($pkg,$out); $out -match ('Successfully uninstalled ' + $pkg) } )
 
     $Script:actionsModel = $actionsModel
 
@@ -678,13 +686,28 @@ Function Generate-FormDocView($title) {
     $formDoc.Add_Resize({ Resize-FormDoc })
 }
 
-Function Highlight-Output() {
-    $fontBold = New-Object System.Drawing.Font("Consolas",11,[System.Drawing.FontStyle]::Bold)
 
+$fontBold = New-Object System.Drawing.Font("Consolas",11,[System.Drawing.FontStyle]::Bold)
+$regexOptions = [System.Text.RegularExpressions.RegexOptions]::Compiled
+
+$pydocSections = @('NAME', 'DESCRIPTION', 'PACKAGE CONTENTS', 'CLASSES', 'FUNCTIONS', 'DATA', 'VERSION', 'AUTHOR', 'FILE')
+$pydocKeywords = @('False', 'None', 'True', 'and', 'as', 'assert', 'break', 'class', 'continue', 'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'try', 'while', 'with', 'yield')
+$pydocSpecial  = @('self', 'async', 'await', '__main__', '__all__', '__abs__', '__add__', '__and__', '__call__', '__class__', '__cmp__', '__coerce__', '__complex__', '__contains__', '__del__', '__delattr__', '__delete__', '__delitem__', '__delslice__', '__dict__', '__div__', '__divmod__', '__eq__', '__float__', '__floordiv__', '__ge__', '__get__', '__getattr__', '__getattribute__', '__getitem__', '__getslice__', '__gt__', '__hash__', '__hex__', '__iadd__', '__iand__', '__idiv__', '__ifloordiv__', '__ilshift__', '__imod__', '__imul__', '__index__', '__init__', '__instancecheck__', '__int__', '__invert__', '__ior__', '__ipow__', '__irshift__', '__isub__', '__iter__', '__itruediv__', '__ixor__', '__le__', '__len__', '__long__', '__lshift__', '__lt__', '__metaclass__', '__mod__', '__mro__', '__mul__', '__ne__', '__neg__', '__new__', '__nonzero__', '__oct__', '__or__', '__pos__', '__pow__', '__radd__', '__rand__', '__rcmp__', '__rdiv__', '__rdivmod__', '__repr__', '__reversed__', '__rfloordiv__', '__rlshift__', '__rmod__', '__rmul__', '__ror__', '__rpow__', '__rrshift__', '__rshift__', '__rsub__', '__rtruediv__', '__rxor__', '__set__', '__setattr__', '__setitem__', '__setslice__', '__slots__', '__str__', '__sub__', '__subclasscheck__', '__truediv__', '__unicode__', '__weakref__', '__xor__')
+
+Function Compile-Regex($pattern) {
+	return New-Object System.Text.RegularExpressions.Regex($pattern, $regexOptions)
+}
+
+$pyRegexStrSQuote = Compile-Regex "('[^\n'\\]*?')"
+$pyRegexStrDQuote = Compile-Regex '("[^\n"\\]*?")'
+$pyRegexNumber    = Compile-Regex '([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)'
+$pyRegexSection   = Compile-Regex ("\W(" + (($pydocSections | foreach { "${_}" }) -join '|') + ")\W")
+$pyRegexKeyword   = Compile-Regex ("\W(" + (($pydocKeywords | foreach { "${_}" }) -join '|') + ")\W")
+$pyRegexSpecial   = Compile-Regex ("\W(" + (($pydocSpecial  | foreach { "${_}" }) -join '|') + ")\W")
+
+Function Highlight-Output() {
     Function Highlight-Text($pattern, $foreground = [Drawing.Color]::DarkCyan, $useBold = $true) {
-        $regexOptions = [System.Text.RegularExpressions.RegexOptions]::ExplicitCapture 
-                      + [System.Text.RegularExpressions.RegexOptions]::Compiled
-        $matches = [regex]::Matches($docView.Text, "$pattern")        
+        $matches = $pattern.Matches($docView.Text)
 
         foreach ($match in $matches.Groups) {
             if ($match.Name -eq 0) {
@@ -698,25 +721,12 @@ Function Highlight-Output() {
         }
     }
     
-    $pydocSections = @('NAME', 'DESCRIPTION', 'PACKAGE CONTENTS', 'CLASSES', 'FUNCTIONS', 'DATA', 'VERSION', 'AUTHOR', 'FILE')
-    $pythonKeywords = @('False', 'None', 'True', 'and', 'as', 'assert', 'break', 'class', 'continue', 'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'try', 'while', 'with', 'yield')
-    $pythonSpecial = @('self', 'async', 'await', '__main__', '__all__', '__abs__', '__add__', '__and__', '__call__', '__class__', '__cmp__', '__coerce__', '__complex__', '__contains__', '__del__', '__delattr__', '__delete__', '__delitem__', '__delslice__', '__dict__', '__div__', '__divmod__', '__eq__', '__float__', '__floordiv__', '__ge__', '__get__', '__getattr__', '__getattribute__', '__getitem__', '__getslice__', '__gt__', '__hash__', '__hex__', '__iadd__', '__iand__', '__idiv__', '__ifloordiv__', '__ilshift__', '__imod__', '__imul__', '__index__', '__init__', '__instancecheck__', '__int__', '__invert__', '__ior__', '__ipow__', '__irshift__', '__isub__', '__iter__', '__itruediv__', '__ixor__', '__le__', '__len__', '__long__', '__lshift__', '__lt__', '__metaclass__', '__mod__', '__mro__', '__mul__', '__ne__', '__neg__', '__new__', '__nonzero__', '__oct__', '__or__', '__pos__', '__pow__', '__radd__', '__rand__', '__rcmp__', '__rdiv__', '__rdivmod__', '__repr__', '__reversed__', '__rfloordiv__', '__rlshift__', '__rmod__', '__rmul__', '__ror__', '__rpow__', '__rrshift__', '__rshift__', '__rsub__', '__rtruediv__', '__rxor__', '__set__', '__setattr__', '__setitem__', '__setslice__', '__slots__', '__str__', '__sub__', '__subclasscheck__', '__truediv__', '__unicode__', '__weakref__', '__xor__')
-
-    Highlight-Text "('[^\n'\\]*?')" ([Drawing.Color]::DarkGreen) $false
-    Highlight-Text '("[^\n"\\]*?")' ([Drawing.Color]::DarkGreen) $false
-    Highlight-Text '([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)' ([Drawing.Color]::DarkMagenta) $false
-
-    foreach ($text in $pydocSections) {
-        Highlight-Text "\W($text)\W"
-    }
-
-    foreach ($text in $pythonKeywords) {
-        Highlight-Text "\W($text)\W" ([Drawing.Color]::DarkRed)
-    }
-
-    foreach ($text in $pythonSpecial) {
-        Highlight-Text "\W($text)\W" ([Drawing.Color]::DarkOrange)
-    }
+    Highlight-Text $pyRegexStrSQuote ([Drawing.Color]::DarkGreen)   $false
+    Highlight-Text $pyRegexStrDQuote ([Drawing.Color]::DarkGreen)   $false
+    Highlight-Text $pyRegexNumber    ([Drawing.Color]::DarkMagenta) $false
+    Highlight-Text $pyRegexSection   ([Drawing.Color]::DarkCyan)
+    Highlight-Text $pyRegexKeyword   ([Drawing.Color]::DarkRed)
+    Highlight-Text $pyRegexSpecial   ([Drawing.Color]::DarkOrange)
 }
 
 Function Show-DocView($text, $packageName) {
@@ -978,7 +988,9 @@ Function Clear-Rows() {
 function Set-SelectedNRow($n) {
 	$dataGridView.ClearSelection()
 	$dataGridView.FirstDisplayedScrollingRowIndex = $n
-	$dataGridView.Rows[$n].Selected = $true
+	if ($n -lt $dataGridView.RowCount) {
+        $dataGridView.Rows[$n].Selected = $true
+    }
 }
 
 Function Set-SelectedRow($selectedRow) {
@@ -986,10 +998,10 @@ Function Set-SelectedRow($selectedRow) {
     foreach ($vRow in $Script:dataGridView.Rows) {
         if ($vRow.DataBoundItem.Row -eq $selectedRow) {
             $vRow.Selected = $true
+            $dataGridView.FirstDisplayedScrollingRowIndex = $vRow.Index
             break
         }
 	}
-	$dataGridView.FirstDisplayedScrollingRowIndex = $vRow.Index
 }
 
 Function Check-PipDependencies {
@@ -1031,7 +1043,7 @@ Function Execute-PipAction($action) {
             $dataModel.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
 
             $dataModel.Columns['Status'].ReadOnly = $false
-            if ($result -match ($action.Validation + $package.Package)) {
+            if ($action.Validate($package.Package, $result)) {
                  $dataModel.Rows[$i].Status = "OK"
                  Set-Unchecked $i
             } else {
