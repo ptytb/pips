@@ -707,7 +707,8 @@ $regexOptions = [System.Text.RegularExpressions.RegexOptions]::Compiled
 
 $pydocSections = @('NAME', 'DESCRIPTION', 'PACKAGE CONTENTS', 'CLASSES', 'FUNCTIONS', 'DATA', 'VERSION', 'AUTHOR', 'FILE')
 $pydocKeywords = @('False', 'None', 'True', 'and', 'as', 'assert', 'break', 'class', 'continue', 'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'try', 'while', 'with', 'yield')
-$pydocSpecial  = @('self', 'async', 'await', '__main__', '__all__', '__abs__', '__add__', '__and__', '__call__', '__class__', '__cmp__', '__coerce__', '__complex__', '__contains__', '__del__', '__delattr__', '__delete__', '__delitem__', '__delslice__', '__dict__', '__div__', '__divmod__', '__eq__', '__float__', '__floordiv__', '__ge__', '__get__', '__getattr__', '__getattribute__', '__getitem__', '__getslice__', '__gt__', '__hash__', '__hex__', '__iadd__', '__iand__', '__idiv__', '__ifloordiv__', '__ilshift__', '__imod__', '__imul__', '__index__', '__init__', '__instancecheck__', '__int__', '__invert__', '__ior__', '__ipow__', '__irshift__', '__isub__', '__iter__', '__itruediv__', '__ixor__', '__le__', '__len__', '__long__', '__lshift__', '__lt__', '__metaclass__', '__mod__', '__mro__', '__mul__', '__ne__', '__neg__', '__new__', '__nonzero__', '__oct__', '__or__', '__pos__', '__pow__', '__radd__', '__rand__', '__rcmp__', '__rdiv__', '__rdivmod__', '__repr__', '__reversed__', '__rfloordiv__', '__rlshift__', '__rmod__', '__rmul__', '__ror__', '__rpow__', '__rrshift__', '__rshift__', '__rsub__', '__rtruediv__', '__rxor__', '__set__', '__setattr__', '__setitem__', '__setslice__', '__slots__', '__str__', '__sub__', '__subclasscheck__', '__truediv__', '__unicode__', '__weakref__', '__xor__')
+$pydocSpecial  = @('self', 'async', 'await')
+$pydocSpecialU = @('builtins', 'main', 'all', 'abs', 'add', 'and', 'call', 'class', 'cmp', 'coerce', 'complex', 'contains', 'del', 'delattr', 'delete', 'delitem', 'delslice', 'dict', 'div', 'divmod', 'eq', 'float', 'floordiv', 'ge', 'get', 'getattr', 'getattribute', 'getitem', 'getslice', 'gt', 'hash', 'hex', 'iadd', 'iand', 'idiv', 'ifloordiv', 'ilshift', 'imod', 'imul', 'index', 'init', 'instancecheck', 'int', 'invert', 'ior', 'ipow', 'irshift', 'isub', 'iter', 'itruediv', 'ixor', 'le', 'len', 'long', 'lshift', 'lt', 'metaclass', 'mod', 'mro', 'mul', 'ne', 'neg', 'new', 'nonzero', 'oct', 'or', 'pos', 'pow', 'radd', 'rand', 'rcmp', 'rdiv', 'rdivmod', 'repr', 'reversed', 'rfloordiv', 'rlshift', 'rmod', 'rmul', 'ror', 'rpow', 'rrshift', 'rshift', 'rsub', 'rtruediv', 'rxor', 'set', 'setattr', 'setitem', 'setslice', 'slots', 'str', 'sub', 'subclasscheck', 'truediv', 'unicode', 'weakref', 'xor')
 
 Function Compile-Regex($pattern) {
 	return New-Object System.Text.RegularExpressions.Regex($pattern, $regexOptions)
@@ -716,9 +717,10 @@ Function Compile-Regex($pattern) {
 $pyRegexStrSQuote = Compile-Regex "('[^\n'\\]*?')"
 $pyRegexStrDQuote = Compile-Regex '("[^\n"\\]*?")'
 $pyRegexNumber    = Compile-Regex '([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)'
-$pyRegexSection   = Compile-Regex ("\W(" + (($pydocSections | foreach { "${_}" }) -join '|') + ")\W")
-$pyRegexKeyword   = Compile-Regex ("\W(" + (($pydocKeywords | foreach { "${_}" }) -join '|') + ")\W")
-$pyRegexSpecial   = Compile-Regex ("\W(" + (($pydocSpecial  | foreach { "${_}" }) -join '|') + ")\W")
+$pyRegexSection   = Compile-Regex ("\W(" + (($pydocSections | foreach { "${_}"     }) -join '|') + ")\W")
+$pyRegexKeyword   = Compile-Regex ("\W(" + (($pydocKeywords | foreach { "${_}"     }) -join '|') + ")\W")
+$pyRegexSpecial   = Compile-Regex ("\W(" + (($pydocSpecial  | foreach { "${_}"     }) -join '|') + ")\W")
+$pyRegexSpecialU  = Compile-Regex ("\W(" + (($pydocSpecialU | foreach { "__${_}__" }) -join '|') + ")\W")
 $pyRegexPEP       = Compile-Regex '\W(PEP[ -]?(?:\d+))'
 
 Function Alter-MatchingFragments($pattern, $selectionAlteringCode) {
@@ -749,6 +751,7 @@ Function Highlight-PyDocSyntax() {
     Highlight-Text $pyRegexSection   ([Drawing.Color]::DarkCyan)
     Highlight-Text $pyRegexKeyword   ([Drawing.Color]::DarkRed)
     Highlight-Text $pyRegexSpecial   ([Drawing.Color]::DarkOrange)
+    Highlight-Text $pyRegexSpecialU  ([Drawing.Color]::DarkOrange)
 }
 
 Function Highlight-Links {
