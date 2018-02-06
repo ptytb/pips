@@ -66,7 +66,7 @@ $dataGridView = $null
 $inputFilter = $null
 $logView = $null
 $actionsModel = $null
-$virtualenvCheckBox = $null
+$isolatedCheckBox = $null
 $header = ("Select", "Package", "Installed", "Latest", "Type", "Status")
 $csv_header = ("Package", "Installed", "Latest", "Type", "Status")
 $search_columns = ("Select", "Package", "Version", "Description", "Type", "Status")
@@ -279,14 +279,25 @@ Function Get-InterpreterRecord($path, $items) {
     }    
     if (! $python) {
         return
-    }
+	}	
+	$versionString = & $python --version 2>&1
+	$version = [regex]::Match($versionString, '\s+(\d+\.\d+)').Groups[1]
 
-    $pip = Get-ExistingFilePathOrNull "${path}\Scripts\pip.exe"
-    $conda = Get-ExistingFilePathOrNull "${path}\Scripts\conda.exe"
-    $arch = Test-is64Bit $python
-
-    $action = New-Object psobject -Property @{Path=$path; Arch=$arch; PythonExe=$python; PipExe=$pip; CondaExe=$conda}
-    $action | Add-Member ScriptMethod ToString { "[{0}] {1}" -f $this.Arch.FileType,$this.PythonExe } -Force
+	$action = New-Object psobject -Property @{
+		Path		    = $path;
+		Version		    = $version;
+		Arch		    = Test-is64Bit $python;
+		PythonExe	    = $python;
+		PipExe		    = Get-ExistingFilePathOrNull "${path}\Scripts\pip.exe";
+		CondaExe	    = Get-ExistingFilePathOrNull "${path}\Scripts\conda.exe";
+		VirtualenvExe   = Get-ExistingFilePathOrNull "${path}\Scripts\virtualenv.exe";
+		PipenvExe	    = Get-ExistingFilePathOrNull "${path}\Scripts\pipenv.exe";
+		RequirementsTxt = Get-ExistingFilePathOrNull "${path}\requirements.txt";
+		Pipfile  	    = Get-ExistingFilePathOrNull "${path}\Pipfile";
+	}
+	$action | Add-Member ScriptMethod ToString {
+		"{2} [{0}] {1}" -f $this.Arch.FileType, $this.PythonExe, $this.Version
+	} -Force
 
     $items.Add($action) | Out-Null
     $trackDuplicates.Add($path) | Out-Null
@@ -420,7 +431,7 @@ Function Init-PackageGridViewProperties() {
     $dataGridView.VirtualMode = $true
     $dataGridView.AutoGenerateColumns = $true
     $dataGridView.AllowUserToAddRows = $false
-    $dataGridView.AllowUserToDeleteRows = $false
+	$dataGridView.AllowUserToDeleteRows = $false
     $dataGridView.AutoSizeColumnsMode = [System.Windows.Forms.DataGridViewAutoSizeColumnsMode]::AllCells
 }
 
@@ -466,17 +477,41 @@ Function Generate-Form {
     $form = New-Object Windows.Forms.Form
     $form.Text = "pip package browser"
     $form.Size = New-Object Drawing.Point 1000, 840
-    $form.topmost = $false
+	$form.topmost = $false
+	$form.KeyPreview = $true
     $iconPath = Get-Bin 'pip'
     $form.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($iconPath)
-    $Script:form = $form
+	$Script:form = $form
+	
+	$form.add_KeyDown({
+		$gridViewActive = $form.ActiveControl -is [System.Windows.Forms.DataGridView]
+		if ($dataGridView.Focused -and $dataGridView.RowCount -gt 0) {			
+			if ($_.KeyCode -eq 'Home') {
+				Set-SelectedNRow 0
+				$_.Handled = $true
+			}
+			if ($_.KeyCode -eq 'End') {
+				Set-SelectedNRow ($dataGridView.RowCount - 1)
+				$_.Handled = $true
+			}
+		}
+	})
 
     Add-Buttons
-    Add-ComboBoxActions
+	
+	Add-ComboBoxActions	
+	$form.add_KeyDown({
+		$comboActive = $form.ActiveControl -is [System.Windows.Forms.ComboBox]
+		if (($_.KeyCode -eq 'C') -and ($_.Control) -and $comboActive) {
+			$python_exe = Get-PythonExe
+			Set-Clipboard $python_exe
+			Write-PipLog "Copied to clipboard: $python_exe"
+		}
+	})
     
-    $Script:virtualenvCheckBox = Add-CheckBox 'virtualenv' { Toggle-VirtualEnv $Script:virtualenvCheckBox.Checked }
+    $Script:isolatedCheckBox = Add-CheckBox 'isolated' { Toggle-VirtualEnv $Script:isolatedCheckBox.Checked }
     $toolTip = New-Object System.Windows.Forms.ToolTip
-    $toolTip.SetToolTip($virtualenvCheckBox, "--virtualenv")
+    $toolTip.SetToolTip($isolatedCheckBox, "--isolated")
 
     Add-Button "Search..." { Generate-FormInstall }
 
@@ -686,12 +721,12 @@ Function Highlight-Output() {
 
 Function Show-DocView($text, $packageName) {
     Generate-FormDocView "PyDoc for $packageName"
-    $Script:docView.Text = (Tidy-Output $text)
-    Highlight-Output
-    $docView.Select(0, 0)
+	$Script:docView.Text = (Tidy-Output $text)
+    Highlight-Output		
+	$docView.Select(0, 0)
     $docView.ScrollToCaret()
     $formDoc.ShowDialog()
-    $formDoc.BringToFront()
+	$formDoc.BringToFront()
 }
 
 Function Write-PipPackageCounter {
@@ -839,7 +874,7 @@ Function Get-SearchResults($request) {
         }
 
         $args.Add('--format=columns') | Out-Null
-        if ($Script:virtualenvCheckBox.Checked) {
+        if ($Script:isolatedCheckBox.Checked) {
             $args.Add('--isolated') | Out-Null
         }
 
@@ -916,8 +951,7 @@ Function Set-Unchecked($index) {
 }
 
 Function Tidy-Output($text) {
-    $result = ($text -replace '\s*$', "`n")
-    return $result
+	return ($text -replace '$', "`n")
 }
 
 Function Clear-Rows() {
@@ -941,15 +975,21 @@ Function Clear-Rows() {
     $dataGridView.EndInit()   
 }
 
+function Set-SelectedNRow($n) {
+	$dataGridView.ClearSelection()
+	$dataGridView.FirstDisplayedScrollingRowIndex = $n
+	$dataGridView.Rows[$n].Selected = $true
+}
+
 Function Set-SelectedRow($selectedRow) {
-    $dataModel.BeginLoadData();
     $Script:dataGridView.ClearSelection()
     foreach ($vRow in $Script:dataGridView.Rows) {
         if ($vRow.DataBoundItem.Row -eq $selectedRow) {
             $vRow.Selected = $true
             break
         }
-    }
+	}
+	$dataGridView.FirstDisplayedScrollingRowIndex = $vRow.Index
 }
 
 Function Check-PipDependencies {
