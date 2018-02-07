@@ -314,8 +314,8 @@ Function Get-InterpreterRecord($path, $items) {
 
 Function Find-Interpreters {
     $items = New-Object System.Collections.ArrayList
-    
-    $list = (where.exe 'python')
+
+    $list = @(where.exe 'python'; (dir $env:SystemDrive\Python*) | foreach{ "$_\python.exe" })
     foreach ($path in $list) {
         Get-InterpreterRecord (Split-Path -Parent $path) $items
     }
