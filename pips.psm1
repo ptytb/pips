@@ -487,7 +487,7 @@ Function Highlight-PythonBuiltinPackages {
     }    
 }
 
-Function Open-LinkInBrowser($url) {
+Function global:Open-LinkInBrowser($url) {
     if ($url -match '^https://') {
         Start-Process -FilePath $url
     }
