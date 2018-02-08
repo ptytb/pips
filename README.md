@@ -15,7 +15,7 @@ This tiny script helps to keep packages updated.
 - **pip** and **conda** are supported
 - Looks up for installed Python distributions
 - Filter and sort of packages
-- Documentation viewer with simple highlighting
+- Documentation viewer with simple highlighting and browser-like navigation
 - Manage user virtualenv directories
 
 
@@ -25,6 +25,8 @@ This tiny script helps to keep packages updated.
 ## todo
 
 
+- [ ] Install packages dialog like in R Studio (with completion)
+- [ ] Global PyDoc indexing and searching
 - [ ] Now assuming *utf-8* for IO whilst old(?) Python versions use cp1252, which generates empty strings for Chinese, Russian, etc.
 - [ ] Filter package search results for conda by relevant Architecture
 - [ ] Implement some missing conda commands

@@ -681,7 +681,7 @@ $ro_singleline = [System.Text.RegularExpressions.RegexOptions]::Singleline
 $ro_ecma       = [System.Text.RegularExpressions.RegexOptions]::ECMAScript
 $regexDefaultOptions = $ro_compiled
 
-$pydocSections = @('NAME', 'DESCRIPTION', 'PACKAGE CONTENTS', 'CLASSES', 'FUNCTIONS', 'DATA', 'VERSION', 'AUTHOR', 'FILE', 'MODULE DOCS', 'SUBMODULES')
+$pydocSections = @('NAME', 'DESCRIPTION', 'PACKAGE CONTENTS', 'CLASSES', 'FUNCTIONS', 'DATA', 'VERSION', 'AUTHOR', 'FILE', 'MODULE DOCS', 'SUBMODULES', 'CREDITS', 'DATE')
 $pydocKeywords = @('False', 'None', 'True', 'and', 'as', 'assert', 'break', 'class', 'continue', 'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'try', 'while', 'with', 'yield')
 $pydocSpecial  = @('self', 'async', 'await')
 $pydocSpecialU = @('builtins', 'main', 'all', 'abs', 'add', 'and', 'call', 'class', 'cmp', 'coerce', 'complex', 'contains', 'del', 'delattr', 'delete', 'delitem', 'delslice', 'dict', 'div', 'divmod', 'eq', 'float', 'floordiv', 'ge', 'get', 'getattr', 'getattribute', 'getitem', 'getslice', 'gt', 'hash', 'hex', 'iadd', 'iand', 'idiv', 'ifloordiv', 'ilshift', 'imod', 'imul', 'index', 'init', 'instancecheck', 'int', 'invert', 'ior', 'ipow', 'irshift', 'isub', 'iter', 'itruediv', 'ixor', 'le', 'len', 'long', 'lshift', 'lt', 'metaclass', 'mod', 'mro', 'mul', 'ne', 'neg', 'new', 'nonzero', 'oct', 'or', 'pos', 'pow', 'radd', 'rand', 'rcmp', 'rdiv', 'rdivmod', 'repr', 'reversed', 'rfloordiv', 'rlshift', 'rmod', 'rmul', 'ror', 'rpow', 'rrshift', 'rshift', 'rsub', 'rtruediv', 'rxor', 'set', 'setattr', 'setitem', 'setslice', 'slots', 'str', 'sub', 'subclasscheck', 'truediv', 'unicode', 'weakref', 'xor')
@@ -693,12 +693,12 @@ Function Compile-Regex($pattern, $options = $regexDefaultOptions) {
 $pyRegexStrSQuote = Compile-Regex "('[^\n'\\]*?')"
 $pyRegexStrDQuote = Compile-Regex '("[^\n"\\]*?")'
 $pyRegexNumber    = Compile-Regex '([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)'
-$pyRegexSection   = Compile-Regex ("\W(" + (($pydocSections | foreach { "${_}"     }) -join '|') + ")\W")
+$pyRegexSection   = Compile-Regex ("^\s*(" + (($pydocSections | foreach { "${_}"     }) -join '|') + ")\s*$") ($ro_compiled + $ro_multiline)
 $pyRegexKeyword   = Compile-Regex ("\W(" + (($pydocKeywords | foreach { "${_}"     }) -join '|') + ")\W")
 $pyRegexSpecial   = Compile-Regex ("\W(" + (($pydocSpecial  | foreach { "${_}"     }) -join '|') + ")\W")
 $pyRegexSpecialU  = Compile-Regex ("\W(" + (($pydocSpecialU | foreach { "__${_}__" }) -join '|') + ")\W")
 $pyRegexPEP       = Compile-Regex '\W(PEP[ -]?(?:\d+))'
-$pyRegexSubPkgs   = Compile-Regex 'PACKAGE CONTENTS\n((?:\s+\w+\n)+)'
+$pyRegexSubPkgs   = Compile-Regex 'PACKAGE CONTENTS\n((?:\s+[^\n]+\n)+)'
 
 $DrawingColor = New-Object Drawing.Color  # Workaround for PowerShell, which parses script classes before loading types
 
@@ -715,7 +715,7 @@ class DocView {
         $this.modifiedTextLengthDelta = 0
         
         $this.formDoc = New-Object Windows.Forms.Form
-        $this.formDoc.Text = "PyDoc for $packageName *** Click/Enter goto `"$packageName.WORD`" | Esc back | Ctrl+Wheel font | Space scroll"
+        $this.formDoc.Text = "PyDoc for [$packageName] *** Click/Enter goto $packageName.WORD | Esc back | Ctrl+Wheel font | Space scroll"
         $this.formDoc.Size = New-Object Drawing.Point 830, 840
         $this.formDoc.Topmost = $false
         $this.formDoc.KeyPreview = $true
