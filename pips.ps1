@@ -1,11 +1,14 @@
+[Void][Reflection.Assembly]::LoadWithPartialName("System")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Drawing")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Windows")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Web")
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Web.HttpUtility")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Windows.FontStyle")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Text")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Text.RegularExpressions")
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Windows.FontStyle")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Collections")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Collections.ArrayList")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Web")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Web.HttpUtility")
 
 
 Function Get-Bin($command) {
@@ -130,7 +133,7 @@ Function Add-Buttons {
     Add-Button "Execute:" { Execute-PipAction }
 }
 
-Function Get-PyDoc($request) {
+Function global:Get-PyDoc($request) {
     $output = & (Get-PythonExe) -m pydoc $request
     return $output
 }
@@ -204,7 +207,7 @@ Function Get-CondaPackages() {
 $actionCommands = @{
     pip=@{
         info          = { return (& (Get-PipExe) show       $args 2>&1) };
-        documentation = { Show-DocView (Get-PyDoc $pkg) $pkg | Out-Null; return '' };
+        documentation = { Show-DocView $pkg | Out-Null; return '' };
         update        = { return (& (Get-PipExe) install -U $args 2>&1) };
         install       = { return (& (Get-PipExe) install    $args 2>&1) };
         install_dry   = { return 'Not supported on pip' };
@@ -661,57 +664,28 @@ Function Generate-Form {
 
     Resize-Form
     $form.Add_Resize({ Resize-Form })
+    $form.Add_Shown({ $form.BringToFront() })
     $form.ShowDialog()
-    $form.BringToFront()
-}
-
-Function Resize-FormDoc() {
-    $docView.Width = $formDoc.ClientSize.Width - 15
-    $docView.Height = $formDoc.ClientSize.Height - 15
-}
-
-Function Generate-FormDocView($title) {
-    $formDoc = New-Object Windows.Forms.Form
-    $formDoc.Text = $title
-    $formDoc.Size = New-Object Drawing.Point 830, 840
-    $formDoc.topmost = $false
-    $iconPath = Get-Bin 'pip'
-    $formDoc.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($iconPath)
-    $Script:formDoc = $formDoc
-
-    $docView = New-Object System.Windows.Forms.RichTextBox
-    $docView.Location = New-Object Drawing.Point 7,7
-    $docView.Size = New-Object Drawing.Point 800,810
-    $docView.ReadOnly = $true
-    $docView.Multiline = $true
-    $docView.Font = New-Object System.Drawing.Font("Consolas", 11)
-    $docView.WordWrap = $false
-    $docView.DetectUrls = $true
-    $docView.AllowDrop = $false
-    $docView.RichTextShortcutsEnabled = $false
-    $Script:docView = $docView
-    $formDoc.Controls.Add($docView)
-
-    $docView.add_LinkClicked({
-        Open-LinkInBrowser $_.LinkText
-    })
-
-    Resize-FormDoc
-    $formDoc.Add_Resize({ Resize-FormDoc })
 }
 
 
 $fontBold      = New-Object System.Drawing.Font("Consolas", 11, [System.Drawing.FontStyle]::Bold)
+$fontUnderline = New-Object System.Drawing.Font("Consolas", 11, [System.Drawing.FontStyle]::Underline)
 
-$regexOptions = [System.Text.RegularExpressions.RegexOptions]::Compiled
+$ro_none       = [System.Text.RegularExpressions.RegexOptions]::None
+$ro_compiled   = [System.Text.RegularExpressions.RegexOptions]::Compiled
+$ro_multiline  = [System.Text.RegularExpressions.RegexOptions]::Multiline
+$ro_singleline = [System.Text.RegularExpressions.RegexOptions]::Singleline
+$ro_ecma       = [System.Text.RegularExpressions.RegexOptions]::ECMAScript
+$regexDefaultOptions = $ro_compiled
 
-$pydocSections = @('NAME', 'DESCRIPTION', 'PACKAGE CONTENTS', 'CLASSES', 'FUNCTIONS', 'DATA', 'VERSION', 'AUTHOR', 'FILE')
+$pydocSections = @('NAME', 'DESCRIPTION', 'PACKAGE CONTENTS', 'CLASSES', 'FUNCTIONS', 'DATA', 'VERSION', 'AUTHOR', 'FILE', 'MODULE DOCS', 'SUBMODULES')
 $pydocKeywords = @('False', 'None', 'True', 'and', 'as', 'assert', 'break', 'class', 'continue', 'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'try', 'while', 'with', 'yield')
 $pydocSpecial  = @('self', 'async', 'await')
 $pydocSpecialU = @('builtins', 'main', 'all', 'abs', 'add', 'and', 'call', 'class', 'cmp', 'coerce', 'complex', 'contains', 'del', 'delattr', 'delete', 'delitem', 'delslice', 'dict', 'div', 'divmod', 'eq', 'float', 'floordiv', 'ge', 'get', 'getattr', 'getattribute', 'getitem', 'getslice', 'gt', 'hash', 'hex', 'iadd', 'iand', 'idiv', 'ifloordiv', 'ilshift', 'imod', 'imul', 'index', 'init', 'instancecheck', 'int', 'invert', 'ior', 'ipow', 'irshift', 'isub', 'iter', 'itruediv', 'ixor', 'le', 'len', 'long', 'lshift', 'lt', 'metaclass', 'mod', 'mro', 'mul', 'ne', 'neg', 'new', 'nonzero', 'oct', 'or', 'pos', 'pow', 'radd', 'rand', 'rcmp', 'rdiv', 'rdivmod', 'repr', 'reversed', 'rfloordiv', 'rlshift', 'rmod', 'rmul', 'ror', 'rpow', 'rrshift', 'rshift', 'rsub', 'rtruediv', 'rxor', 'set', 'setattr', 'setitem', 'setslice', 'slots', 'str', 'sub', 'subclasscheck', 'truediv', 'unicode', 'weakref', 'xor')
 
-Function Compile-Regex($pattern) {
-	return New-Object System.Text.RegularExpressions.Regex($pattern, $regexOptions)
+Function Compile-Regex($pattern, $options = $regexDefaultOptions) {
+	return New-Object System.Text.RegularExpressions.Regex($pattern, $options)
 }
 
 $pyRegexStrSQuote = Compile-Regex "('[^\n'\\]*?')"
@@ -722,59 +696,159 @@ $pyRegexKeyword   = Compile-Regex ("\W(" + (($pydocKeywords | foreach { "${_}"  
 $pyRegexSpecial   = Compile-Regex ("\W(" + (($pydocSpecial  | foreach { "${_}"     }) -join '|') + ")\W")
 $pyRegexSpecialU  = Compile-Regex ("\W(" + (($pydocSpecialU | foreach { "__${_}__" }) -join '|') + ")\W")
 $pyRegexPEP       = Compile-Regex '\W(PEP[ -]?(?:\d+))'
+$pyRegexSubPkgs   = Compile-Regex 'PACKAGE CONTENTS\n((?:\s+\w+\n)+)'
 
-$modifiedTextLengthDelta = 0  # We've found all matches with immutual Text, but will be changing actual document
-Function Alter-MatchingFragments($pattern, $selectionAlteringCode) {
-    $Script:modifiedTextLengthDelta = 0
-    $matches = $pattern.Matches($docView.Text)
+$DrawingColor = New-Object Drawing.Color  # Workaround for PowerShell, which parses script classes before loading types
 
-    foreach ($match in $matches.Groups) {
-        if ($match.Name -eq 0) {
-            continue
-        }
-        $docView.Select($match.Index + $modifiedTextLengthDelta, $match.Length)
-        $selectionAlteringCode.Invoke($match.Index + $modifiedTextLengthDelta, $match.Length, $match.Value)
+class DocView {
+    
+    [System.Object] $formDoc
+    [System.Object] $docView
+    [int]           $modifiedTextLengthDelta  # We've found all matches with immutual Text, but will be changing actual document
+	[String]        $packageName
+
+    DocView($content, $packageName) {
+		$self = $this
+		$this.packageName = $packageName
+        $this.modifiedTextLengthDelta = 0
+        
+        $this.formDoc = New-Object Windows.Forms.Form
+        $this.formDoc.Text = "PyDoc for $packageName | *** Click a word to open doc for `"$packageName.WORD`" ***"
+        $this.formDoc.Size = New-Object Drawing.Point 830, 840
+        $this.formDoc.Topmost = $false
+
+        $this.formDoc.Icon = $Global:form.Icon
+
+        $this.docView = New-Object System.Windows.Forms.RichTextBox
+        $this.docView.Location = New-Object Drawing.Point 7,7
+        $this.docView.Size = New-Object Drawing.Point 800,810
+        $this.docView.ReadOnly = $true
+        $this.docView.Multiline = $true
+        $this.docView.Font = New-Object System.Drawing.Font("Consolas", 11)
+        $this.docView.WordWrap = $false
+        $this.docView.DetectUrls = $true
+        $this.docView.AllowDrop = $false
+        $this.docView.RichTextShortcutsEnabled = $false
+        $this.docView.Text = $content
+        $this.formDoc.Controls.Add($this.docView)
+
+        $this.docView.add_LinkClicked({
+	            Open-LinkInBrowser $_.LinkText
+	        }.GetNewClosure())
+
+        $this.docView.Add_MouseClick({
+	            $clickedIndex = $self.docView.GetCharIndexFromPosition($_.Location)
+
+	            for ($charIndex = $clickedIndex; $charIndex -gt 0; $charIndex--) {
+	                if ($self.docView.Text[$charIndex] -notmatch '\w') {
+	                    $begin = $charIndex + 1
+	                    break
+	                }
+	            }
+	        
+	            for ($charIndex = $clickedIndex; $charIndex -lt $self.docView.Text.Length; $charIndex++) {
+	                if ($self.docView.Text[$charIndex] -notmatch '\w') {
+	                    $end = $charIndex
+	                    break
+	                }
+	            }
+
+                $selectedLength = $end - $begin
+                if ($selectedLength -gt 0) {
+	                $clickedWord = $self.docView.Text.Substring($begin, $selectedLength)
+	                Show-DocView "$($self.PackageName).${clickedWord}"
+                }
+	        }.GetNewClosure())
+
+        $this.Resize()
+        $this.formDoc.Add_Resize({
+				$self.Resize()
+			}.GetNewClosure())
+
+        $this.Highlight_Links()
+        $this.Highlight_PyDocSyntax()
+	    $this.docView.Select(0, 0)
+        $this.docView.ScrollToCaret()	    
     }
-}
+	
+	[void] Show() {
+		$this.formDoc.ShowDialog()
+	}
 
-Function Highlight-Text($pattern, $foreground = [Drawing.Color]::DarkCyan, $useBold = $true) {
-    Alter-MatchingFragments $pattern {
-		$docView.SelectionColor = $foreground
-        if ($useBold) {
-            $docView.SelectionFont = $fontBold
+    [void] Resize() {
+        $this.docView.Width  = $this.formDoc.ClientSize.Width  - 15
+        $this.docView.Height = $this.formDoc.ClientSize.Height - 15
+    }
+    
+    [void] Alter_MatchingFragments($pattern, $selectionAlteringCode) {
+        $this.modifiedTextLengthDelta = 0
+        $matches = $pattern.Matches($this.docView.Text)
+
+        foreach ($match in $matches.Groups) {
+            if ($match.Name -eq 0) {
+                continue
+            }
+            $this.docView.Select($match.Index + $this.modifiedTextLengthDelta, $match.Length)
+            $selectionAlteringCode.Invoke($match.Index + $this.modifiedTextLengthDelta, $match.Length, $match.Value)
         }
-	}
+    }
+
+    [void] Highlight_Text($pattern, $foreground, $useBold) {
+        $this.Alter_MatchingFragments($pattern, {
+		    $this.docView.SelectionColor = $foreground
+            if ($useBold) {
+                $this.docView.SelectionFont = $fontBold
+            }
+	    })
+    }
+
+    [void] Highlight_PyDocSyntax() {
+        $this.Highlight_Text($Script:pyRegexStrSQuote, ($Script:DrawingColor::DarkGreen),   $false)
+        $this.Highlight_Text($Script:pyRegexStrDQuote, ($Script:DrawingColor::DarkGreen),   $false)
+        $this.Highlight_Text($Script:pyRegexNumber,    ($Script:DrawingColor::DarkMagenta), $false)
+        $this.Highlight_Text($Script:pyRegexSection,   ($Script:DrawingColor::DarkCyan),    $true)
+        $this.Highlight_Text($Script:pyRegexKeyword,   ($Script:DrawingColor::DarkRed),     $true)
+        $this.Highlight_Text($Script:pyRegexSpecial,   ($Script:DrawingColor::DarkOrange),  $true)
+        $this.Highlight_Text($Script:pyRegexSpecialU,  ($Script:DrawingColor::DarkOrange),  $true)
+    }
+    
+    [void] Highlight_Links() {
+	    # PEP Links
+	    $this.Alter_MatchingFragments($Script:pyRegexPEP, {
+            param($index, $length, $match)
+            $pep_url = "${peps_url}$(($match -replace ' ', '-').ToLower())"
+            $this.modifiedTextLengthDelta -= $this.docView.TextLength
+            $this.docView.SelectedText = "$match [$pep_url]"
+            $this.modifiedTextLengthDelta += $this.docView.TextLength
+	    })
+	
+	    # Subpackage Links
+	    $this.Alter_MatchingFragments($Script:pyRegexSubPkgs, {
+		    param($index, $length, $match)
+        
+            $startLine = $this.docView.GetLineFromCharIndex($index)
+            for ($n = $startLine; $n -lt $this.docView.Lines.Count ; $n++) {
+                $rawLine = $this.docView.Lines[$n]
+                $line = $rawLine.TrimStart()
+                $indentWidth = $rawLine.Length - $line.Length
+                $line = $line.TrimEnd()
+                if ($line.Length -eq 0) {
+                    break
+                }
+                $index = $this.docView.GetFirstCharIndexFromLine($n)
+			    $this.docView.Select($index + $indentWidth, $line.Length)
+			    $this.docView.SelectionColor = $Script:DrawingColor::Navy
+			    $this.docView.SelectionFont  = $fontUnderline
+            }
+        })
+    }
+	
 }
 
-Function Highlight-PyDocSyntax() {
-    Highlight-Text $pyRegexStrSQuote ([Drawing.Color]::DarkGreen)   $false
-    Highlight-Text $pyRegexStrDQuote ([Drawing.Color]::DarkGreen)   $false
-    Highlight-Text $pyRegexNumber    ([Drawing.Color]::DarkMagenta) $false
-    Highlight-Text $pyRegexSection   ([Drawing.Color]::DarkCyan)
-    Highlight-Text $pyRegexKeyword   ([Drawing.Color]::DarkRed)
-    Highlight-Text $pyRegexSpecial   ([Drawing.Color]::DarkOrange)
-    Highlight-Text $pyRegexSpecialU  ([Drawing.Color]::DarkOrange)
-}
-
-Function Highlight-Links {
-	Alter-MatchingFragments $pyRegexPEP {
-        param($index, $length, $match)
-        $pep_url = "${peps_url}$(($match -replace ' ', '-').ToLower())"
-        $Script:modifiedTextLengthDelta -= $docView.TextLength
-        $docView.SelectedText = "$match [$pep_url]"
-        $Script:modifiedTextLengthDelta += $docView.TextLength
-	}
-}
-
-Function Show-DocView($text, $packageName) {
-    Generate-FormDocView "PyDoc for $packageName"
-	$Script:docView.Text = (Tidy-Output $text)
-	Highlight-Links
-    Highlight-PyDocSyntax
-	$docView.Select(0, 0)
-    $docView.ScrollToCaret()
-    $formDoc.ShowDialog()
-	$formDoc.BringToFront()
+Function global:Show-DocView($packageName) {
+	$content = (Get-PyDoc $packageName)
+    $viewer  = New-Object DocView -ArgumentList @((Tidy-Output $content), $packageName)
+	$viewer.Show()
 }
 
 Function Write-PipPackageCounter {
