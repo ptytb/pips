@@ -732,6 +732,12 @@ class DocView {
         $this.docView.Text = $content
         $this.formDoc.Controls.Add($this.docView)
 
+        $this.docView.add_KeyDown({
+                if ($_.KeyCode -eq 'Escape') {
+                    $self.formDoc.Close()
+                }
+            }.GetNewClosure())
+
         $this.docView.add_LinkClicked({
 	            Open-LinkInBrowser $_.LinkText
 	        }.GetNewClosure())
