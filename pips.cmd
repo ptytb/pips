@@ -1,3 +1,3 @@
-rem .PS1 does not belong to PATHEXT by default
-powershell "%~dp0%pips.ps1"
-pause
+@echo off
+rem .ps1 does not belong to PATHEXT by default
+powershell -Command "using module .\pips.psd1; Start-Main"
