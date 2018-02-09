@@ -1281,5 +1281,6 @@ function Test-is64Bit {
 Function Start-Main() {
     $env:PYTHONIOENCODING="utf-8"
     $env:LC_CTYPE="utf-8"
+    [System.Windows.Forms.Application]::EnableVisualStyles()
     Generate-Form | Out-Null
 }
