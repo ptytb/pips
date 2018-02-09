@@ -575,6 +575,11 @@ Function Generate-Form {
 
         Highlight-PythonBuiltinPackages
     }
+    $inputFilter.Add_KeyDown({
+            if ($_.KeyCode -eq 'Escape') {
+                $inputFilter.Text = [String]::Empty
+            }
+        })
 
     Add-HorizontalSpacer
 
