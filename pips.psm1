@@ -711,8 +711,10 @@ Function Compile-Regex($pattern, $options = $regexDefaultOptions) {
 	return New-Object System.Text.RegularExpressions.Regex($pattern, $options)
 }
 
-$pyRegexStrSQuote = Compile-Regex "('[^\n'\\]*?')"
-$pyRegexStrDQuote = Compile-Regex '("[^\n"\\]*?")'
+$pyRegexStrQuote = Compile-Regex @"
+('(?:[^\n'\\]|\\.)*?'|"(?:[^\n"\\]|\\.)*?")
+"@
+
 $pyRegexNumber    = Compile-Regex '([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)'
 $pyRegexSection   = Compile-Regex ("^\s*(" + (($pydocSections | foreach { "${_}"     }) -join '|') + ")\s*$") ($ro_compiled + $ro_multiline)
 $pyRegexKeyword   = Compile-Regex ("\b(" + (($pydocKeywords | foreach { "${_}"     }) -join '|') + ")\b")
@@ -875,8 +877,7 @@ class DocView {
     }
 
     [void] Highlight_PyDocSyntax() {
-        $this.Highlight_Text($Script:pyRegexStrSQuote, ($Script:DrawingColor::DarkGreen),   $false)
-        $this.Highlight_Text($Script:pyRegexStrDQuote, ($Script:DrawingColor::DarkGreen),   $false)
+        $this.Highlight_Text($Script:pyRegexStrQuote,  ($Script:DrawingColor::DarkGreen),   $false)
         $this.Highlight_Text($Script:pyRegexNumber,    ($Script:DrawingColor::DarkMagenta), $false)
         $this.Highlight_Text($Script:pyRegexSection,   ($Script:DrawingColor::DarkCyan),    $true)
         $this.Highlight_Text($Script:pyRegexKeyword,   ($Script:DrawingColor::DarkRed),     $true)
