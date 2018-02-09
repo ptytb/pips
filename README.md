@@ -25,6 +25,7 @@ This tiny script helps to keep packages updated.
 ## todo
 
 
+- [ ] Fix peps url 0000 numbering
 - [ ] Install packages dialog like in R Studio (with completion)
 - [ ] Global PyDoc indexing and searching
 - [ ] Now assuming *utf-8* for IO whilst old(?) Python versions use cp1252, which generates empty strings for Chinese, Russian, etc.

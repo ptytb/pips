@@ -109,6 +109,7 @@ Function Add-Button ($name, $handler) {
     $button.Text = $name
     $button.Add_Click($handler)
     Add-TopWidget $button
+    return $button
 }
 
 Function Add-Label ($name) {
@@ -116,6 +117,7 @@ Function Add-Label ($name) {
     $label.Text = $name
     $label.TextAlign = [System.Drawing.ContentAlignment]::MiddleRight
     Add-TopWidget $label
+    return $label
 }
 
 Function Add-Input ($handler) {
@@ -208,17 +210,19 @@ Function Get-CondaPackages() {
 
 $actionCommands = @{
     pip=@{
-        info          = { return (& (Get-PipExe) show       $args 2>&1) };
-        documentation = { (Show-DocView $pkg).Show() | Out-Null; return '' };
-        update        = { return (& (Get-PipExe) install -U $args 2>&1) };
-        install       = { return (& (Get-PipExe) install    $args 2>&1) };
+        info          = { return (& (Get-PipExe) show             $args 2>&1) };
+        documentation = { (Show-DocView $pkg).Show() | Out-Null; return ''    };
+        files         = { return (& (Get-PipExe) show    --files  $args 2>&1) };
+        update        = { return (& (Get-PipExe) install -U       $args 2>&1) };
+        install       = { return (& (Get-PipExe) install          $args 2>&1) };
         install_dry   = { return 'Not supported on pip' };
-        download      = { return (& (Get-PipExe) download   $args 2>&1) };
-        uninstall     = { return (& (Get-PipExe) uninstall  $args 2>&1) };
+        download      = { return (& (Get-PipExe) download         $args 2>&1) };
+        uninstall     = { return (& (Get-PipExe) uninstall --yes  $args 2>&1) };
     };
     conda=@{
         info          = { return (& (Get-CondaExe) list      -v --json             $args 2>&1) };        
         documentation = { return '' };
+        files         = { return '' };
         update        = { return (& (Get-CondaExe) update    --yes                 $args 2>&1) };
         install       = { return (& (Get-CondaExe) install   --yes --no-shortcuts  $args 2>&1) };
         install_dry   = { return (& (Get-CondaExe) install   --dry-run             $args 2>&1) };
@@ -250,6 +254,10 @@ Function Add-ComboBoxActions {
 		{ param($pkg,$type); $actionCommands[$type].documentation.Invoke($pkg) } `
         { param($pkg,$out); $out -match '.*' } )
 
+    & $Add (Make-PipActionItem 'List Files' `
+		{ param($pkg,$type); $actionCommands[$type].files.Invoke($pkg) } `
+        { param($pkg,$out); $out -match $pkg } )
+	
     & $Add (Make-PipActionItem 'Update' `
 		{ param($pkg,$type); $actionCommands[$type].update.Invoke($pkg) } `
         { param($pkg,$out); $out -match ('Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' + $pkg) } )
@@ -569,7 +577,11 @@ Function Generate-Form {
     }
 
     Add-HorizontalSpacer
-    Add-Label "Active Interpreter:"
+
+    $labelInterp   = Add-Label "Active Interpreter:"
+    $toolTipInterp = New-Object System.Windows.Forms.ToolTip
+    $toolTipInterp.SetToolTip($labelInterp, "Ctrl+C to copy selected path")
+
     Add-ComboBoxInterpreters
     Add-Button "Add venv path..." {
         $selectFolderDialog = New-Object System.Windows.Forms.FolderBrowserDialog
@@ -651,7 +663,10 @@ Function Generate-Form {
         }
     }
 
-    $dataGridView.Add_CellMouseDoubleClick({ Show-PackageInBrowser })
+    $dataGridView.Add_CellMouseDoubleClick({
+            $_
+            Show-PackageInBrowser
+        })
     $form.Add_Load({ $Script:formLoaded = $true })
     
     Function Resize-Form() {
@@ -694,10 +709,10 @@ $pyRegexStrSQuote = Compile-Regex "('[^\n'\\]*?')"
 $pyRegexStrDQuote = Compile-Regex '("[^\n"\\]*?")'
 $pyRegexNumber    = Compile-Regex '([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)'
 $pyRegexSection   = Compile-Regex ("^\s*(" + (($pydocSections | foreach { "${_}"     }) -join '|') + ")\s*$") ($ro_compiled + $ro_multiline)
-$pyRegexKeyword   = Compile-Regex ("\W(" + (($pydocKeywords | foreach { "${_}"     }) -join '|') + ")\W")
-$pyRegexSpecial   = Compile-Regex ("\W(" + (($pydocSpecial  | foreach { "${_}"     }) -join '|') + ")\W")
-$pyRegexSpecialU  = Compile-Regex ("\W(" + (($pydocSpecialU | foreach { "__${_}__" }) -join '|') + ")\W")
-$pyRegexPEP       = Compile-Regex '\W(PEP[ -]?(?:\d+))'
+$pyRegexKeyword   = Compile-Regex ("\b(" + (($pydocKeywords | foreach { "${_}"     }) -join '|') + ")\b")
+$pyRegexSpecial   = Compile-Regex ("\b(" + (($pydocSpecial  | foreach { "${_}"     }) -join '|') + ")\b")
+$pyRegexSpecialU  = Compile-Regex ("\b(" + (($pydocSpecialU | foreach { "__${_}__" }) -join '|') + ")\b")
+$pyRegexPEP       = Compile-Regex '\b(PEP[ -]?(?:\d+))'
 $pyRegexSubPkgs   = Compile-Regex 'PACKAGE CONTENTS\n((?:\s+[^\n]+\n)+)'
 
 $DrawingColor = New-Object Drawing.Color  # Workaround for PowerShell, which parses script classes before loading types
