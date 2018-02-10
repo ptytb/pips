@@ -11,6 +11,8 @@
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Collections.ArrayList")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Web")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Web.HttpUtility")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Net")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Net.WebClient")
 
 
 Function Get-Bin($command) {
@@ -80,7 +82,7 @@ $formLoaded = $false
 $outdatedOnly = $true
 
 
-Function Write-PipLog() {
+Function global:Write-PipLog() {
     foreach ($obj in $args) {
         $logView.AppendText("$obj")
     }
@@ -501,6 +503,117 @@ Function global:Open-LinkInBrowser($url) {
     }
 }
 
+$Global:jobCounter = 0
+$Global:jobTimer = New-Object System.Windows.Forms.Timer
+$Global:jobTimer.Interval = 250
+$Global:jobTimer.add_Tick({ $null | Out-Null })
+[int] $Global:jobSemaphore = 0
+Function Run-SubProcessWithCallback($code, $callback, $params) {
+    $Global:jobCounter++
+    $n = $Global:jobCounter
+
+    if ($Global:jobSemaphore -eq 0) {
+        $Global:jobTimer.Start()
+        Write-Host 'run timer'
+        }
+    $Global:jobSemaphore++;
+    
+    Register-EngineEvent -SourceIdentifier "Custom.RaisedEvent$n" -Action $callback 
+
+    $codeString = $code.ToString()
+
+    $job = Start-Job {
+            param($codeString, $params, $n)
+            $code = [scriptblock]::Create($codeString)
+            $result = $code.Invoke($params)
+            Register-EngineEvent "Custom.RaisedEvent$n" -Forward
+            New-Event "Custom.RaisedEvent$n" -EventArguments @{Result=$result; Id=$n; Params=$params}
+    } -Name "Job$n" -ArgumentList $codeString, $params, $n
+
+    $null = Register-ObjectEvent $job -EventName StateChanged -SourceIdentifier "JobEnd$n" -MessageData @{Id=$n} `
+        -Action {            
+            if($sender.State -eq 'Completed')  {
+                $n = $event.MessageData.Id                
+                Unregister-Event -SourceIdentifier "JobEnd$n"
+                Unregister-Event -SourceIdentifier "Custom.RaisedEvent$n"
+                Get-Job -Name "Job$n" | Wait-Job | Remove-Job
+                Get-Job -Name "JobEnd$n" | Wait-Job | Remove-Job
+                Get-Job -Name "Custom.RaisedEvent$n" | Wait-Job | Remove-Job
+                
+                $Global:jobSemaphore--;
+                if ($Global:jobSemaphore -eq 0) {                    
+                    $Global:jobTimer.Stop()
+                    Write-Host 'stop timer'
+                }
+                Write-Host "*** Cleaned up $n sem=$Global:jobSemaphore"
+            }           
+        }
+}
+
+$Global:PyPiPackageJsonCache = New-Object System.Collections.Hashtable
+
+Function global:Format-PythonPackageToolTip($info) {
+     $tt = "Summary: $($info.info.summary)`nAuthor: $($info.info.author)`nRelease: $($info.info.version)`n"
+     $lr = ($info.releases."$($info.info.version)")[0]
+     $tr = "Release Uploaded $($lr.upload_time)"
+     $tags = "`n`n$($info.info.classifiers -join "`n")"
+     return "${tt}${tr}${tags}"
+}
+
+Function global:Update-PythonPackageDetails {
+    $viewRow = $dataGridView.Rows[$_.RowIndex]
+    $rowItem = $viewRow.DataBoundItem
+    $cells = $dataGridView.Rows[$_.RowIndex].Cells
+    $packageName = $rowItem.Row.Package
+
+    if (! [String]::IsNullOrEmpty($cells['Package'].ToolTipText) -or ($rowItem.Row.Type -ne 'pip')) {
+        return
+    }
+
+    if ($Global:PyPiPackageJsonCache.ContainsKey($packageName)) {
+        $info = $Global:PyPiPackageJsonCache[$packageName]
+        $cells['Package'].ToolTipText = Format-PythonPackageToolTip $info
+        return
+    }
+
+    if (!(Test-KeyPress -Keys ShiftKey)) {
+        return
+    }
+
+    $dataModel.Columns['Status'].ReadOnly = $false
+    $cells['Status'].Value = 'Fetching...'
+    $dataModel.Columns['Status'].ReadOnly = $true
+    $viewRow.DefaultCellStyle.BackColor = [Drawing.Color]::Gray
+
+    $Global:dataModel = $dataModel
+    $Global:dataGridView = $dataGridView
+
+    Run-SubProcessWithCallback ({
+        # Worker: Separate process
+        param($params)
+        [Void][Reflection.Assembly]::LoadWithPartialName("System.Net")
+        [Void][Reflection.Assembly]::LoadWithPartialName("System.Net.WebClient")
+        $packageName = $params.PackageName
+        $pypi_json_url = 'https://pypi.python.org/pypi/{0}/json'
+        $jsonUrl = [String]::Format($pypi_json_url, $packageName)
+        $webClient = New-Object System.Net.WebClient
+        $json = $webClient.DownloadString($jsonUrl)
+        $info = $json | ConvertFrom-Json
+        return @($info)
+    }) ({
+        # Callback: Access over $Global in here
+        $message = $event.SourceArgs        
+        $Global:PyPiPackageJsonCache.Add($message.Params.PackageName, $message.Result)
+        
+        $viewRow = $Global:dataGridView.Rows[$message.Params.RowIndex]
+        $viewRow.DefaultCellStyle.BackColor = [Drawing.Color]::Empty
+        $row = $viewRow.DataBoundItem.Row        
+        $Global:dataModel.Columns['Status'].ReadOnly = $false
+        $row.Status = 'OK'
+        $Global:dataModel.Columns['Status'].ReadOnly = $true        
+    }) @{PackageName=$packageName; RowIndex=$_.RowIndex}
+}
+
 Function Generate-Form {
     $form = New-Object Windows.Forms.Form
     $form.Text = "pip package browser"
@@ -525,7 +638,7 @@ Function Generate-Form {
 		}
 	})
 
-    Add-Buttons
+    Add-Buttons | Out-Null
 	
 	Add-ComboBoxActions	
 	$form.add_KeyDown({
@@ -541,11 +654,11 @@ Function Generate-Form {
     $toolTip = New-Object System.Windows.Forms.ToolTip
     $toolTip.SetToolTip($isolatedCheckBox, "--isolated")
 
-    Add-Button "Search..." { Generate-FormInstall }
+    $null = Add-Button "Search..." { Generate-FormInstall }
 
-    NewLine-TopLayout
+    NewLine-TopLayout | Out-Null
 
-    Add-Label "Filter results:"
+    Add-Label "Filter results:" | Out-Null
     
     $Script:inputFilter = Add-Input {
         param($input)
@@ -581,14 +694,14 @@ Function Generate-Form {
             }
         })
 
-    Add-HorizontalSpacer
+    Add-HorizontalSpacer | Out-Null
 
     $labelInterp   = Add-Label "Active Interpreter:"
     $toolTipInterp = New-Object System.Windows.Forms.ToolTip
     $toolTipInterp.SetToolTip($labelInterp, "Ctrl+C to copy selected path")
 
-    Add-ComboBoxInterpreters
-    Add-Button "Add venv path..." {
+    Add-ComboBoxInterpreters | Out-Null
+    $null = Add-Button "Add venv path..." {
         $selectFolderDialog = New-Object System.Windows.Forms.FolderBrowserDialog
         $selectFolderDialog.ShowDialog()
         $path = $selectFolderDialog.SelectedPath
@@ -610,7 +723,13 @@ Function Generate-Form {
     $Script:dataGridView = $dataGridView
     $dataGridView.Location = New-Object Drawing.Point 7,($Script:lastWidgetTop + $Script:widgetLineHeight)
     $dataGridView.Size = New-Object Drawing.Point 800,450
+    $dataGridView.ShowCellToolTips = $true
     $dataGridView.Add_Sorted({ Highlight-PythonBuiltinPackages })
+    $dataGridView.Add_CellMouseEnter({
+            if (($_.RowIndex -gt -1)) {
+                Update-PythonPackageDetails
+            }
+        })
     Init-PackageGridViewProperties
     
     $dataModel = New-Object System.Data.DataTable
@@ -629,7 +748,7 @@ Function Generate-Form {
     $Script:logView = $logView
     $form.Controls.Add($logView)
 
-    Function Highlight-LogFragment() {
+    $FuncHighlightLogFragment = {
         if ($Script:dataModel.Rows.Count -eq 0) {
             return
         }
@@ -650,10 +769,10 @@ Function Generate-Form {
         }
     }
     
-    $dataGridView.Add_CellMouseClick({ Highlight-LogFragment })
-    $dataGridView.Add_SelectionChanged({ Highlight-LogFragment })
+    $dataGridView.Add_CellMouseClick({ & $FuncHighlightLogFragment }.GetNewClosure())
+    $dataGridView.Add_SelectionChanged({ & $FuncHighlightLogFragment }.GetNewClosure())
 
-    Function Show-PackageInBrowser() {
+    $FuncShowPackageInBrowser = {
         $view_row = $dataGridView.CurrentRow
         if ($view_row) {
             $row = $view_row.DataBoundItem.Row
@@ -670,12 +789,12 @@ Function Generate-Form {
 
     $dataGridView.Add_CellMouseDoubleClick({
             if (($_.RowIndex -gt -1) -and ($_.ColumnIndex -gt 0)) {
-                Show-PackageInBrowser
+                & $FuncShowPackageInBrowser
             }
-        })
+        }.GetNewClosure())
     $form.Add_Load({ $Script:formLoaded = $true })
     
-    Function Resize-Form() {
+    $FuncResizeForm = {
         $dataGridView.Width = $form.ClientSize.Width - 15
         $dataGridView.Height = $form.ClientSize.Height / 2
         $logView.Top = $dataGridView.Bottom + 15
@@ -683,12 +802,13 @@ Function Generate-Form {
         $logView.Height = $form.ClientSize.Height - $dataGridView.Bottom - $lastWidgetTop
     }
 
-    $form.Add_Closed({ if ($formDoc) { $formDoc.Close() } })
-
-    Resize-Form
-    $form.Add_Resize({ Resize-Form })
-    $form.Add_Shown({ $form.BringToFront() })
-    $form.ShowDialog()
+    & $FuncResizeForm
+    $form.Add_Resize({ & $FuncResizeForm }.GetNewClosure())
+    $form.Add_Shown({
+        Write-PipLog 'Hold Shift and hover the packages to get detailed info, then hover the Package column'
+        $form.BringToFront()
+        })
+    return ,$form
 }
 
 
@@ -1278,9 +1398,79 @@ function Test-is64Bit {
     $result
 }
 
+# from https://gallery.technet.microsoft.com/scriptcenter/Check-for-Key-Presses-with-7349aadc/file/148286/2/Test-KeyPress.ps1
+function Test-KeyPress
+{
+    <#
+        .SYNOPSIS
+        Checks to see if a key or keys are currently pressed.
+
+        .DESCRIPTION
+        Checks to see if a key or keys are currently pressed. If all specified keys are pressed then will return true, but if 
+        any of the specified keys are not pressed, false will be returned.
+
+        .PARAMETER Keys
+        Specifies the key(s) to check for. These must be of type "System.Windows.Forms.Keys"
+
+        .EXAMPLE
+        Test-KeyPress -Keys ControlKey
+
+        Check to see if the Ctrl key is pressed
+
+        .EXAMPLE
+        Test-KeyPress -Keys ControlKey,Shift
+
+        Test if Ctrl and Shift are pressed simultaneously (a chord)
+
+        .LINK
+        Uses the Windows API method GetAsyncKeyState to test for keypresses
+        http://www.pinvoke.net/default.aspx/user32.GetAsyncKeyState
+
+        The above method accepts values of type "system.windows.forms.keys"
+        https://msdn.microsoft.com/en-us/library/system.windows.forms.keys(v=vs.110).aspx
+
+        .LINK
+        http://powershell.com/cs/blogs/tips/archive/2015/12/08/detecting-key-presses-across-applications.aspx
+
+        .INPUTS
+        System.Windows.Forms.Keys
+
+        .OUTPUTS
+        System.Boolean
+    #>
+    
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [System.Windows.Forms.Keys[]]
+        $Keys
+    )
+    
+    # use the User32 API to define a keypress datatype
+    $Signature = @'
+[DllImport("user32.dll", CharSet=CharSet.Auto, ExactSpelling=true)] 
+public static extern short GetAsyncKeyState(int virtualKeyCode); 
+'@
+    $API = Add-Type -MemberDefinition $Signature -Name 'Keypress' -Namespace Keytest -PassThru 
+    
+    # test if each key in the collection is pressed
+    $Result = foreach ($Key in $Keys)
+    {
+        [bool]($API::GetAsyncKeyState($Key) -eq -32767)
+    }
+    
+    # if all are pressed, return true, if any are not pressed, return false
+    $Result -notcontains $false
+}
+
+
 Function Start-Main() {
     $env:PYTHONIOENCODING="utf-8"
     $env:LC_CTYPE="utf-8"
+    
     [System.Windows.Forms.Application]::EnableVisualStyles()
-    Generate-Form | Out-Null
+    $form = Generate-Form
+    $form.ShowDialog()
 }

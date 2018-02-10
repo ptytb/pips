@@ -62,7 +62,8 @@ RequiredAssemblies = @(
 	'System.Windows.Forms',
 	'System.Text.RegularExpressions',
 	'System.Collections',
-	'System.Web'
+	'System.Web',
+	'System.Net'
 	)
 
 # Script files (.ps1) that are run in the caller's environment prior to importing this module.
