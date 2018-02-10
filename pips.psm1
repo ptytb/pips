@@ -149,24 +149,20 @@ Function Get-PythonBuiltinPackages() {
     $path = Get-PythonPath
     $libs = "${path}\Lib"
     $ignore = [regex] '^__'
+    $filter = [regex] '\.py.?$'
 
     $trackDuplicates = New-Object System.Collections.Generic.HashSet[String]
 
     foreach ($item in dir $libs) {
-        if ($item -cmatch $ignore) {
-            continue
-        }
-
-        $trackDuplicates.Add("$item") | Out-Null
-        
-        $fullItem = "$libs\$item"
-        
         if ($item -is [System.IO.DirectoryInfo]) {
             $packageName = "$item"
         } elseif ($item -is [System.IO.FileInfo]) {
-            $packageName = "$item" -replace '.py$',''
+            $packageName = "$item" -replace $filter,''
         }
-        
+        if (($packageName -cmatch $ignore) -or ($trackDuplicates.Contains($packageName))) {
+            continue
+        }
+        $trackDuplicates.Add("$packageName") | Out-Null        
         $builtinLibs.Add(@{Package=$packageName; Type='builtin'}) | Out-Null
     }
 
