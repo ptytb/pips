@@ -562,7 +562,7 @@ Function global:Update-PythonPackageDetails {
     $cells = $dataGridView.Rows[$_.RowIndex].Cells
     $packageName = $rowItem.Row.Package
 
-    if (! [String]::IsNullOrEmpty($cells['Package'].ToolTipText) -or ($rowItem.Row.Type -ne 'pip')) {
+    if (! [String]::IsNullOrEmpty($cells['Package'].ToolTipText) -or (!($rowItem.Row.Type -in @('pip', 'wheel', 'sdist')))) {
         return
     }
 

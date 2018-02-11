@@ -25,6 +25,9 @@ This tiny script helps to keep packages updated.
 ## todo
 
 
+- [ ] Sort by Popularity, Downloads, ...
+- [ ] Add package name to JobName to prevent repeating requests already being queried
+- [ ] Filter modes: Whole, And, Or, Regexp
 - [ ] Fix peps url 0000 numbering
 - [ ] Install packages dialog like in R Studio (with completion)
 - [ ] Global PyDoc indexing and searching
