@@ -27,10 +27,10 @@ This tiny script helps to keep packages updated.
 
 - [ ] Sort by Popularity, Downloads, ...
 - [ ] Add package name to JobName to prevent repeating requests already being queried
-- [ ] Filter modes: Whole, And, Or, Regexp
+- [X] Filter modes: Whole, And, Or, Regexp
 - [ ] Fix peps url 0000 numbering
-- [ ] Install packages dialog like in R Studio (with completion)
-- [ ] Global PyDoc indexing and searching
+- [ ] Install packages dialog like in R Studio (with package name completion)
+- [ ] PyDoc and PyPi meta-info mirror local indexing and searching
 - [ ] Now assuming *utf-8* for IO whilst old(?) Python versions use cp1252, which generates empty strings for Chinese, Russian, etc.
 - [ ] Filter package search results for conda by relevant Architecture
 - [ ] Implement some missing conda commands

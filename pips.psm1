@@ -656,7 +656,7 @@ Function Generate-Form {
 
     Add-Label "Filter results:" | Out-Null
     
-    $Script:inputFilter = Add-Input {
+    $Script:inputFilter = Add-Input {  # TextChanged Handler here
         param($input)
         
         if ($Script:dataGridView.CurrentRow) {
@@ -664,13 +664,34 @@ Function Generate-Form {
             $selectedRow = $Script:dataGridView.CurrentRow.DataBoundItem.Row
         }
 
-        $isInstallMode = $dataModel.Columns.Contains('Description')
         $searchText = $input.Text
-        if ($isInstallMode) {
-            $query = "Package LIKE '{0}%' OR Package LIKE '%{0}%' OR Description LIKE '%{0}%'" -f $searchText
-        } else {
-            $query = "Package LIKE '{0}%' OR Package LIKE '%{0}%'" -f $searchText
+        
+        Function Create-SearchSubQuery($column, $searchText, $junction) {
+            return "$column LIKE '%" + ( ($searchText -split '\s+' | where { -not [String]::IsNullOrEmpty($_) }) -join  "%' $junction $column LIKE '%" ) + "%'"
         }
+
+        switch ($searchMethodComboBox.Text) {
+            'Whole Phrase' {
+                $subQueryPackage     = "Package LIKE '%{0}%'" -f $searchText
+                $subQueryDescription = "Description LIKE '%{0}%'" -f $searchText
+            }
+            'Any Word' {
+                $subQueryPackage     = Create-SearchSubQuery 'Package'     $searchText 'OR'
+                $subQueryDescription = Create-SearchSubQuery 'Description' $searchText 'OR'
+            }
+            'All Words' {
+                $subQueryPackage     = Create-SearchSubQuery 'Package'     $searchText 'AND'
+                $subQueryDescription = Create-SearchSubQuery 'Description' $searchText 'AND'
+            }            
+        }
+        $isInstallMode = $dataModel.Columns.Contains('Description')
+        if ($isInstallMode) {
+            $query = "($subQueryPackage) OR ($subQueryDescription)"
+        } else {
+            $query = "$subQueryPackage"
+        }
+
+        Write-Host $query
         
         if ($searchText.Length -gt 0) {
             $Script:dataModel.DefaultView.RowFilter = $query
@@ -692,7 +713,23 @@ Function Generate-Form {
     $toolTipFilter = New-Object System.Windows.Forms.ToolTip
     $toolTipFilter.SetToolTip($inputFilter, "Esc to clear")
 
-    Add-HorizontalSpacer | Out-Null
+    #dd-HorizontalSpacer | Out-Null
+
+    $searchMethodComboBox = New-Object System.Windows.Forms.ComboBox
+    $searchMethods = New-Object System.Collections.ArrayList
+    $searchMethods.Add('Whole Phrase') | Out-Null
+    $searchMethods.Add('Any Word') | Out-Null
+    $searchMethods.Add('All Words') | Out-Null
+    $searchMethodComboBox.DataSource = $searchMethods
+    $searchMethodComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    $Script:searchMethodComboBox = $searchMethodComboBox
+    Add-TopWidget($searchMethodComboBox)
+    $searchMethodComboBox.add_SelectionChangeCommitted({
+        $flt = $Script:inputFilter
+        $t = $flt.Text
+        $flt.Text = [String]::Empty
+        $flt.Text = $t
+        })
 
     $labelInterp   = Add-Label "Active Interpreter:"
     $toolTipInterp = New-Object System.Windows.Forms.ToolTip
@@ -803,7 +840,7 @@ Function Generate-Form {
     & $FuncResizeForm
     $form.Add_Resize({ & $FuncResizeForm }.GetNewClosure())
     $form.Add_Shown({
-        Write-PipLog 'Hold Shift and hover the packages to get detailed info, then hover the Package column'
+        Write-PipLog 'Hold Shift and hover the rows to fetch detailed info, then hover the Package column'
         $form.BringToFront()
         })
     return ,$form
