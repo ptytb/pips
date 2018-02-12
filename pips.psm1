@@ -689,6 +689,8 @@ Function Generate-Form {
                 $inputFilter.Text = [String]::Empty
             }
         })
+    $toolTipFilter = New-Object System.Windows.Forms.ToolTip
+    $toolTipFilter.SetToolTip($inputFilter, "Esc to clear")
 
     Add-HorizontalSpacer | Out-Null
 
@@ -1078,6 +1080,9 @@ Function Get-PipSearchResults($request) {
     $count = 0
     foreach ($line in $output) {
         $m = $r.Match($line)
+        if ([String]::IsNullOrEmpty($m.Groups[1].Value)) {
+            continue
+        }
         $row = $dataModel.NewRow()
         $row.Select = $false
         $row.Package = $m.Groups[1].Value
@@ -1190,7 +1195,11 @@ Function Get-SearchResults($request) {
         }
 
         $pip_list = & $pip_exe $args
-        $pipPackages = $pip_list | Select-Object -Skip 2 | % { $_ -replace '\s+', ' ' }  | ConvertFrom-Csv -Header $csv_header -Delimiter ' '
+        $pipPackages = $pip_list `
+            | Select-Object -Skip 2 `
+            | % { $_ -replace '\s+', ' ' } `
+            | ConvertFrom-Csv -Header $csv_header -Delimiter ' ' `
+            | where { -not [String]::IsNullOrEmpty($_.Package) }
     }
 
     Function Add-PackagesToTable($packages, $defaultType = [String]::Empty) {        
