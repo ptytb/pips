@@ -208,24 +208,26 @@ Function Get-CondaPackages() {
 
 $actionCommands = @{
     pip=@{
-        info          = { return (& (Get-PipExe) show             $args 2>&1) };
-        documentation = { (Show-DocView $pkg).Show() | Out-Null; return ''    };
-        files         = { return (& (Get-PipExe) show    --files  $args 2>&1) };
-        update        = { return (& (Get-PipExe) install -U       $args 2>&1) };
-        install       = { return (& (Get-PipExe) install          $args 2>&1) };
-        install_dry   = { return 'Not supported on pip' };
-        download      = { return (& (Get-PipExe) download         $args 2>&1) };
-        uninstall     = { return (& (Get-PipExe) uninstall --yes  $args 2>&1) };
+        info          = { return (& (Get-PipExe) show              $args 2>&1) };
+        documentation = { (Show-DocView $pkg).Show() | Out-Null; return ''     };
+        files         = { return (& (Get-PipExe) show    --files   $args 2>&1) };
+        update        = { return (& (Get-PipExe) install -U        $args 2>&1) };
+        install       = { return (& (Get-PipExe) install           $args 2>&1) };
+        install_dry   = { return 'Not supported on pip'                        };
+        install_nodep = { return (& (Get-PipExe) install --no-deps $args 2>&1) };
+        download      = { return (& (Get-PipExe) download          $args 2>&1) };
+        uninstall     = { return (& (Get-PipExe) uninstall --yes   $args 2>&1) };
     };
     conda=@{
-        info          = { return (& (Get-CondaExe) list      -v --json             $args 2>&1) };        
-        documentation = { return '' };
-        files         = { return '' };
-        update        = { return (& (Get-CondaExe) update    --yes                 $args 2>&1) };
-        install       = { return (& (Get-CondaExe) install   --yes --no-shortcuts  $args 2>&1) };
-        install_dry   = { return (& (Get-CondaExe) install   --dry-run             $args 2>&1) };
-        download      = { return '' };
-        uninstall     = { return (& (Get-CondaExe) uninstall --yes                 $args 2>&1) };
+        info          = { return (& (Get-CondaExe) list      -v --json                     $args 2>&1) };        
+        documentation = { return ''                                                                    };
+        files         = { return ''                                                                    };
+        update        = { return (& (Get-CondaExe) update  --yes                           $args 2>&1) };
+        install       = { return (& (Get-CondaExe) install --yes --no-shortcuts            $args 2>&1) };
+        install_dry   = { return (& (Get-CondaExe) install --dry-run                       $args 2>&1) };
+        install_nodep = { return (& (Get-CondaExe) install --yes --no-shortcuts --no-deps  $args 2>&1) };
+        download      = { return ''                                                                    };
+        uninstall     = { return (& (Get-CondaExe) uninstall --yes                         $args 2>&1) };
     };
 }
 $actionCommands.wheel   = $actionCommands.pip
@@ -264,6 +266,10 @@ Function Add-ComboBoxActions {
 		{ param($pkg,$type); $actionCommands[$type].install_dry.Invoke($pkg) } `
         { param($pkg,$out); $out -match ('Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' + $pkg) } )
 
+    & $Add (Make-PipActionItem 'Install (No Deps)' `
+		{ param($pkg,$type); $actionCommands[$type].install_nodep.Invoke($pkg) } `
+        { param($pkg,$out); $out -match ('Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' + $pkg) } )
+
     & $Add (Make-PipActionItem 'Install' `
 		{ param($pkg,$type); $actionCommands[$type].install.Invoke($pkg) } `
         { param($pkg,$out); $out -match ('Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' + $pkg) } )
@@ -278,11 +284,11 @@ Function Add-ComboBoxActions {
 
     $Script:actionsModel = $actionsModel
 
-    $actionList = New-Object System.Windows.Forms.ComboBox
-    $actionList.DataSource = $actionsModel
-    $actionList.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-    $Script:actionList = $actionList
-    Add-TopWidget($actionList)    
+    $actionListComboBox = New-Object System.Windows.Forms.ComboBox
+    $actionListComboBox.DataSource = $actionsModel
+    $actionListComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    $Script:actionListComboBox = $actionListComboBox
+    Add-TopWidget($actionListComboBox)    
 }
 
 
@@ -648,7 +654,7 @@ Function Generate-Form {
     
     $Script:isolatedCheckBox = Add-CheckBox 'isolated' { Toggle-VirtualEnv $Script:isolatedCheckBox.Checked }
     $toolTip = New-Object System.Windows.Forms.ToolTip
-    $toolTip.SetToolTip($isolatedCheckBox, "--isolated")
+    $toolTip.SetToolTip($isolatedCheckBox, 'Pip ignores environment variables and user configuration.')
 
     $null = Add-Button "Search..." { Generate-FormInstall }
 
@@ -674,6 +680,10 @@ Function Generate-Form {
             'Whole Phrase' {
                 $subQueryPackage     = "Package LIKE '%{0}%'" -f $searchText
                 $subQueryDescription = "Description LIKE '%{0}%'" -f $searchText
+            }
+            'Exact Match' {
+                $subQueryPackage     = "Package LIKE '{0}'" -f $searchText
+                $subQueryDescription = "Description LIKE '{0}'" -f $searchText
             }
             'Any Word' {
                 $subQueryPackage     = Create-SearchSubQuery 'Package'     $searchText 'OR'
@@ -720,6 +730,7 @@ Function Generate-Form {
     $searchMethods.Add('Whole Phrase') | Out-Null
     $searchMethods.Add('Any Word') | Out-Null
     $searchMethods.Add('All Words') | Out-Null
+    $searchMethods.Add('Exact Match') | Out-Null
     $searchMethodComboBox.DataSource = $searchMethods
     $searchMethodComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
     $Script:searchMethodComboBox = $searchMethodComboBox
@@ -1376,7 +1387,7 @@ Function Execute-PipAction($action) {
     for ($i = 0; $i -lt $dataModel.Rows.Count; $i++) {
        if ($dataModel.Rows[$i].Select -eq $true) {
             $package =  $dataModel.Rows[$i]
-            $action = $Script:actionsModel[$actionList.SelectedIndex]
+            $action = $Script:actionsModel[$actionListComboBox.SelectedIndex]
             
             Write-PipLog ""
             Write-PipLog $action.Name ' ' $package.Package
