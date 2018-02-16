@@ -670,7 +670,7 @@ Function Generate-Form {
             $selectedRow = $Script:dataGridView.CurrentRow.DataBoundItem.Row
         }
 
-        $searchText = $input.Text
+        $searchText = $input.Text -replace "'","''"
         
         Function Create-SearchSubQuery($column, $searchText, $junction) {
             return "$column LIKE '%" + ( ($searchText -split '\s+' | where { -not [String]::IsNullOrEmpty($_) }) -join  "%' $junction $column LIKE '%" ) + "%'"
@@ -1416,7 +1416,7 @@ Function Execute-PipAction($action) {
     Write-PipLog '----'
     Write-PipLog 'All tasks finished.'
     Write-PipLog 'Select a row to highlight the relevant log piece'
-    Write-PipLog 'Double click a table row to open PyPi in browser (online)'
+    Write-PipLog 'Double click a table row to open PyPi or Anaconda.com in browser (online)'
     Write-PipLog '----'
     Write-PipLog ''
 }
