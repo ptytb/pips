@@ -9,6 +9,9 @@
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Text.RegularExpressions")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Collections")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Collections.ArrayList")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Collections.Hashtable")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Collections.Generic")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Collections.Generic.HashSet")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Web")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Web.HttpUtility")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Net")
@@ -424,7 +427,91 @@ Function Toggle-VirtualEnv ($state) {
     #Write-PipLog "PATH=" $env:PATH
 }
 
+Function Load-KnownPackageIndex {
+    $fs = New-Object System.IO.FileStream "$PSScriptRoot\known-packages.bin", ([System.IO.FileMode]::Open)
+    $bf = New-Object System.Runtime.Serialization.Formatters.Binary.BinaryFormatter
+    $index = $bf.Deserialize($fs)
+    $fs.Close()
+    return $index
+}
+
 Function Generate-FormInstall {
+    Function Prepare-PackageAutoCompletion {
+        $Script:packageIndex = Load-KnownPackageIndex
+        $Script:autoCompleteIndex = New-Object System.Windows.Forms.AutoCompleteStringCollection
+        foreach ($item in $packageIndex.Keys) {
+            $autoCompleteIndex.Add($item)
+        }
+    }
+
+    if ($Script:packageIndex -eq $null) {
+        Prepare-PackageAutoCompletion
+    }
+
+    $form = New-Object System.Windows.Forms.Form
+    
+    $label = New-Object System.Windows.Forms.Label
+    $label.Text = 'Type package name and hit Enter to enqueue'
+    $label.Location = New-Object Drawing.Point 7,7
+    $label.Size = New-Object Drawing.Point 270,24
+    $form.Controls.Add($label)
+
+    $cb = New-Object System.Windows.Forms.TextBox
+    $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
+    $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
+    $cb.AutoCompleteCustomSource = $Script:autoCompleteIndex
+    $cb.add_KeyDown({
+        if ($_.KeyCode -eq 'Escape') {
+            if ($cb.Text.Length -gt 0) {
+                $cb.Text = [string]::Empty
+            } else {
+                $form.Close()
+            }
+        }
+        if ($_.KeyCode -eq 'Enter') {
+            if ($dataModel.Rows.Count -eq 0) {
+                Init-PackageSearchColumns $dataModel
+            }
+
+            $package = $cb.Text
+            $record = $packageIndex[$package]
+            if (-not $record) {
+                return
+            }
+            $row = $dataModel.NewRow()
+            $row.Select = $true
+            $row.Package = $package
+            if ($dataModel.Columns.Contains('Version')) {
+                $row.Version = $record.Version
+            } else {
+                $row.Latest  = $record.Version
+            }
+            if ($dataModel.Columns.Contains('Description')) {
+                $row.Description = $record.Description
+            }
+            $row.Type = 'pip'
+            $row.Status = ''
+            $dataModel.Rows.InsertAt($row, 0)
+
+            $cb.Text = [string]::Empty
+        }
+    })
+    $cb.Location = New-Object Drawing.Point 7,40
+    $cb.Size = New-Object Drawing.Point 240,32
+    $form.Controls.Add($cb)
+
+    $form.Size = New-Object Drawing.Point 280,130
+    $form.SizeGripStyle = [System.Windows.Forms.SizeGripStyle]::Hide
+    $form.FormBorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    $form.Text = 'Install packages'
+    $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
+    $form.MinimizeBox = $false
+    $form.MaximizeBox = $false
+    $form.Icon = $Script:form.Icon
+    $form.ShowDialog()
+}
+
+Function Generate-FormSearch {
     $message = "Enter keywords to search PyPi and Conda`n`n* = list all packages`n`nChecked items will be kept in the search list"
     $title = "pip search ... & conda search ..."
     $default = "*"
@@ -508,7 +595,7 @@ Function global:Open-LinkInBrowser($url) {
 $Global:jobCounter = 0
 $Global:jobTimer = New-Object System.Windows.Forms.Timer
 $Global:jobTimer.Interval = 250
-$Global:jobTimer.add_Tick({ $null | Out-Null })
+$Global:jobTimer.add_Tick({ $null | Out-Null })  # this hack forces processing of two different event loops: window & PS object events
 [int] $Global:jobSemaphore = 0
 Function Run-SubProcessWithCallback($code, $callback, $params) {
     $Global:jobCounter++
@@ -619,7 +706,7 @@ Function global:Update-PythonPackageDetails {
 Function Generate-Form {
     $form = New-Object Windows.Forms.Form
     $form.Text = "pip package browser"
-    $form.Size = New-Object Drawing.Point 1000, 840
+    $form.Size = New-Object Drawing.Point 1050, 840
 	$form.topmost = $false
 	$form.KeyPreview = $true
     $iconPath = Get-Bin 'pip'
@@ -656,7 +743,9 @@ Function Generate-Form {
     $toolTip = New-Object System.Windows.Forms.ToolTip
     $toolTip.SetToolTip($isolatedCheckBox, 'Pip ignores environment variables and user configuration.')
 
-    $null = Add-Button "Search..." { Generate-FormInstall }
+    $null = Add-Button "Search..." { Generate-FormSearch }
+
+    $null = Add-Button "Install..." { Generate-FormInstall }
 
     NewLine-TopLayout | Out-Null
 
@@ -701,7 +790,7 @@ Function Generate-Form {
             $query = "$subQueryPackage"
         }
 
-        Write-Host $query
+        #Write-Host $query
         
         if ($searchText.Length -gt 0) {
             $Script:dataModel.DefaultView.RowFilter = $query
@@ -908,6 +997,7 @@ class DocView {
         $this.formDoc.Size = New-Object Drawing.Point 830, 840
         $this.formDoc.Topmost = $false
         $this.formDoc.KeyPreview = $true
+        $this.formDoc.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
 
         $this.formDoc.Icon = $Global:form.Icon
 
