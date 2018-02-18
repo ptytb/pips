@@ -1,3 +1,5 @@
+# a little mess in here, work in progress
+
 $env:PYTHONIOENCODING="utf-8"
 $env:LC_CTYPE="utf-8"
 
@@ -6,45 +8,49 @@ $env:LC_CTYPE="utf-8"
 [Void][Reflection.Assembly]::LoadWithPartialName("System.IO.FileStream")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Web")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Web.HttpUtility")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Windows")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
 
-$index = New-Object System.Collections.Hashtable
+#$index = New-Object System.Collections.Hashtable
+$index = New-Object System.Collections.Generic.HashSet[String]
 $r = [regex] '^(?<Name>.*?)\s*\((?<Version>.*?)\)\s+-\s+(?<Description>.*?)$'
 $count = 0
 $tags_url = 'https://pypi.python.org/pypi?%3Aaction=list_classifiers'
 
-$webClient = New-Object System.Net.WebClient
-$tags = $webClient.DownloadString($tags_url)
+# The correct way to get the whole list of packages
+$all_list_html = 'https://pypi.python.org/simple/'
 
-# search for a..z as long as `pip search *' does not work; still not the whole list, unfortunately
+#$webClient = New-Object System.Net.WebClient
+#$tags = $webClient.DownloadString($tags_url)
 
-foreach ($l in @([char]'a'..[char]'z'; [char]'0'..[char]'9'; $tags)) {
-    if ($l.GetType() -eq [System.Int32]) {
-        $letter = [char] $l
-    } else {
-        $letter = "$l"
-    }
-    
-    Write-Host "Getting $letter"
-    $output = & pip search $letter
-    
-    foreach ($line in $output) {
-        $m = $r.Match($line)
-        if ([String]::IsNullOrEmpty($m.Groups['Name'].Value)) {
-            continue
-        }
-        if ($index.ContainsKey($m.Groups['Name'].Value)) {
-            continue
-        }
-        $index[$m.Groups['Name'].Value] = @{Version=$m.Groups['Version'].Value; Description=$m.Groups['Description'].Value}
-        $count += 1
-    }
+Function Load-KnownPackageIndex {
+    $fs = New-Object System.IO.FileStream "$PSScriptRoot\known-packages.bin", ([System.IO.FileMode]::Open)
+    $bf = New-Object System.Runtime.Serialization.Formatters.Binary.BinaryFormatter
+    $index = $bf.Deserialize($fs)
+    $fs.Close()
+    return $index
+}
+
+#$index = Load-KnownPackageIndex
+
+$lines = Get-Content "$PSScriptRoot\index.txt" | Where {$_ -notmatch '^\s+$'} | foreach { $_.ToString().Trim() } 
+
+foreach ($l in $lines) {
+#    Write-Host "Getting $l"
+
+    #if ($index.ContainsKey($l)) {
+        #continue
+    #}
+    #$index[$l] = @{Version=''; Description=''}
+    $index.Add($l) | Out-Null
+    $count += 1
 }
 
 #[System.Management.Automation.PSSerializer]::Serialize($index) > known-packages.xml
 
-$fs = New-Object System.IO.FileStream 'known-packages.bin', ([System.IO.FileMode]::CreateNew)
+$fs = New-Object System.IO.FileStream 'known-packages.bin', ([System.IO.FileMode]::Create)
 $bf = New-Object System.Runtime.Serialization.Formatters.Binary.BinaryFormatter
 $bf.Serialize($fs, $index)
 $fs.Close()
 
-Write-Host "Acquired $count records."
+Write-Host "Acquired $count records. Total $($index.Count) in index."

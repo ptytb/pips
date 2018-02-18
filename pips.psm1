@@ -438,8 +438,14 @@ Function Load-KnownPackageIndex {
 Function Generate-FormInstall {
     Function Prepare-PackageAutoCompletion {
         $Script:packageIndex = Load-KnownPackageIndex
+
         $Script:autoCompleteIndex = New-Object System.Windows.Forms.AutoCompleteStringCollection
-        foreach ($item in $packageIndex.Keys) {
+        if ($packageIndex.Keys -eq $null) {
+            $keys = $packageIndex
+        } else {
+            $keys = $packageIndex.Keys
+        }
+        foreach ($item in $keys) {
             $autoCompleteIndex.Add($item)
         }
     }
@@ -474,21 +480,28 @@ Function Generate-FormInstall {
             }
 
             $package = $cb.Text
-            $record = $packageIndex[$package]
-            if (-not $record) {
+
+            if (-not ($packageIndex.Contains($package))) {
                 return
             }
+
             $row = $dataModel.NewRow()
             $row.Select = $true
             $row.Package = $package
-            if ($dataModel.Columns.Contains('Version')) {
-                $row.Version = $record.Version
-            } else {
-                $row.Latest  = $record.Version
+
+            if ($packageIndex -is [System.Collections.Hashtable]) {
+                $record = $packageIndex[$package]
+                if ($dataModel.Columns.Contains('Version')) {
+                    $row.Version = $record.Version
+                } else {
+                    $row.Latest  = $record.Version
+                }
+
+                if ($dataModel.Columns.Contains('Description')) {
+                    $row.Description = $record.Description
+                }
             }
-            if ($dataModel.Columns.Contains('Description')) {
-                $row.Description = $record.Description
-            }
+
             $row.Type = 'pip'
             $row.Status = ''
             $dataModel.Rows.InsertAt($row, 0)
