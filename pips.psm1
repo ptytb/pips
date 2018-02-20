@@ -257,9 +257,18 @@ $actionCommands.wheel   = $actionCommands.pip
 $actionCommands.sdist   = $actionCommands.pip
 $actionCommands.builtin = $actionCommands.pip
 
+Function Copy-AsRequirementsTxt($list) {
+	$requirements = New-Object System.Text.StringBuilder
+	foreach ($item in $list) {
+		$requirements.AppendLine("$($item.Package)=$($item.Installed)") | Out-Null
+	}
+	Set-Clipboard $requirements.ToString()
+	Write-PipLog "Copied $($list.Count) items to clipboard."
+}
+
 Function Add-ComboBoxActions {
-    Function Make-PipActionItem($name, $code, $validator) {
-        $action = New-Object psobject -Property @{Name=$name}
+    Function Make-PipActionItem($name, $code, $validator, $takesList = $false) {
+        $action = New-Object psobject -Property @{Name=$name; TakesList=$takesList;}
         $action | Add-Member ScriptMethod ToString { $this.Name } -Force
 		$action | Add-Member ScriptMethod Execute  $code
 		$action | Add-Member ScriptMethod Validate $validator
@@ -304,6 +313,12 @@ Function Add-ComboBoxActions {
     & $Add (Make-PipActionItem 'Uninstall' `
 		{ param($pkg,$type); $actionCommands[$type].uninstall.Invoke($pkg) } `
         { param($pkg,$out); $out -match ('Successfully uninstalled ' + $pkg) } )
+
+    & $Add (Make-PipActionItem 'As requirements.txt' `
+		{ param($list); Copy-AsRequirementsTxt($list) } `
+        { param($pkg,$out); $out -match '.*' } `
+		$true )  # Yes, take a whole list of packages
+		
 
     $Script:actionsModel = $actionsModel
 
@@ -569,6 +584,7 @@ Function Generate-FormSearch {
     Write-PipLog
     $stats = Get-SearchResults $input
     Write-PipLog "Found $($stats.Total) packages: $($stats.PipCount) pip, $($stats.CondaCount) conda. Total $($dataModel.Rows.Count) packages in list."
+	Write-PipLog
 }
 
 Function Init-PackageGridViewProperties() {
@@ -911,7 +927,7 @@ Function Generate-Form {
 				};
 				@{
 					Name = 'PipenvExe';
-					Menutext = 'with pipenv (incomplete, don''t use)';
+					MenuText = 'with pipenv (incomplete, don''t use)';
 					Code = {
 						param($path)
 						$env:WORKON_HOME = $path
@@ -919,6 +935,10 @@ Function Generate-Form {
 						return $output
 					};
 				};
+				@{
+					MenuText = 'Custom... (TODO)';
+					Code = {  };
+				}
 			)
 			
 			$menuStrip = New-Object System.Windows.Forms.ContextMenuStrip
@@ -928,7 +948,9 @@ Function Generate-Form {
 					$menuStrip.Items.Add($tool.MenuText)
 	            }
 	        }
-
+			$menuStrip.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+			$menuStrip.Items.Add($tools[-1].MenuText)
+		
 			$FuncUpdateInterpreters = {
 				param($path)
 				Get-InterpreterRecord $path $interpreters
@@ -1495,6 +1517,7 @@ Function Get-SearchResults($request) {
     $builtinCount = $builtinPackages.Count
     $condaCount = $condaPackages.Count
     Write-PipLog "Total $count packages: $builtinCount builtin, $pipCount pip, $condaCount conda"
+	Write-PipLog
 }
 
 Function Select-VisiblePipPackages($value) {
@@ -1585,33 +1608,46 @@ Function Check-PipDependencies {
     }
 }
 
-Function Execute-PipAction($action) {
+Function Execute-PipAction {
+	$action = $Script:actionsModel[$actionListComboBox.SelectedIndex]
+	
+	if ($action.TakesList) {
+		$checkedList = New-Object System.Collections.ArrayList
+    }
+	
     for ($i = 0; $i -lt $dataModel.Rows.Count; $i++) {
        if ($dataModel.Rows[$i].Select -eq $true) {
-            $package =  $dataModel.Rows[$i]
-            $action = $Script:actionsModel[$actionListComboBox.SelectedIndex]
+            $package = $dataModel.Rows[$i]
             
-            Write-PipLog ""
-            Write-PipLog $action.Name ' ' $package.Package
+            if (-not $action.TakesList) {
+                Write-PipLog ""
+                Write-PipLog $action.Name ' ' $package.Package
+				
+				$result = $action.Execute($package.Package, $package.Type)
+				
+                $logFrom = $Script:logView.TextLength 
+                Write-PipLog (Tidy-Output $result)
+                $logTo = $Script:logView.TextLength - $logFrom
+                $dataModel.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $logFrom
+                $dataModel.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
 
-            $result = $action.Execute($package.Package, $package.Type)
-
-            $logFrom = $Script:logView.TextLength 
-            Write-PipLog (Tidy-Output $result)
-            $logTo = $Script:logView.TextLength - $logFrom
-            $dataModel.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $logFrom
-            $dataModel.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
-
-            $dataModel.Columns['Status'].ReadOnly = $false
-            if ($action.Validate($package.Package, $result)) {
-                 $dataModel.Rows[$i].Status = "OK"
-                 Set-Unchecked $i
+                $dataModel.Columns['Status'].ReadOnly = $false
+                if ($action.Validate($package.Package, $result)) {
+                     $dataModel.Rows[$i].Status = "OK"
+                     Set-Unchecked $i
+                } else {
+                     $dataModel.Rows[$i].Status = "Failed"
+                }
+                $dataModel.Columns['Status'].ReadOnly = $true
+                Set-SelectedRow $dataModel.Rows[$i]
             } else {
-                 $dataModel.Rows[$i].Status = "Failed"
-            }
-            $dataModel.Columns['Status'].ReadOnly = $true
-            Set-SelectedRow $dataModel.Rows[$i]
+				$checkedList.Add($package) | Out-Null
+			}
        }
+    }
+	
+	if ($action.TakesList) {
+		$null = $action.Execute($checkedList)
     }
 
     Write-PipLog ''
