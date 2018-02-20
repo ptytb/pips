@@ -42,6 +42,18 @@ Function Get-CondaExe() {
     $Script:interpretersComboBox.SelectedItem.CondaExe
 }
 
+Function Get-VirtualenvExe() {
+    $Script:interpretersComboBox.SelectedItem.VirtualenvExe
+}
+
+Function Get-PipenvExe() {
+    $Script:interpretersComboBox.SelectedItem.Pipenv
+}
+
+Function Get-PythonVersion() {
+    $Script:interpretersComboBox.SelectedItem.Version
+}
+
 Function Exists-File($path) {
     return [System.IO.File]::Exists($path)
 }
@@ -83,6 +95,14 @@ $csv_header = ("Package", "Installed", "Latest", "Type", "Status")
 $search_columns = ("Select", "Package", "Version", "Description", "Type", "Status")
 $formLoaded = $false
 $outdatedOnly = $true
+$interpreters = $null
+
+$iconBase64_DownArrow = @'
+iVBORw0KGgoAAAANSUhEUgAAAAsAAAALCAYAAACprHcmAAAABGdBTUEAALGPC/xhBQAAAAlwSFlz
+AAAOvAAADrwBlbxySQAAABp0RVh0U29mdHdhcmUAUGFpbnQuTkVUIHYzLjUuMTAw9HKhAAAAP0lE
+QVQoU42KQQ4AIAzC9v9Po+Pi3MB4aAKFAPCNlA4pHVI6TtjRMc4s7ZRcey0U5sitC0pxTIZ4IaVD
+Sg1iAai9ScU7YisTAAAAAElFTkSuQmCC
+'@
 
 
 Function global:Write-PipLog() {
@@ -112,7 +132,7 @@ Function NewLine-TopLayout() {
 Function Add-Button ($name, $handler) {
     $button = New-Object Windows.Forms.Button
     $button.Text = $name
-    $button.Add_Click($handler)
+    $button.Add_Click({ $handler.Invoke( @($Script:button) ) }.GetNewClosure())
     Add-TopWidget $button
     return $button
 }
@@ -212,7 +232,7 @@ Function Get-CondaPackages() {
 $actionCommands = @{
     pip=@{
         info          = { return (& (Get-PipExe) show              $args 2>&1) };
-        documentation = { (Show-DocView $pkg).Show() | Out-Null; return ''     };
+        documentation = { (Show-DocView $pkg).Show() | Out-Null; return ''    };
         files         = { return (& (Get-PipExe) show    --files   $args 2>&1) };
         update        = { return (& (Get-PipExe) install -U        $args 2>&1) };
         install       = { return (& (Get-PipExe) install           $args 2>&1) };
@@ -330,6 +350,11 @@ Function Get-InterpreterRecord($path, $items) {
 
     $items.Add($action) | Out-Null
     $trackDuplicates.Add($path) | Out-Null
+
+	if ($Script:interpretersComboBox) {
+		$interpretersComboBox.DataSource = $null
+		$interpretersComboBox.DataSource = $interpreters
+    }
 }
 
 Function Find-Interpreters {
@@ -539,7 +564,7 @@ Function Generate-FormSearch {
     }
 
     Write-PipLog ("Searching for " + $input)
-    Write-PipLog 'Double click a table row to open PyPi in browser (online)'
+    Write-PipLog 'Double click a table row to open PyPi or Anaconda.com in browser (online)'
     
     Write-PipLog
     $stats = Get-SearchResults $input
@@ -716,6 +741,15 @@ Function global:Update-PythonPackageDetails {
     }) @{PackageName=$packageName; RowIndex=$_.RowIndex}
 }
 
+Function global:Request-FolderPathFromUser($text = [string]::Empty) {
+    $selectFolderDialog = New-Object System.Windows.Forms.FolderBrowserDialog
+	$selectFolderDialog.Description = $text
+    $selectFolderDialog.ShowDialog() | Out-Null
+    $path = $selectFolderDialog.SelectedPath
+    $path = Get-ExistingPathOrNull $path
+	return $path
+}
+
 Function Generate-Form {
     $form = New-Object Windows.Forms.Form
     $form.Text = "pip package browser"
@@ -849,24 +883,89 @@ Function Generate-Form {
     $toolTipInterp.SetToolTip($labelInterp, "Ctrl+C to copy selected path")
 
     Add-ComboBoxInterpreters | Out-Null
-    $null = Add-Button "Add venv path..." {
-        $selectFolderDialog = New-Object System.Windows.Forms.FolderBrowserDialog
-        $selectFolderDialog.ShowDialog()
-        $path = $selectFolderDialog.SelectedPath
-        $path = Get-ExistingPathOrNull $path
+    $null = Add-Button "Add env path..." {
+        $path = Request-FolderPathFromUser 'Choose a folder with python environment'
         if ($path) {
             $oldCount = $interpreters.Count
             Get-InterpreterRecord $path $interpreters
             if ($interpreters.Count -gt $oldCount) {
-                $interpretersComboBox.DataSource = $null
-                $interpretersComboBox.DataSource = $interpreters
                 Write-PipLog "Added virtual environment location: $path"
             } else {
                 Write-PipLog "No python found in $path"
             }
         }
     }
-    
+
+    $createEnvButton = Add-Button 'Create env' {
+			param($button)
+			
+			$tools = @(
+				@{
+					Name = 'VirtualenvExe';
+					MenuText = 'with virtualenv';
+					Code = {
+						param($path)
+						$output = & (Get-VirtualenvExe) --python="$(Get-PythonExe)" $path 2>&1				
+						return $output
+					};
+				};
+				@{
+					Name = 'PipenvExe';
+					Menutext = 'with pipenv (incomplete, don''t use)';
+					Code = {
+						param($path)
+						$env:WORKON_HOME = $path
+						$output = & (Get-PipenvExe) --python "$(Get-PythonVersion)" $path 2>&1
+						return $output
+					};
+				};
+			)
+			
+			$menuStrip = New-Object System.Windows.Forms.ContextMenuStrip
+			foreach ($tool in $tools) {
+				$toolExe = $Script:interpretersComboBox.SelectedItem."$($tool.Name)"
+				if ($toolExe) {
+					$menuStrip.Items.Add($tool.MenuText)
+	            }
+	        }
+
+			$FuncUpdateInterpreters = {
+				param($path)
+				Get-InterpreterRecord $path $interpreters
+				for ($i = 0; $i -lt $Script:interpreters.Count; $i++) {
+					if ($Script:interpreters[$i].Path -eq $path) {
+						$Script:interpretersComboBox.SelectedIndex = $i
+						break
+                    }
+                }
+			}
+		
+			$currentVersion = (Get-PythonVersion)
+
+			$menuStrip.add_ItemClicked({
+				foreach ($tool in $tools) {
+					if ($tool.MenuText -eq $_.ClickedItem) {
+						$path = Request-FolderPathFromUser `
+							"New python environment with current version $currentVersion will be created"
+						if ($path -eq $null) { return }
+						Write-PipLog "$($button.Text) $($tool.MenuText), please wait..."
+						$menuStrip.Hide()						
+						$output = $tool.Code.Invoke( @($path) )
+						Write-PipLog (Tidy-Output $output)
+						& $FuncUpdateInterpreters $path
+					}
+	            }
+			}.GetNewClosure())
+			
+			$point = New-Object System.Drawing.Point ($button.Location.X, $button.Bottom)
+			$menuStrip.Show($Script:form.PointToScreen($point))
+	    }
+	$createEnvButton.ImageAlign = [System.Drawing.ContentAlignment]::MiddleRight
+	
+    $iconStream = [System.IO.MemoryStream][System.Convert]::FromBase64String($iconBase64_DownArrow)
+	$iconBmp = [System.Drawing.Bitmap][System.Drawing.Image]::FromStream($iconStream)
+	$createEnvButton.Image = $iconBmp
+	
     $dataGridView = New-Object System.Windows.Forms.DataGridView
     $Script:dataGridView = $dataGridView
     $dataGridView.Location = New-Object Drawing.Point 7,($Script:lastWidgetTop + $Script:widgetLineHeight)
@@ -1421,7 +1520,7 @@ Function Set-Unchecked($index) {
     $dataModel.Rows[$index].Select = $false
 }
 
-Function Tidy-Output($text) {
+Function global:Tidy-Output($text) {
 	return ($text -replace '$', "`n")
 }
 
@@ -1628,5 +1727,5 @@ Function Start-Main() {
     
     [System.Windows.Forms.Application]::EnableVisualStyles()
     $form = Generate-Form
-    $form.ShowDialog()
+    $form.ShowDialog() | Out-Null
 }
