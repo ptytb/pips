@@ -415,10 +415,20 @@ Function Find-Interpreters {
         Get-InterpreterRecord (Split-Path -Parent $path) $items
     }
 
-    foreach ($d in dir "$env:LOCALAPPDATA\Programs\Python") {
-        if ($d -is [System.IO.DirectoryInfo]) {
-            Get-InterpreterRecord (${d}.FullName) $items
+    $local_user_pythons = "$env:LOCALAPPDATA\Programs\Python"
+    if (Exists-Directory $local_user_pythons) {
+        foreach ($d in dir $local_user_pythons) {
+            if ($d -is [System.IO.DirectoryInfo]) {
+                Get-InterpreterRecord (${d}.FullName) $items
+            }
         }
+    }
+
+    # search registry as defined here: https://www.python.org/dev/peps/pep-0514/
+    $reg_pythons = dir HKCU:Software\Python | foreach { dir HKCU:$_ } | foreach { (Get-ItemProperty -Path HKCU:$_\InstallPath).'(default)' }
+    $reg_WoW_pythons = dir HKLM:Software\Wow6432Node\Python | foreach { dir HKLM:$_ } | foreach { (Get-ItemProperty -Path HKLM:$_\InstallPath).'(default)' }
+    foreach ($d in @($reg_pythons; $reg_WoW_pythons)) {
+        Get-InterpreterRecord ($d -replace '\\$','') $items
     }
 
     return ,$items  # keep comma to prevent conversion to an @() array
