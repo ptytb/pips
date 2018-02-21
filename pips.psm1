@@ -260,7 +260,7 @@ $actionCommands.builtin = $actionCommands.pip
 Function Copy-AsRequirementsTxt($list) {
 	$requirements = New-Object System.Text.StringBuilder
 	foreach ($item in $list) {
-		$requirements.AppendLine("$($item.Package)=$($item.Installed)") | Out-Null
+		$requirements.AppendLine("$($item.Package)==$($item.Installed)") | Out-Null
 	}
 	Set-Clipboard $requirements.ToString()
 	Write-PipLog "Copied $($list.Count) items to clipboard."
