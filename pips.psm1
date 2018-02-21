@@ -104,6 +104,41 @@ QVQoU42KQQ4AIAzC9v9Po+Pi3MB4aAKFAPCNlA4pHVI6TtjRMc4s7ZRcey0U5sitC0pxTIZ4IaVD
 Sg1iAai9ScU7YisTAAAAAElFTkSuQmCC
 '@
 
+$iconBase64_Snakes = @'
+AAABAAEAEBAAAAAAAABoBAAAFgAAACgAAAAQAAAAIAAAAAEAIAAAAAAAQAQAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYAAAAaAAAAIQAAACEAAAAYAAAABQAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAODg4CPw8PDD/Pz8+P/////7+/v44uLizVtbW1AA
+AAAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD9/f24s/X//13j//9I2f//SdP//6Dm
+///i4uLPAAAAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA////9mXt//9c6P//UeD/
+/9X2//8/0P///Pz8+QAAACgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYAAAAZAAAAIf////9i7f//
+Ye3//1rn//9P3v//RNb///////8AAAA7AAAAIAAAABcAAAAFAAAAAN/f3yPw8PDC/Pz8+P//////
+////Yu3//2Lt//++9/////////////////////////v7+/ji4uLNWlpaUAAAAAb9/f25zLql/4hq
+Rv99ZEX//////2Pt//9i7f//Yu3//2Dr//9W4///S9v//0DS//85y///neT//+Li4s8AAAAd////
+9qF6S/+PbEH/hGdD//Hu6v+b9P//Y+3//2Lt//9i7f//Xur//1Ti//9J2f//PtH//0DM///8/Pz5
+AAAAKf////+kdj3/mXE//41rQv+jjnT/8O7q/////////////////+39//+F7f//UuD//0fY//88
+z////////wAAACr////1soJH/6J1Pf+Wb0D/i2pC/4BlRP98Y0X/fGNF/31kRv+snIn/7f3//1vn
+//9P3///UNn///v7+/gAAAAh////ttzCov+tfD//oHQ+/5RuQP+JaUL/fmRF/3xjRf98Y0X/fWVH
+//////9h7P//XOb//6zv///r6+vEAAAACwAAAAD///+4////9//////////////////////JvrH/
+fGNF/3xjRf////////////7+/vX6+vq4v7+/JQAAAAAAAAAAAAAAAAAAAAAAAAAA/////5tyP/+Q
+bEH/hWdD/31jRf98Y0X//////wAAACkAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//
+//WmeUD/6N/T/45rQf+CZkT/f2ZJ//v7+/gAAAAhAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAD///+22MCj/6h9Sf+XcED/k3NN/8S3qP/r6+vEAAAACwAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAP///7j////3//////7+/vX6+vq5v7+/JQAAAAAAAAAAAAAAAAAAAAAA
+AAAA+B8AAPAPAADwDwAA8A8AAIABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAQAA8A8AAPAP
+AADwDwAA+B8AAA==
+'@
+
+Function Convert-Base64ToBMP($base64Text) {
+    $iconStream = [System.IO.MemoryStream][System.Convert]::FromBase64String($base64Text)
+	$iconBmp = [System.Drawing.Bitmap][System.Drawing.Image]::FromStream($iconStream)
+    return $iconBmp
+}
+
+Function Convert-Base64ToICO($base64Text) {
+    $iconStream = [System.IO.MemoryStream][System.Convert]::FromBase64String($base64Text)
+	$icon = [System.Drawing.Icon]::FromHandle(([System.Drawing.Image]::FromStream($iconStream)).GetHIcon())
+    return $icon
+}
 
 Function global:Write-PipLog() {
     foreach ($obj in $args) {
@@ -772,8 +807,7 @@ Function Generate-Form {
     $form.Size = New-Object Drawing.Point 1050, 840
 	$form.topmost = $false
 	$form.KeyPreview = $true
-    $iconPath = Get-Bin 'pip'
-    $form.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($iconPath)
+    $form.Icon = Convert-Base64ToICO $iconBase64_Snakes
 	$Script:form = $form
 	
 	$form.add_KeyDown({
@@ -983,10 +1017,7 @@ Function Generate-Form {
 			$menuStrip.Show($Script:form.PointToScreen($point))
 	    }
 	$createEnvButton.ImageAlign = [System.Drawing.ContentAlignment]::MiddleRight
-	
-    $iconStream = [System.IO.MemoryStream][System.Convert]::FromBase64String($iconBase64_DownArrow)
-	$iconBmp = [System.Drawing.Bitmap][System.Drawing.Image]::FromStream($iconStream)
-	$createEnvButton.Image = $iconBmp
+	$createEnvButton.Image = Convert-Base64ToBMP $iconBase64_DownArrow
 	
     $dataGridView = New-Object System.Windows.Forms.DataGridView
     $Script:dataGridView = $dataGridView
@@ -1133,7 +1164,7 @@ class DocView {
         $this.formDoc.KeyPreview = $true
         $this.formDoc.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
 
-        $this.formDoc.Icon = $Global:form.Icon
+        $this.formDoc.Icon = $Script:form.Icon
 
         $this.docView = New-Object System.Windows.Forms.RichTextBox
         $this.docView.Location = New-Object Drawing.Point 7,7

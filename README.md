@@ -25,6 +25,7 @@ This tiny script helps to keep packages updated.
 ## todo
 
 
+- [ ] Move known package index builder code into the main script
 - [ ] Sort by Popularity, Downloads, ...
 - [ ] Add package name to JobName to prevent repeating requests already being queried
 - [X] Filter modes: Whole, And, Or, Regexp
