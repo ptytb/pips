@@ -410,7 +410,7 @@ Function Get-InterpreterRecord($path, $items) {
 Function Find-Interpreters {
     $items = New-Object System.Collections.ArrayList
 
-    $list = @(where.exe 'python'; (dir $env:SystemDrive\Python*) | foreach{ "$_\python.exe" })
+    $list = @(where.exe 'python'; (dir $env:SystemDrive\Python*) | foreach { "$_\python.exe" })
     foreach ($path in $list) {
         Get-InterpreterRecord (Split-Path -Parent $path) $items
     }
@@ -425,9 +425,16 @@ Function Find-Interpreters {
     }
 
     # search registry as defined here: https://www.python.org/dev/peps/pep-0514/
-    $reg_pythons = dir HKCU:Software\Python | foreach { dir HKCU:$_ } | foreach { (Get-ItemProperty -Path HKCU:$_\InstallPath).'(default)' }
-    $reg_WoW_pythons = dir HKLM:Software\Wow6432Node\Python | foreach { dir HKLM:$_ } | foreach { (Get-ItemProperty -Path HKLM:$_\InstallPath).'(default)' }
-    foreach ($d in @($reg_pythons; $reg_WoW_pythons)) {
+    if (Test-Path HKCU:Software\Python) {
+        $reg_pythons_u = dir HKCU:Software\Python | foreach { dir HKCU:$_ } | foreach { (Get-ItemProperty -Path HKCU:$_\InstallPath).'(default)' }
+    }
+    if (Test-Path HKLM:Software\Python) {
+        $reg_pythons_m = dir HKLM:Software\Python | foreach { dir HKLM:$_ } | foreach { (Get-ItemProperty -Path HKLM:$_\InstallPath).'(default)' }
+    }
+    if (Test-Path HKLM:Software\Wow6432Node\Python) {
+        $reg_WoW_pythons = dir HKLM:Software\Wow6432Node\Python | foreach { dir HKLM:$_ } | foreach { (Get-ItemProperty -Path HKLM:$_\InstallPath).'(default)' }
+    }
+    foreach ($d in @($reg_pythons_u; $reg_pythons_m; $reg_WoW_pythons)) {
         Get-InterpreterRecord ($d -replace '\\$','') $items
     }
 
