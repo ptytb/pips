@@ -557,9 +557,10 @@ Function Generate-FormInstall {
     }
 
     $form = New-Object System.Windows.Forms.Form
+    $form.KeyPreview = $true
     
     $label = New-Object System.Windows.Forms.Label
-    $label.Text = 'Type package name and hit Enter to enqueue'
+    $label.Text = "Type package names and hit Enter after each."
     $label.Location = New-Object Drawing.Point 7,7
     $label.Size = New-Object Drawing.Point 270,24
     $form.Controls.Add($label)
@@ -569,13 +570,6 @@ Function Generate-FormInstall {
     $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
     $cb.AutoCompleteCustomSource = $Script:autoCompleteIndex
     $cb.add_KeyDown({
-        if ($_.KeyCode -eq 'Escape') {
-            if ($cb.Text.Length -gt 0) {
-                $cb.Text = [string]::Empty
-            } else {
-                $form.Close()
-            }
-        }
         if ($_.KeyCode -eq 'Enter') {
             if ($dataModel.Rows.Count -eq 0) {
                 Init-PackageSearchColumns $dataModel
@@ -605,17 +599,34 @@ Function Generate-FormInstall {
             }
 
             $row.Type = 'pip'
-            $row.Status = ''
+            $row.Status = 'Pending'
             $dataModel.Rows.InsertAt($row, 0)
 
             $cb.Text = [string]::Empty
         }
     })
-    $cb.Location = New-Object Drawing.Point 7,40
+    $cb.Location = New-Object Drawing.Point 7,35
     $cb.Size = New-Object Drawing.Point 240,32
     $form.Controls.Add($cb)
 
-    $form.Size = New-Object Drawing.Point 280,130
+    $form.add_KeyDown({
+        if ($_.KeyCode -eq 'Escape') {
+            if ($cb.Text.Length -gt 0) {
+                $cb.Text = [string]::Empty
+            } else {
+                $form.Close()
+            }
+        }        
+    }.GetNewClosure())
+
+    $install = New-Object System.Windows.Forms.Button
+    $install.Text = "Install"
+    $install.Location = New-Object Drawing.Point 90,65
+    $install.Size = New-Object Drawing.Point 70,24
+    $install.add_Click({ Select-PipAction 'Install'; Execute-PipAction })
+    $form.Controls.Add($install)
+
+    $form.Size = New-Object Drawing.Point 275,135
     $form.SizeGripStyle = [System.Windows.Forms.SizeGripStyle]::Hide
     $form.FormBorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
     $form.Text = 'Install packages'
@@ -1663,6 +1674,17 @@ Function Check-PipDependencies {
     } else {
         Write-PipLog "NOT OK"
         Write-PipLog $result
+    }
+}
+
+Function Select-PipAction($actionName) {
+    $n = 0
+    foreach ($item in $actionsModel) {
+        if ($item.ToString() -eq $actionName) {
+            $actionListComboBox.SelectedIndex = $n
+            return
+        }
+        $n++
     }
 }
 
