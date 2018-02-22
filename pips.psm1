@@ -1079,7 +1079,7 @@ Function Generate-Form {
 						$path = Request-FolderPathFromUser `
 							"New python environment with current version $currentVersion will be created"
 						if ($path -eq $null) { return }
-						Write-PipLog "$($button.Text) $($tool.MenuText), please wait..."
+						Write-PipLog "$($button.Text) $($tool.MenuText), please wait...`nDon't forget to update firewall rules (wf.msc)"
 						$menuStrip.Hide()						
 						$output = $tool.Code.Invoke( @($path) )
 						Write-PipLog (Tidy-Output $output)

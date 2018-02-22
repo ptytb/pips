@@ -24,6 +24,7 @@ This tiny script helps to keep packages updated.
 
 ## todo
 
+- [ ] Add some integration with VirusTotal (sha-256 of archive + link to VT for a starter)
 - [ ] Fix "isolated" checkbox behavior is somewhat uncertain
 - [ ] Move known package index builder code into the main script
 - [ ] Sort by Popularity, Downloads, ...
