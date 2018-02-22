@@ -18,8 +18,18 @@
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Net.WebClient")
 
 
-Function Get-Bin($command) {
-    (where.exe $command) | Select-Object -Index 0
+Function Get-Bin($command, $all = $false) {
+    $commands = Get-Command -All -ErrorAction SilentlyContinue $command
+    $found = $null
+    if ($commands) {
+        $commands = $commands | foreach { $_.Source }
+        if ($all) {
+            $found = $commands
+        } else {
+            $found = $commands | Select-Object -Index 0
+        }
+    }
+    return $found
 }
 
 Function Get-PythonPath() {
@@ -410,7 +420,7 @@ Function Get-InterpreterRecord($path, $items) {
 Function Find-Interpreters {
     $items = New-Object System.Collections.ArrayList
 
-    $list = @(where.exe 'python'; (dir $env:SystemDrive\Python*) | foreach { "$_\python.exe" })
+    $list = @((Get-Bin 'python' $true); (dir $env:SystemDrive\Python*) | foreach { "$_\python.exe" })
     foreach ($path in $list) {
         Get-InterpreterRecord (Split-Path -Parent $path) $items
     }
