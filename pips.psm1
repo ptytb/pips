@@ -606,7 +606,7 @@ Function Generate-FormInstall {
             }
 
             if (Test-PackageInList $package) {
-                & $FuncShowToolTip "$package" "Package $package is alredy in the list"
+                & $FuncShowToolTip "$package" "Package '$package' is already in the list"
                 return
             }
 
