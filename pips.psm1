@@ -569,7 +569,31 @@ Function Generate-FormInstall {
     $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
     $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
     $cb.AutoCompleteCustomSource = $Script:autoCompleteIndex
+
+    $hint = $null
+    $FuncShowToolTip = {
+        param($title, $text)
+        $hint = New-Object System.Windows.Forms.ToolTip
+        $hint.IsBalloon = $true
+        $hint.ToolTipTitle = $title
+        $hint.ToolTipIcon = [System.Windows.Forms.ToolTipIcon]::Error
+        $hint.Show([string]::Empty, $cb, 0);
+        $hint.Show($text, $cb, 0, $cb.Height);
+        $Script:hint = $hint
+    }
+
+    $FuncCleanupToolTip = {
+        if ($Script:hint) {
+            $Script:hint.Dispose()
+            $Script:hint = $null
+            return $true
+        }
+        return $false
+    }
+
     $cb.add_KeyDown({
+        & $FuncCleanupToolTip | Out-Null
+
         if ($_.KeyCode -eq 'Enter') {
             if ($dataModel.Rows.Count -eq 0) {
                 Init-PackageSearchColumns $dataModel
@@ -578,6 +602,11 @@ Function Generate-FormInstall {
             $package = $cb.Text
 
             if (-not ($packageIndex.Contains($package))) {
+                return
+            }
+
+            if (Test-PackageInList $package) {
+                & $FuncShowToolTip "$package" "Package $package is alredy in the list"
                 return
             }
 
@@ -611,7 +640,7 @@ Function Generate-FormInstall {
 
     $form.add_KeyDown({
         if ($_.KeyCode -eq 'Escape') {
-            if ($cb.Text.Length -gt 0) {
+            if (($cb.Text.Length -gt 0) -or (& $FuncCleanupToolTip)) {
                 $cb.Text = [string]::Empty
             } else {
                 $form.Close()
@@ -1610,6 +1639,15 @@ Function Select-PipPackages($value) {
 
 Function Set-Unchecked($index) {
     $dataModel.Rows[$index].Select = $false
+}
+
+Function Test-PackageInList($name) {
+    foreach ($item in $Script:dataModel.Rows) {
+        if ($item.Package -eq $name) {
+            return $true
+        }
+    }
+    return $false
 }
 
 Function global:Tidy-Output($text) {
