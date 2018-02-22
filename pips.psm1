@@ -422,7 +422,9 @@ Function Find-Interpreters {
 
     $list = @((Get-Bin 'python' $true); (dir $env:SystemDrive\Python*) | foreach { "$_\python.exe" })
     foreach ($path in $list) {
-        Get-InterpreterRecord (Split-Path -Parent $path) $items
+        if (-not [string]::IsNullOrEmpty($path)) {
+            Get-InterpreterRecord (Split-Path -Parent $path) $items
+        }
     }
 
     $local_user_pythons = "$env:LOCALAPPDATA\Programs\Python"
