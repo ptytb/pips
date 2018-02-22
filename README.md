@@ -24,7 +24,7 @@ This tiny script helps to keep packages updated.
 
 ## todo
 
-
+- [ ] Fix "isolated" checkbox behavior is somewhat uncertain
 - [ ] Move known package index builder code into the main script
 - [ ] Sort by Popularity, Downloads, ...
 - [ ] Add package name to JobName to prevent repeating requests already being queried

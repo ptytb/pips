@@ -204,7 +204,7 @@ Function Add-Buttons {
     Add-Button "Sel All Visible" { Select-VisiblePipPackages($true) }
     Add-Button "Select None" { Select-PipPackages($false) }
     Add-Button "Check Deps" { Check-PipDependencies }
-    Add-Button "Execute:" { Execute-PipAction }
+    Add-Button "Execute" { Execute-PipAction }
 }
 
 Function global:Get-PyDoc($request) {
@@ -892,7 +892,7 @@ Function Generate-Form {
 	})
 
     Add-Buttons | Out-Null
-	
+
 	Add-ComboBoxActions	
 	$form.add_KeyDown({
 		$comboActive = $form.ActiveControl -is [System.Windows.Forms.ComboBox]
@@ -902,6 +902,12 @@ Function Generate-Form {
 			Write-PipLog "Copied to clipboard: $python_exe"
 		}
 	})
+
+    $group = New-Object System.Windows.Forms.Panel
+    $group.Location = New-Object System.Drawing.Point 502,2
+    $group.Size = New-Object System.Drawing.Size 202,28
+    $group.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    $form.Controls.Add($group)
     
     $Script:isolatedCheckBox = Add-CheckBox 'isolated' { Toggle-VirtualEnv $Script:isolatedCheckBox.Checked }
     $toolTip = New-Object System.Windows.Forms.ToolTip
