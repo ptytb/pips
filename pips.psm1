@@ -208,7 +208,7 @@ Function Add-Buttons {
 }
 
 Function global:Get-PyDoc($request) {
-    $output = & (Get-PythonExe) -m pydoc $request
+    $output = & (Get-PythonExe) -m pydoc ($request -replace '-','_')
     return $output
 }
 
@@ -245,6 +245,35 @@ Function Get-PythonBuiltinPackages() {
     }
 
     return ,$builtinLibs
+}
+
+Function Get-PythonOtherPackages {
+    $otherLibs = New-Object System.Collections.ArrayList
+    $path = Get-PythonPath
+    $libs = "${path}\Lib\site-packages"
+    $ignore = [regex] '\.dist-info$|\.egg-info$|\.egg$|^__pycache__$'
+    $filter = [regex] '\.py.?$'
+
+    if (Exists-Directory $libs) {
+        foreach ($item in dir $libs) {
+            if ($item -is [System.IO.DirectoryInfo]) {
+                $packageName = "$item"
+            } elseif ($item -is [System.IO.FileInfo]) {
+                if ($packageName -inotmatch $filter) {
+                    continue
+                }
+                $packageName = "$item" -replace $filter,''
+            }
+            if (($packageName -cmatch $ignore) `
+                -or (Test-PackageInList $packageName)`
+                -or (Test-PackageInList ($packageName -replace '_','-'))) {
+                continue
+            }
+            $otherLibs.Add(@{Package=$packageName; Type='other'}) | Out-Null
+        }
+    }
+
+    return ,$otherLibs
 }
 
 Function Get-CondaPackages() {
@@ -301,6 +330,7 @@ $actionCommands = @{
 $actionCommands.wheel   = $actionCommands.pip
 $actionCommands.sdist   = $actionCommands.pip
 $actionCommands.builtin = $actionCommands.pip
+$actionCommands.other   = $actionCommands.pip
 
 Function Copy-AsRequirementsTxt($list) {
 	$requirements = New-Object System.Text.StringBuilder
@@ -732,12 +762,14 @@ Function Init-PackageSearchColumns($dataTable) {
     }
 }
 
-Function Highlight-PythonBuiltinPackages {
+Function Highlight-PythonPackages {
     if (! $outdatedOnly) {
         $dataGridView.BeginInit()
         foreach ($row in $dataGridView.Rows) {
             if ($row.DataBoundItem.Row.Type -eq 'builtin') {
                 $row.DefaultCellStyle.BackColor = [Drawing.Color]::LightGreen
+            } elseif ($row.DataBoundItem.Row.Type -eq 'other') {
+                $row.DefaultCellStyle.BackColor = [Drawing.Color]::LightPink
             }
         }
         $dataGridView.EndInit()
@@ -745,7 +777,7 @@ Function Highlight-PythonBuiltinPackages {
 }
 
 Function global:Open-LinkInBrowser($url) {
-    if ($url -match '^https://') {
+    if ($url -match '^https?://') {
         Start-Process -FilePath $url
     }
 }
@@ -974,7 +1006,7 @@ Function Generate-Form {
             Set-SelectedRow $selectedRow
         }
 
-        Highlight-PythonBuiltinPackages
+        Highlight-PythonPackages
     }
     $inputFilter.Add_KeyDown({
             if ($_.KeyCode -eq 'Escape') {
@@ -1099,7 +1131,7 @@ Function Generate-Form {
     $dataGridView.Location = New-Object Drawing.Point 7,($Script:lastWidgetTop + $Script:widgetLineHeight)
     $dataGridView.Size = New-Object Drawing.Point 800,450
     $dataGridView.ShowCellToolTips = $true
-    $dataGridView.Add_Sorted({ Highlight-PythonBuiltinPackages })
+    $dataGridView.Add_Sorted({ Highlight-PythonPackages })
     $dataGridView.Add_CellMouseEnter({
             if (($_.RowIndex -gt -1)) {
                 Update-PythonPackageDetails
@@ -1605,6 +1637,9 @@ Function Get-SearchResults($request) {
     if (! $outdatedOnly) {
         $builtinPackages = Get-PythonBuiltinPackages
         Add-PackagesToTable $builtinPackages 'builtin'
+
+        $otherPackages = Get-PythonOtherPackages
+        Add-PackagesToTable $otherPackages 'other'
     }
     if ($conda_exe) {
         $condaPackages = Get-CondaPackages
@@ -1613,7 +1648,7 @@ Function Get-SearchResults($request) {
     $dataModel.EndLoadData()
 
     $Script:outdatedOnly = $outdatedOnly
-    Highlight-PythonBuiltinPackages
+    Highlight-PythonPackages
 
     Write-PipLog 'Package list updated.'
     Write-PipLog 'Double click a table row to open PyPi in browser (online)'
@@ -1622,14 +1657,15 @@ Function Get-SearchResults($request) {
     $pipCount = $pipPackages.Count
     $builtinCount = $builtinPackages.Count
     $condaCount = $condaPackages.Count
-    Write-PipLog "Total $count packages: $builtinCount builtin, $pipCount pip, $condaCount conda"
+    $otherCount = $otherPackages.Count
+    Write-PipLog "Total $count packages: $builtinCount builtin, $pipCount pip, $condaCount conda, $otherCount other"
 	Write-PipLog
 }
 
 Function Select-VisiblePipPackages($value) {
     $dataModel.BeginLoadData()
     for ($i = 0; $i -lt $dataGridView.Rows.Count; $i++) {
-        if ($dataGridView.Rows[$i].DataBoundItem.Row.Type -eq 'builtin' ) {
+        if ($dataGridView.Rows[$i].DataBoundItem.Row.Type -in @('builtin', 'other') ) {
             continue
         }
         $dataGridView.Rows[$i].DataBoundItem.Row.Select = $value
