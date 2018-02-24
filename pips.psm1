@@ -4,6 +4,7 @@
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Drawing.Point")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Windows")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms.MessageBox")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Windows.FontStyle")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Text")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Text.RegularExpressions")
@@ -902,6 +903,25 @@ Function global:Request-FolderPathFromUser($text = [string]::Empty) {
 	return $path
 }
 
+Function global:Set-ActiveInterpreterWithPath($path) {
+	for ($i = 0; $i -lt $Script:interpreters.Count; $i++) {
+		if ($Script:interpreters[$i].Path -eq $path) {
+			$Script:interpretersComboBox.SelectedIndex = $i
+			Write-PipLog "Switching to env '$path'"
+			break
+	    }
+	}
+}
+
+Function global:Run-Elevated ($scriptblock, $argsList) {
+	<#
+		.PARAMETER argList
+		Arguments for the Script Block. Must not contain single quotes, can contain spaces
+	#>
+	Start-Process -Verb RunAs -FilePath powershell -WindowStyle Hidden -Wait -ArgumentList `
+		"-Command Invoke-Command {$scriptBlock} -ArgumentList $($argsList -replace '^|$','''' -join ',')"
+}
+
 Function Generate-Form {
     $form = New-Object Windows.Forms.Form
     $form.Text = "pip package browser"
@@ -1046,6 +1066,7 @@ Function Generate-Form {
             $oldCount = $interpreters.Count
             Get-InterpreterRecord $path $interpreters
             if ($interpreters.Count -gt $oldCount) {
+				Set-ActiveInterpreterWithPath $path
                 Write-PipLog "Added virtual environment location: $path"
             } else {
                 Write-PipLog "No python found in $path"
@@ -1095,12 +1116,31 @@ Function Generate-Form {
 			$FuncUpdateInterpreters = {
 				param($path)
 				Get-InterpreterRecord $path $interpreters
-				for ($i = 0; $i -lt $Script:interpreters.Count; $i++) {
-					if ($Script:interpreters[$i].Path -eq $path) {
-						$Script:interpretersComboBox.SelectedIndex = $i
-						break
-                    }
-                }
+				Set-ActiveInterpreterWithPath $path
+				
+				$ruleName = "pip env $path"
+				$pythonExe = (Get-PythonExe)
+				$firewallUserResponse = ([System.Windows.Forms.MessageBox]::Show(
+					"Create a firewall rule for the new environment?`n`nRule name: '$ruleName'`nPath: '$pythonExe'`nAllow outgoing connections`n`n" +
+					"You can edit the rule by running wf.msc",
+					"Configure firewall", [System.Windows.Forms.MessageBoxButtons]::YesNo))
+				if ($firewallUserResponse -eq 'Yes') {
+					Run-Elevated ({
+						param($path, $exe)
+						New-NetFirewallRule `
+							-DisplayName "$path" `
+							-Program "$exe" `
+							-Direction Outbound `
+							-Action Allow
+					}) @($ruleName, $pythonExe)
+				
+					$rule = Get-NetFirewallRule -DisplayName "$ruleName" -ErrorAction SilentlyContinue
+					if ($rule) {
+						Write-PipLog "Firewall rule '$ruleName' was successfully created."
+					} else {
+						Write-PipLog "Error while creating firewall rule '$ruleName'."
+					}
+            	}
 			}
 		
 			$currentVersion = (Get-PythonVersion)
@@ -1111,7 +1151,7 @@ Function Generate-Form {
 						$path = Request-FolderPathFromUser `
 							"New python environment with current version $currentVersion will be created"
 						if ($path -eq $null) { return }
-						Write-PipLog "$($button.Text) $($tool.MenuText), please wait...`nDon't forget to update firewall rules (wf.msc)"
+						Write-PipLog "$($button.Text) $($tool.MenuText), please wait..."
 						$menuStrip.Hide()						
 						$output = $tool.Code.Invoke( @($path) )
 						Write-PipLog (Tidy-Output $output)
