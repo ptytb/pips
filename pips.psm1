@@ -57,8 +57,16 @@ Function Get-VirtualenvExe() {
     $Script:interpretersComboBox.SelectedItem.VirtualenvExe
 }
 
+Function Get-VenvActivate() {
+    $Script:interpretersComboBox.SelectedItem.VenvActivate
+}
+
 Function Get-PipenvExe() {
     $Script:interpretersComboBox.SelectedItem.PipenvExe
+}
+
+Function Get-Pipfile() {
+    $Script:interpretersComboBox.SelectedItem.Pipfile
 }
 
 Function Get-PythonVersion() {
@@ -181,6 +189,51 @@ Function Add-Button ($name, $handler) {
     $button.Add_Click({ $handler.Invoke( @($Script:button) ) }.GetNewClosure())
     Add-TopWidget $button
     return $button
+}
+
+Function Add-ButtonMenu ($text, $tools, $onclick) {
+	$form = $script:form  # to be captured by $handler's closure
+	$interpretersComboBox = $Script:interpretersComboBox  # the same reason
+	
+	$handler = {
+		param($button)
+		$menuStrip = New-Object System.Windows.Forms.ContextMenuStrip
+		foreach ($tool in $tools) {
+			if ($tool.Persistent) {
+				continue
+            }			
+			if ($tool.Contains('IsAccessible') -and -not $tool.IsAccessible.Invoke()) {
+				continue
+            }
+			$menuStrip.Items.Add($tool.MenuText)
+        }
+        if ($menuStrip.Items.Count -gt 0) {
+		    $menuStrip.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+        }
+		foreach ($tool in $tools) {
+			if ($tool.Persistent) {
+				$menuStrip.Items.Add($tool.MenuText)
+            }
+        }
+		
+		$tools = $Script:tools
+		$onclick = $Script:onclick
+		$menuStrip.add_ItemClicked({
+			foreach ($tool in $tools) {
+				if ($tool.MenuText -eq $_.ClickedItem) {
+					$Script:menuStrip.Hide()
+					$Script:onclick.Invoke( @($tool) )
+			    }
+			}
+		}.GetNewClosure())
+		
+		$point = New-Object System.Drawing.Point ($button.Location.X, $button.Bottom)
+		$menuStrip.Show($Script:form.PointToScreen($point))
+	}.GetNewClosure()
+
+	$button = Add-Button $text ($handler)
+	$button.ImageAlign = [System.Drawing.ContentAlignment]::MiddleRight
+	$button.Image = Convert-Base64ToBMP $iconBase64_DownArrow
 }
 
 Function Add-Label ($name) {
@@ -414,7 +467,7 @@ Function Get-InterpreterRecord($path, $items) {
     }
 
     Function Guess-EnvPath ($fileName) {
-        $subdirs = @('\'; '\Scripts\'; '\.venv\Scripts\'; '\.venv\'; '\env\Scripts\'; '\env\')
+        $subdirs = @('\'; '\Scripts\'; '\.venv\Scripts\'; '\.venv\'; '\env\Scripts\'; '\env\'; '\bin\')
         foreach ($tryPath in $subdirs) {
             $target = "${path}${tryPath}${fileName}"
             if (Exists-File $target) {
@@ -439,6 +492,7 @@ Function Get-InterpreterRecord($path, $items) {
 		PipExe		    = Guess-EnvPath 'pip.exe';
 		CondaExe	    = Guess-EnvPath 'conda.exe';
 		VirtualenvExe   = Guess-EnvPath 'virtualenv.exe';
+		VenvActivate    = Guess-EnvPath 'activate.bat';
 		PipenvExe	    = Guess-EnvPath 'pipenv.exe';
 		RequirementsTxt = Guess-EnvPath 'requirements.txt';
 		Pipfile  	    = Guess-EnvPath 'Pipfile';
@@ -931,10 +985,121 @@ Function global:Run-Elevated ($scriptblock, $argsList) {
 		"-Command Invoke-Command {$scriptBlock} -ArgumentList $($argsList -replace '^|$','''' -join ',')"
 }
 
+Function Add-CreateEnvButtonMenu {
+	$tools = @(
+		@{
+			MenuText = 'with virtualenv';
+			Code = {
+				param($path)
+				$output = & (Get-VirtualenvExe) --python="$(Get-PythonExe)" $path 2>&1				
+				return $output
+			};
+			IsAccessible = { [bool] (Get-VirtualenvExe) };
+		};
+		@{
+			MenuText = 'with pipenv';
+			Code = {
+				param($path)
+				$env:PIPENV_VENV_IN_PROJECT = 1
+				Set-Location -Path $path
+				$output = & (Get-PipenvExe) --python "$(Get-PythonVersion)" install 2>&1
+				return $output
+			};
+			IsAccessible = { [bool] (Get-PipenvExe) };
+		};
+		@{
+			Persistent = $true;
+			MenuText = 'Custom... (TODO)';
+			Code = {  };
+		}
+	)
+	
+	$FuncUpdateInterpreters = {
+		param($path)
+		Get-InterpreterRecord $path $interpreters
+		Set-ActiveInterpreterWithPath $path
+		
+		$ruleName = "pip env $path"
+		$pythonExe = (Get-PythonExe)
+		$firewallUserResponse = ([System.Windows.Forms.MessageBox]::Show(
+			"Create a firewall rule for the new environment?`n`nRule name: '$ruleName'`nPath: '$pythonExe'`nAllow outgoing connections`n`n" +
+			"You can edit the rule by running wf.msc",
+			"Configure firewall", [System.Windows.Forms.MessageBoxButtons]::YesNo))
+		if ($firewallUserResponse -eq 'Yes') {
+			Run-Elevated ({
+				param($path, $exe)
+				New-NetFirewallRule `
+					-DisplayName "$path" `
+					-Program "$exe" `
+					-Direction Outbound `
+					-Action Allow
+			}) @($ruleName, $pythonExe)
+		
+			$rule = Get-NetFirewallRule -DisplayName "$ruleName" -ErrorAction SilentlyContinue
+			if ($rule) {
+				Write-PipLog "Firewall rule '$ruleName' was successfully created."
+			} else {
+				Write-PipLog "Error while creating firewall rule '$ruleName'."
+			}
+    	}
+	}
+	
+	$FuncGetPythonInfo = {
+		return (Get-PythonVersion)
+	}
+
+	$menuclick = {
+		param($tool)
+
+		$path = Request-FolderPathFromUser `
+			"New python environment with active version $($FuncGetPythonInfo.Invoke()) will be created"
+		if ($path -eq $null) { return }
+		Write-PipLog "Create $($tool.MenuText), please wait..."		
+		$output = $tool.Code.Invoke( @($path) )
+		Write-PipLog (Tidy-Output $output)
+
+		$FuncUpdateInterpreters.Invoke($path)
+	}.GetNewClosure()
+	
+    $createEnvButton = Add-ButtonMenu 'env: Create' $tools $menuclick
+}
+
+Function Add-EnvToolButtonMenu {
+	$menu = @(
+		@{
+			Persistent = $true;
+			MenuText = 'Python REPL';
+			Code = { Start-Process -FilePath (Get-PythonExe) -WorkingDirectory (Get-PythonPath) };
+		};
+		@{
+			MenuText = 'Shell with Virtualenv Activated';
+			Code = { Start-Process -FilePath cmd.exe -WorkingDirectory (Get-PythonPath) -ArgumentList "/K $(Get-VenvActivate)" };
+			IsAccessible = { (Get-VenvActivate) };
+		};
+		@{
+			Persistent = $true;
+			MenuText = 'Open IDLE'
+			Code = { Start-Process -FilePath (Get-PythonExe) -WorkingDirectory (Get-PythonPath) -ArgumentList '-m idlelib.idle' -WindowStyle Hidden };
+		};
+		@{
+			MenuText = 'pipenv shell'
+			Code = { Start-Process -FilePath (Get-Bin 'pipenv.exe') -WorkingDirectory (Get-PythonPath) -ArgumentList 'shell' };
+			IsAccessible = { [bool] (Get-Bin 'pipenv.exe') -and [bool] (Get-Pipfile) };
+		};
+	)
+	
+	$menuclick = {
+		param($item)
+		$output = $item.Code.Invoke()
+	}
+	
+	$envToolsButton = Add-ButtonMenu 'env: Tools' $menu $menuclick
+}
+
 Function Generate-Form {
     $form = New-Object Windows.Forms.Form
     $form.Text = "pip package browser"
-    $form.Size = New-Object Drawing.Point 1050, 840
+    $form.Size = New-Object Drawing.Point 1125, 840
 	$form.topmost = $false
 	$form.KeyPreview = $true
     $form.Icon = Convert-Base64ToICO $iconBase64_Snakes
@@ -974,7 +1139,7 @@ Function Generate-Form {
     
     $Script:isolatedCheckBox = Add-CheckBox 'isolated' { Toggle-VirtualEnv $Script:isolatedCheckBox.Checked }
     $toolTip = New-Object System.Windows.Forms.ToolTip
-    $toolTip.SetToolTip($isolatedCheckBox, 'Pip ignores environment variables and user configuration.')
+    $toolTip.SetToolTip($isolatedCheckBox, "Ignore environment variables, user configuration and global packages.`n`n--isolated`n--local")
 
     $null = Add-Button "Search..." { Generate-FormSearch }
 
@@ -1069,8 +1234,9 @@ Function Generate-Form {
     $toolTipInterp.SetToolTip($labelInterp, "Ctrl+C to copy selected path")
 
     Add-ComboBoxInterpreters | Out-Null
-    $null = Add-Button "Add env path..." {
-        $path = Request-FolderPathFromUser 'Choose a folder with python environment'
+    $null = Add-Button "env: Open..." {
+        $path = Request-FolderPathFromUser ("Choose a folder with python environment, created by either Virtualenv or pipenv`n`n" +
+			"Typically it contains dirs: Include, Lib, Scripts")
         if ($path) {
             $oldCount = $interpreters.Count
             Get-InterpreterRecord $path $interpreters
@@ -1084,101 +1250,9 @@ Function Generate-Form {
             }
         }
     }
-
-    $createEnvButton = Add-Button 'Create env' {
-			param($button)
-			
-			$tools = @(
-				@{
-					Name = 'VirtualenvExe';
-					MenuText = 'with virtualenv';
-					Code = {
-						param($path)
-						$output = & (Get-VirtualenvExe) --python="$(Get-PythonExe)" $path 2>&1				
-						return $output
-					};
-				};
-				@{
-					Name = 'PipenvExe';
-					MenuText = 'with pipenv';
-					Code = {
-						param($path)
-						$env:PIPENV_VENV_IN_PROJECT = 1
-						Set-Location -Path $path
-						$output = & (Get-PipenvExe) --python "$(Get-PythonVersion)" install 2>&1
-						return $output
-					};
-				};
-				@{
-					MenuText = 'Custom... (TODO)';
-					Code = {  };
-				}
-			)
-			
-			$menuStrip = New-Object System.Windows.Forms.ContextMenuStrip
-			foreach ($tool in $tools) {
-				$toolExe = $Script:interpretersComboBox.SelectedItem."$($tool.Name)"
-				if ($toolExe) {
-					$menuStrip.Items.Add($tool.MenuText)
-	            }
-	        }
-            if ($menuStrip.Items.Count -gt 0) {
-			    $menuStrip.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
-            }
-			$menuStrip.Items.Add($tools[-1].MenuText)
-		
-			$FuncUpdateInterpreters = {
-				param($path)
-				Get-InterpreterRecord $path $interpreters
-				Set-ActiveInterpreterWithPath $path
-				
-				$ruleName = "pip env $path"
-				$pythonExe = (Get-PythonExe)
-				$firewallUserResponse = ([System.Windows.Forms.MessageBox]::Show(
-					"Create a firewall rule for the new environment?`n`nRule name: '$ruleName'`nPath: '$pythonExe'`nAllow outgoing connections`n`n" +
-					"You can edit the rule by running wf.msc",
-					"Configure firewall", [System.Windows.Forms.MessageBoxButtons]::YesNo))
-				if ($firewallUserResponse -eq 'Yes') {
-					Run-Elevated ({
-						param($path, $exe)
-						New-NetFirewallRule `
-							-DisplayName "$path" `
-							-Program "$exe" `
-							-Direction Outbound `
-							-Action Allow
-					}) @($ruleName, $pythonExe)
-				
-					$rule = Get-NetFirewallRule -DisplayName "$ruleName" -ErrorAction SilentlyContinue
-					if ($rule) {
-						Write-PipLog "Firewall rule '$ruleName' was successfully created."
-					} else {
-						Write-PipLog "Error while creating firewall rule '$ruleName'."
-					}
-            	}
-			}
-		
-			$currentVersion = (Get-PythonVersion)
-
-			$menuStrip.add_ItemClicked({
-				foreach ($tool in $tools) {
-					if ($tool.MenuText -eq $_.ClickedItem) {
-						$path = Request-FolderPathFromUser `
-							"New python environment with active version $currentVersion will be created"
-						if ($path -eq $null) { return }
-						Write-PipLog "$($button.Text) $($tool.MenuText), please wait..."
-						$menuStrip.Hide()						
-						$output = $tool.Code.Invoke( @($path) )
-						Write-PipLog (Tidy-Output $output)
-						& $FuncUpdateInterpreters $path
-					}
-	            }
-			}.GetNewClosure())
-			
-			$point = New-Object System.Drawing.Point ($button.Location.X, $button.Bottom)
-			$menuStrip.Show($Script:form.PointToScreen($point))
-	    }
-	$createEnvButton.ImageAlign = [System.Drawing.ContentAlignment]::MiddleRight
-	$createEnvButton.Image = Convert-Base64ToBMP $iconBase64_DownArrow
+	
+	Add-CreateEnvButtonMenu
+	Add-EnvToolButtonMenu
 	
     $dataGridView = New-Object System.Windows.Forms.DataGridView
     $Script:dataGridView = $dataGridView
@@ -1648,14 +1722,15 @@ Function Get-SearchResults($request) {
     if ($pip_exe) {
         $args = New-Object System.Collections.ArrayList
         $args.Add('list') | Out-Null
+		$args.Add('--format=columns') | Out-Null
 
         if ($outdatedOnly) {
             $args.Add('--outdated') | Out-Null
         }
-
-        $args.Add('--format=columns') | Out-Null
+        
         if ($Script:isolatedCheckBox.Checked) {
-            $args.Add('--isolated') | Out-Null
+            $args.Add('--isolated') | Out-Null  # ignore user config
+			$args.Add('--local') | Out-Null     # ignore global packages
         }
 
         $pip_list = & $pip_exe $args
