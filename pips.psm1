@@ -58,7 +58,7 @@ Function Get-VirtualenvExe() {
 }
 
 Function Get-PipenvExe() {
-    $Script:interpretersComboBox.SelectedItem.Pipenv
+    $Script:interpretersComboBox.SelectedItem.PipenvExe
 }
 
 Function Get-PythonVersion() {
@@ -406,20 +406,28 @@ Function Add-ComboBoxActions {
 }
 
 
-$trackDuplicates = New-Object System.Collections.Generic.HashSet[String]
+$trackDuplicateInterpreters = New-Object System.Collections.Generic.HashSet[String]
 
 Function Get-InterpreterRecord($path, $items) {
-    if ($trackDuplicates.Contains($path)) {
-        continue
+    if ($trackDuplicateInterpreters.Contains($path)) {
+        return
     }
 
-    $python = Get-ExistingFilePathOrNull "${path}\python.exe"
-    if (! $python) {
-        $python = Get-ExistingFilePathOrNull "${path}\Scripts\python.exe"
-    }    
-    if (! $python) {
+    Function Guess-EnvPath ($fileName) {
+        $subdirs = @('\'; '\Scripts\'; '\.venv\Scripts\'; '\.venv\'; '\env\Scripts\'; '\env\')
+        foreach ($tryPath in $subdirs) {
+            $target = "${path}${tryPath}${fileName}"
+            if (Exists-File $target) {
+                return $target
+            }
+        }
+        return $null
+    }
+
+    $python = Guess-EnvPath 'python.exe'
+    if (-not $python) {
         return
-	}	
+	}
 	$versionString = & $python --version 2>&1
 	$version = [regex]::Match($versionString, '\s+(\d+\.\d+)').Groups[1]
 
@@ -428,19 +436,20 @@ Function Get-InterpreterRecord($path, $items) {
 		Version		    = $version;
 		Arch		    = Test-is64Bit $python;
 		PythonExe	    = $python;
-		PipExe		    = Get-ExistingFilePathOrNull "${path}\Scripts\pip.exe";
-		CondaExe	    = Get-ExistingFilePathOrNull "${path}\Scripts\conda.exe";
-		VirtualenvExe   = Get-ExistingFilePathOrNull "${path}\Scripts\virtualenv.exe";
-		PipenvExe	    = Get-ExistingFilePathOrNull "${path}\Scripts\pipenv.exe";
-		RequirementsTxt = Get-ExistingFilePathOrNull "${path}\requirements.txt";
-		Pipfile  	    = Get-ExistingFilePathOrNull "${path}\Pipfile";
+		PipExe		    = Guess-EnvPath 'pip.exe';
+		CondaExe	    = Guess-EnvPath 'conda.exe';
+		VirtualenvExe   = Guess-EnvPath 'virtualenv.exe';
+		PipenvExe	    = Guess-EnvPath 'pipenv.exe';
+		RequirementsTxt = Guess-EnvPath 'requirements.txt';
+		Pipfile  	    = Guess-EnvPath 'Pipfile';
+        PipfileLock     = Guess-EnvPath 'Pipfile.lock';
 	}
 	$action | Add-Member ScriptMethod ToString {
 		"{2} [{0}] {1}" -f $this.Arch.FileType, $this.PythonExe, $this.Version
 	} -Force
 
     $items.Add($action) | Out-Null
-    $trackDuplicates.Add($path) | Out-Null
+    $trackDuplicateInterpreters.Add($path) | Out-Null
 
 	if ($Script:interpretersComboBox) {
 		$interpretersComboBox.DataSource = $null
@@ -509,7 +518,7 @@ Function Toggle-VirtualEnv ($state) {
     }
 
     Function Guess-EnvPath ($fileName) {
-        $paths = @('.\env\Scripts\', '.\Scripts\')
+        $paths = @('.\env\Scripts\'; '.\Scripts\'; '.env\')
         foreach ($tryPath in $paths) {
             if (Test-Path ($tryPath + $fileName)) {
                 return ($tryPath + $fileName)
@@ -1065,9 +1074,11 @@ Function Generate-Form {
         if ($path) {
             $oldCount = $interpreters.Count
             Get-InterpreterRecord $path $interpreters
-            if ($interpreters.Count -gt $oldCount) {
-				Set-ActiveInterpreterWithPath $path
-                Write-PipLog "Added virtual environment location: $path"
+            if (($interpreters.Count -gt $oldCount) -or ($trackDuplicateInterpreters.Contains($path))) {
+				if ($interpreters.Count -gt $oldCount) {
+                    Write-PipLog "Added virtual environment location: $path"
+                }
+                Set-ActiveInterpreterWithPath $path                
             } else {
                 Write-PipLog "No python found in $path"
             }
@@ -1089,11 +1100,12 @@ Function Generate-Form {
 				};
 				@{
 					Name = 'PipenvExe';
-					MenuText = 'with pipenv (incomplete, don''t use)';
+					MenuText = 'with pipenv';
 					Code = {
 						param($path)
-						$env:WORKON_HOME = $path
-						$output = & (Get-PipenvExe) --python "$(Get-PythonVersion)" $path 2>&1
+						$env:PIPENV_VENV_IN_PROJECT = 1
+						Set-Location -Path $path
+						$output = & (Get-PipenvExe) --python "$(Get-PythonVersion)" install 2>&1
 						return $output
 					};
 				};
@@ -1110,7 +1122,9 @@ Function Generate-Form {
 					$menuStrip.Items.Add($tool.MenuText)
 	            }
 	        }
-			$menuStrip.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+            if ($menuStrip.Items.Count -gt 0) {
+			    $menuStrip.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+            }
 			$menuStrip.Items.Add($tools[-1].MenuText)
 		
 			$FuncUpdateInterpreters = {
@@ -1149,7 +1163,7 @@ Function Generate-Form {
 				foreach ($tool in $tools) {
 					if ($tool.MenuText -eq $_.ClickedItem) {
 						$path = Request-FolderPathFromUser `
-							"New python environment with current version $currentVersion will be created"
+							"New python environment with active version $currentVersion will be created"
 						if ($path -eq $null) { return }
 						Write-PipLog "$($button.Text) $($tool.MenuText), please wait..."
 						$menuStrip.Hide()						
@@ -1929,7 +1943,7 @@ function Test-KeyPress
         System.Windows.Forms.Keys
 
         .OUTPUTS
-        System.Boolean
+		System.Boolean
     #>
     
     [CmdletBinding()]
