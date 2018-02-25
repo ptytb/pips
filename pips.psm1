@@ -385,6 +385,7 @@ $actionCommands.wheel   = $actionCommands.pip
 $actionCommands.sdist   = $actionCommands.pip
 $actionCommands.builtin = $actionCommands.pip
 $actionCommands.other   = $actionCommands.pip
+$actionCommands.git     = $actionCommands.pip
 
 Function Copy-AsRequirementsTxt($list) {
 	$requirements = New-Object System.Text.StringBuilder
@@ -633,6 +634,19 @@ Function Load-KnownPackageIndex {
     return $index
 }
 
+Function global:Validate-GitLink($url) {
+	$r = [regex] '(?<Prefix>\w+\+)?(?<Protocol>\w+)://(?<Host>[^/]+)/(?<User>[^/]+)/(?<Repo>[^/.]+)(?<Suffix>\.[^@]+)?(?:@(?<Hash>.+))?'
+	$m = $r.Match($url)
+	$g = $m.Groups
+	
+	if (($g['Prefix'].Value -ne 'git+') -and -not ($g['Protocol'].Value -in @('git', 'ssh', 'https'))) {
+		return $null
+	}
+
+	$hash = if ($g['Hash'].Value) { "@$($g['Hash'].Value)" } else { [string]::Empty }
+	return "git+$($g['Protocol'])://$($g['Host'])/$($g['User'])/$($g['Repo'])$($g['Suffix'])$Hash#egg=$($g['Repo'])"
+}
+
 Function Generate-FormInstall {
     Function Prepare-PackageAutoCompletion {
         $Script:packageIndex = Load-KnownPackageIndex
@@ -656,9 +670,9 @@ Function Generate-FormInstall {
     $form.KeyPreview = $true
     
     $label = New-Object System.Windows.Forms.Label
-    $label.Text = "Type package names and hit Enter after each."
+    $label.Text = "Type package names or Git urls and hit Enter after each."
     $label.Location = New-Object Drawing.Point 7,7
-    $label.Size = New-Object Drawing.Point 270,24
+    $label.Size = New-Object Drawing.Point 315,24
     $form.Controls.Add($label)
 
     $cb = New-Object System.Windows.Forms.TextBox
@@ -697,6 +711,22 @@ Function Generate-FormInstall {
 
             $package = $cb.Text
 
+			$link = Validate-GitLink $package
+			if ($link) {
+				if (Test-PackageInList $link) {
+		            & $FuncShowToolTip "$package" "Repository '$link' is already in the list"
+		            return
+				}
+				$row = $dataModel.NewRow()
+				$row.Package = $link
+				$row.Type = 'git'
+            	$row.Status = 'Pending'
+				$row.Select = $true
+            	$dataModel.Rows.InsertAt($row, 0)
+				$cb.Text = [string]::Empty
+				return 
+			}
+
             if (-not ($packageIndex.Contains($package))) {
                 return
             }
@@ -731,7 +761,7 @@ Function Generate-FormInstall {
         }
     })
     $cb.Location = New-Object Drawing.Point 7,35
-    $cb.Size = New-Object Drawing.Point 240,32
+    $cb.Size = New-Object Drawing.Point 285,32
     $form.Controls.Add($cb)
 
     $form.add_KeyDown({
@@ -746,12 +776,12 @@ Function Generate-FormInstall {
 
     $install = New-Object System.Windows.Forms.Button
     $install.Text = "Install"
-    $install.Location = New-Object Drawing.Point 90,65
+    $install.Location = New-Object Drawing.Point 115,65
     $install.Size = New-Object Drawing.Point 70,24
     $install.add_Click({ Select-PipAction 'Install'; Execute-PipAction })
     $form.Controls.Add($install)
 
-    $form.Size = New-Object Drawing.Point 275,135
+    $form.Size = New-Object Drawing.Point 320,135
     $form.SizeGripStyle = [System.Windows.Forms.SizeGripStyle]::Hide
     $form.FormBorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
     $form.Text = 'Install packages'

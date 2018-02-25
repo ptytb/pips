@@ -24,7 +24,8 @@ This script helps to keep packages updated.
 
 ## todo
 
-- [ ] Add editable packages to Install dialog (git, local); pip list --editable
+- [ ] Add search with Github API
+- [X] Add editable packages to Install dialog (git, local); pip list --editable
 - [ ] Add some integration with VirusTotal (sha-256 of archive + link to VT for a starter)
 - [ ] Fix "isolated" checkbox behavior is somewhat uncertain
 - [ ] Move known package index builder code into the main script
