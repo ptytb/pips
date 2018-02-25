@@ -1,7 +1,7 @@
 # pips
 **pips** is a GUI for pip and conda - Python package manager, written in PowerShell.
 
-This tiny script helps to keep packages updated.
+This script helps to keep packages updated.
 
 
 1. Hit Check for Updates
@@ -24,6 +24,7 @@ This tiny script helps to keep packages updated.
 
 ## todo
 
+- [ ] Add editable packages to Install dialog (git, local); pip list --editable
 - [ ] Add some integration with VirusTotal (sha-256 of archive + link to VT for a starter)
 - [ ] Fix "isolated" checkbox behavior is somewhat uncertain
 - [ ] Move known package index builder code into the main script
