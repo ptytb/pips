@@ -12,11 +12,11 @@ This script helps to keep packages updated.
 
 
 - Dependency-free
-- **pip** and **conda** are supported
+- Search and install from **pip**, **conda** and **github**
 - Looks up for installed Python distributions
-- Filter and sort of packages
+- Manage environments
+- Filter and sort packages
 - Documentation viewer with simple highlighting and browser-like navigation
-- Manage user virtualenv directories
 
 
 ![](screenshot.png)
@@ -24,7 +24,9 @@ This script helps to keep packages updated.
 
 ## todo
 
-- [ ] Add search with Github API
+
+- [ ] Save user env list
+- [X] Add search with Github API
 - [X] Add editable packages to Install dialog (git, local); pip list --editable
 - [ ] Add some integration with VirusTotal (sha-256 of archive + link to VT for a starter)
 - [ ] Fix "isolated" checkbox behavior is somewhat uncertain
@@ -35,7 +37,7 @@ This script helps to keep packages updated.
 - [ ] Fix peps url 0000 numbering
 - [X] Install packages dialog like in R Studio (with package name completion)
 - [ ] PyDoc and PyPi meta-info mirror local indexing and searching
-- [ ] Now assuming *utf-8* for IO whilst old(?) Python versions use cp1252, which generates empty strings for Chinese, Russian, etc.
+- [X] Now assuming *utf-8* for IO whilst old(?) Python versions use cp1252, which generates empty strings for Chinese, Russian, etc.
 - [ ] Filter package search results for conda by relevant Architecture
 - [ ] Implement some missing conda commands
 - [ ] *conda* command has a nice options to work with but gives wierd output - suggests older package versions than installed. Needed intervention with channels?

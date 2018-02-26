@@ -636,9 +636,23 @@ Function Load-KnownPackageIndex {
     return $index
 }
 
-Function global:Validate-GitLink($url) {
+Function global:Validate-GitLink ($url) {
 	$r = [regex] '^(?<Prefix>\w+\+)?(?<Protocol>\w+)://(?<Host>[^/]+)/(?<User>[^/]+)/(?<Repo>[^/@#]+)(?:@(?<Hash>[^#]+))?(?:#.*)?$'
 	$s = [regex] '^(?<Name>[^/]+)/(?<Repo>[^/]+)$'
+	$f = [regex] '^(?<Prefix>\w+\+)?file:///(?<Path>.+)$'
+	
+	$m_file = $f.Match($url)
+	$g_file = $m_file.Groups
+	if ($g_file.Count -gt 1) {
+		if (Exists-Directory $g_file['Path']) {
+			return "git+file:///$($g_file['Path'] -replace '\\','/')"
+		} else {
+			return $null
+		}
+	}
+	if (Exists-Directory $url) {
+		return "git+file:///$($url -replace '\\','/')"
+	}
 	
 	$m_short = $s.Match($url)
 	$g_short = $m_short.Groups
@@ -788,7 +802,7 @@ Function Generate-FormInstall {
     $install.Text = "Install"
     $install.Location = New-Object Drawing.Point 115,65
     $install.Size = New-Object Drawing.Point 70,24
-    $install.add_Click({ Select-PipAction 'Install'; Execute-PipAction })
+    $install.add_Click({ Select-PipAction 'Install'; $form.Close(); Execute-PipAction })
     $form.Controls.Add($install)
 
     $form.Size = New-Object Drawing.Point 320,135
