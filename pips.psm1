@@ -102,6 +102,7 @@ $anaconda_url = 'https://anaconda.org/search?q='
 $peps_url = 'https://www.python.org/dev/peps/'
 $github_search_url = 'https://api.github.com/search/repositories?q={0}+language:python&sort=stars&order=desc'
 $github_url = 'https://github.com'
+$python_releases = 'https://www.python.org/downloads/windows/'
 
 $lastWidgetLeft = 5
 $lastWidgetTop = 5
@@ -321,8 +322,8 @@ Function Get-PythonOtherPackages {
                 $packageName = "$item" -replace $filter,''
             }
             if (($packageName -cmatch $ignore) `
-                -or (Test-PackageInList $packageName)`
-                -or (Test-PackageInList ($packageName -replace '_','-'))) {
+                -or ((Test-PackageInList $packageName) -ne -1)`
+                -or ((Test-PackageInList ($packageName -replace '_','-')) -ne -1)) {
                 continue
             }
             $otherLibs.Add(@{Package=$packageName; Type='other'}) | Out-Null
@@ -434,8 +435,12 @@ Function Add-ComboBoxActions {
 		{ param($pkg,$type); $actionCommands[$type].install_nodep.Invoke($pkg) } `
         { param($pkg,$out); $out -match ('Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' + $pkg) } )
 
-    & $Add (Make-PipActionItem 'Install' `
-		{ param($pkg,$type); $git_url = Validate-GitLink $pkg; if ($git_url) { $pkg = $git_url }; $actionCommands[$type].install.Invoke($pkg) } `
+    & $Add (Make-PipActionItem 'Install' {
+			param($pkg,$type,$version)
+			$git_url = Validate-GitLink $pkg
+			if ($git_url) { $pkg = $git_url }
+			if ($version) { $pkg = "$pkg==$version" }
+			$actionCommands[$type].install.Invoke($pkg) } `
         { param($pkg,$out); $out -match ('Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' + $pkg) } )
 
     & $Add (Make-PipActionItem 'Download' `
@@ -671,6 +676,14 @@ Function global:Validate-GitLink ($url) {
 	return "git+$($g['Protocol'])://$($g['Host'])/$($g['User'])/$($g['Repo'])$Hash#egg=$($g['Repo'])"
 }
 
+Function global:Set-PackageListEditable ($enable) {
+	@('Package'; 'Version'; 'Latest'; 'Type'; 'Status') | ForEach-Object {
+		if ($dataModel.Columns.Contains($_)) {
+			$dataModel.Columns[$_].ReadOnly = -not $enable
+        }
+	}
+}
+
 Function Generate-FormInstall {
     Function Prepare-PackageAutoCompletion {
         $Script:packageIndex = Load-KnownPackageIndex
@@ -701,7 +714,7 @@ Function Generate-FormInstall {
 
     $cb = New-Object System.Windows.Forms.TextBox
     
-	$autoCompleteIndex = $Script:autoCompleteIndex	
+	$autoCompleteIndex = $Script:autoCompleteIndex
 	$FuncGuessAutoCompleteMode = {
 		$text = $cb.Text
 		$n = $text.LastIndexOfAny('\/')
@@ -710,9 +723,29 @@ Function Generate-FormInstall {
 			if ($cb.AutoCompleteSource -ne [System.Windows.Forms.AutoCompleteSource]::FileSystemDirectories) {
 				$cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
 				$cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::FileSystemDirectories
+				$cb.AutoCompleteCustomSource = $null
         	}
-        } else {
-			if ($cb.AutoCompleteSource -ne [System.Windows.Forms.AutoCompleteSource]::CustomSource) {
+        } elseif ($text.Contains('==')) {
+			if (($cb.AutoCompleteSource -eq [System.Windows.Forms.AutoCompleteSource]::FileSystemDirectories) `
+				-or $cb.AutoCompleteCustomSource.Equals($Script:autoCompleteIndex) `
+				-or ($cb.AutoCompleteCustomSource.Equals($null))) {
+				$cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
+				$cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource				
+				$packageName = $text -replace '==.*',''
+
+				if (-not $Global:PyPiPackageJsonCache.Contains($packageName)) {
+					Download-PythonPackageDetails $packageName
+                }
+				
+				$releases = $Global:PyPiPackageJsonCache[$packageName].'releases' | Get-Member -Type Properties | ForEach-Object { $_.Name }
+				$autoCompletePackageVersion = New-Object System.Windows.Forms.AutoCompleteStringCollection
+				foreach ($release in $releases) {
+					$autoCompletePackageVersion.Add("$packageName==$release")
+        		}				
+				$cb.AutoCompleteCustomSource = $autoCompletePackageVersion
+            }
+    	} else {
+			if (-not ($cb.AutoCompleteCustomSource.Equals($Script:autoCompleteIndex))) {
 				$cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
 				$cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
 			    $cb.AutoCompleteCustomSource = $Script:autoCompleteIndex
@@ -750,7 +783,7 @@ Function Generate-FormInstall {
 		
 		$link = Validate-GitLink $package
 		if ($link) {
-			if (Test-PackageInList $link) {
+			if ((Test-PackageInList $link) -ne -1) {
 	            & $FuncShowToolTip "$package" "Repository '$link' is already in the list"
 	            return $false
 			}
@@ -762,36 +795,59 @@ Function Generate-FormInstall {
         	$dataModel.Rows.InsertAt($row, 0)
 			return $true
 		}
+		
+		$version = [string]::Empty
+		$package_with_version = [regex] '^(?<Name>[^=]+)==(?<Version>[^=]+)$'
+		$pv_match = $package_with_version.Match($package)
+		$pv_group = $pv_match.Groups
+		if ($pv_group.Count -gt 1) {
+			($package, $version) = ($pv_group['Name'].Value, $pv_group['Version'].Value)
+		}
 
         if (-not ($packageIndex.Contains($package))) {
             return $false
         }
+		
+		$nAlreadyInList = Test-PackageInList $package		
+		if ($nAlreadyInList -ne -1) {
+			$oldRow = $dataModel.Rows[$nAlreadyInList]
+			$oldVersion = if ($oldRow.Version) { $oldRow.Version } else { $oldRow.Latest }
+			if ($oldVersion -eq $null) { $oldVersion = [string]::Empty }
+			$IsDifferentVersion = $version -ne $oldVersion
+        } else {
+			$IsDifferentVersion = $true
+		}
 
-        if (Test-PackageInList $package) {
-            & $FuncShowToolTip "$package" "Package '$package' is already in the list"
-            return $false
+        if ($nAlreadyInList -ne -1) {
+			if (-not $IsDifferentVersion) {            
+				& $FuncShowToolTip "$package" "Package '$package' is already in the list"            
+				return $false
+            } else {
+				$row = $oldRow
+				Set-PackageListEditable $true
+			}
+        } else {
+			$row = $dataModel.NewRow()
         }
-
-        $row = $dataModel.NewRow()
+        
         $row.Select = $true
         $row.Package = $package
 
-        if ($packageIndex -is [System.Collections.Hashtable]) {
-            $record = $packageIndex[$package]
-            if ($dataModel.Columns.Contains('Version')) {
-                $row.Version = $record.Version
-            } else {
-                $row.Latest  = $record.Version
-            }
-
-            if ($dataModel.Columns.Contains('Description')) {
-                $row.Description = $record.Description
-            }
+        if ($dataModel.Columns.Contains('Version')) {
+			$row.Version = $version
+        } else {
+			$row.Latest = $version
         }
 
         $row.Type = 'pip'
         $row.Status = 'Pending'
-        $dataModel.Rows.InsertAt($row, 0)
+		
+		if ($nAlreadyInList -eq -1) {
+        	$dataModel.Rows.InsertAt($row, 0)
+        } else {
+			Set-PackageListEditable $false
+		}
+		
 		return $true
 	}
 
@@ -990,6 +1046,16 @@ Function global:Format-PythonPackageToolTip($info) {
      $tr = "Release Uploaded $($lr.upload_time)"
      $tags = "`n`n$($info.info.classifiers -join "`n")"
      return "${tt}${tr}${tags}"
+}
+
+Function global:Download-PythonPackageDetails ($packageName) {
+    $pypi_json_url = 'https://pypi.python.org/pypi/{0}/json'
+    $jsonUrl = [String]::Format($pypi_json_url, $packageName)
+    #$webClient = New-Object System.Net.WebClient
+    #$json = $webClient.DownloadString($jsonUrl)
+	$json = Invoke-WebRequest $jsonUrl
+    $info = $json | ConvertFrom-Json
+    $Global:PyPiPackageJsonCache.Add($packageName, $info)
 }
 
 Function global:Update-PythonPackageDetails {
@@ -1928,12 +1994,14 @@ Function Set-Unchecked($index) {
 }
 
 Function Test-PackageInList($name) {
+	$n = 0
     foreach ($item in $Script:dataModel.Rows) {
         if ($item.Package -eq $name) {
-            return $true
+            return $n
         }
+		$n++
     }
-    return $false
+    return -1
 }
 
 Function global:Tidy-Output($text) {
@@ -2027,7 +2095,8 @@ Function global:Execute-PipAction {
                 Write-PipLog ""
                 Write-PipLog $action.Name ' ' $package.Package
 				
-				$result = $action.Execute($package.Package, $package.Type)
+				$version = if ($package.Version) { $package.Version } else { $package.Latest }
+				$result = $action.Execute($package.Package, $package.Type, $version)
 				
                 $logFrom = $Script:logView.TextLength 
                 Write-PipLog (Tidy-Output $result)
