@@ -77,7 +77,7 @@ Function Exists-File($path) {
     return [System.IO.File]::Exists($path)
 }
 
-Function Exists-Directory($path) {
+Function global:Exists-Directory($path) {
     return [System.IO.Directory]::Exists($path)
 }
 
@@ -644,13 +644,13 @@ Function global:Validate-GitLink ($url) {
 	$m_file = $f.Match($url)
 	$g_file = $m_file.Groups
 	if ($g_file.Count -gt 1) {
-		if (Exists-Directory $g_file['Path']) {
+		if (Exists-Directory "$($g_file['Path'])/.git") {
 			return "git+file:///$($g_file['Path'] -replace '\\','/')"
 		} else {
 			return $null
 		}
 	}
-	if (Exists-Directory $url) {
+	if (Exists-Directory "$url/.git") {
 		return "git+file:///$($url -replace '\\','/')"
 	}
 	
@@ -694,16 +694,32 @@ Function Generate-FormInstall {
     $form.KeyPreview = $true
     
     $label = New-Object System.Windows.Forms.Label
-    $label.Text = "Type package names or Git urls and hit Enter after each."
+    $label.Text = "Type package names, git urls, local paths and hit Enter after each."
     $label.Location = New-Object Drawing.Point 7,7
-    $label.Size = New-Object Drawing.Point 315,24
+    $label.Size = New-Object Drawing.Point 340,24
     $form.Controls.Add($label)
 
     $cb = New-Object System.Windows.Forms.TextBox
-    $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
-    $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
-    $cb.AutoCompleteCustomSource = $Script:autoCompleteIndex
-
+    
+	$autoCompleteIndex = $Script:autoCompleteIndex	
+	$FuncGuessAutoCompleteMode = {
+		$text = $cb.Text
+		$n = $text.LastIndexOfAny('\/')
+		
+		if (($n -gt -1) -and (Exists-Directory $text.Substring(0, $n + 1))) {
+			if ($cb.AutoCompleteSource -ne [System.Windows.Forms.AutoCompleteSource]::FileSystemDirectories) {
+				$cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
+				$cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::FileSystemDirectories
+        	}
+        } else {
+			if ($cb.AutoCompleteSource -ne [System.Windows.Forms.AutoCompleteSource]::CustomSource) {
+				$cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
+				$cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
+			    $cb.AutoCompleteCustomSource = $Script:autoCompleteIndex
+            }
+        }
+    }.GetNewClosure()
+	
     $hint = $null
     $FuncShowToolTip = {
         param($title, $text)
@@ -724,88 +740,107 @@ Function Generate-FormInstall {
         }
         return $false
     }
-
-    $cb.add_KeyDown({
-        & $FuncCleanupToolTip | Out-Null
-
-        if ($_.KeyCode -eq 'Enter') {
-            if ($dataModel.Rows.Count -eq 0) {
-                Init-PackageSearchColumns $dataModel
-            }
-
-            $package = $cb.Text
-
-			$link = Validate-GitLink $package
-			if ($link) {
-				if (Test-PackageInList $link) {
-		            & $FuncShowToolTip "$package" "Repository '$link' is already in the list"
-		            return
-				}
-				$row = $dataModel.NewRow()
-				$row.Package = $link
-				$row.Type = 'git'
-            	$row.Status = 'Pending'
-				$row.Select = $true
-            	$dataModel.Rows.InsertAt($row, 0)
-				$cb.Text = [string]::Empty
-				return 
+	
+	$FuncAddInstallSource = {
+		param($package)
+		
+		if ($dataModel.Rows.Count -eq 0) {
+		    Init-PackageSearchColumns $dataModel
+		}
+		
+		$link = Validate-GitLink $package
+		if ($link) {
+			if (Test-PackageInList $link) {
+	            & $FuncShowToolTip "$package" "Repository '$link' is already in the list"
+	            return $false
 			}
+			$row = $dataModel.NewRow()
+			$row.Package = $link
+			$row.Type = 'git'
+        	$row.Status = 'Pending'
+			$row.Select = $true
+        	$dataModel.Rows.InsertAt($row, 0)
+			return $true
+		}
 
-            if (-not ($packageIndex.Contains($package))) {
-                return
-            }
-
-            if (Test-PackageInList $package) {
-                & $FuncShowToolTip "$package" "Package '$package' is already in the list"
-                return
-            }
-
-            $row = $dataModel.NewRow()
-            $row.Select = $true
-            $row.Package = $package
-
-            if ($packageIndex -is [System.Collections.Hashtable]) {
-                $record = $packageIndex[$package]
-                if ($dataModel.Columns.Contains('Version')) {
-                    $row.Version = $record.Version
-                } else {
-                    $row.Latest  = $record.Version
-                }
-
-                if ($dataModel.Columns.Contains('Description')) {
-                    $row.Description = $record.Description
-                }
-            }
-
-            $row.Type = 'pip'
-            $row.Status = 'Pending'
-            $dataModel.Rows.InsertAt($row, 0)
-
-            $cb.Text = [string]::Empty
+        if (-not ($packageIndex.Contains($package))) {
+            return $false
         }
+
+        if (Test-PackageInList $package) {
+            & $FuncShowToolTip "$package" "Package '$package' is already in the list"
+            return $false
+        }
+
+        $row = $dataModel.NewRow()
+        $row.Select = $true
+        $row.Package = $package
+
+        if ($packageIndex -is [System.Collections.Hashtable]) {
+            $record = $packageIndex[$package]
+            if ($dataModel.Columns.Contains('Version')) {
+                $row.Version = $record.Version
+            } else {
+                $row.Latest  = $record.Version
+            }
+
+            if ($dataModel.Columns.Contains('Description')) {
+                $row.Description = $record.Description
+            }
+        }
+
+        $row.Type = 'pip'
+        $row.Status = 'Pending'
+        $dataModel.Rows.InsertAt($row, 0)
+		return $true
+	}
+
+    $cb.add_TextChanged({
+		& $FuncGuessAutoCompleteMode
     })
+	
     $cb.Location = New-Object Drawing.Point 7,35
-    $cb.Size = New-Object Drawing.Point 285,32
+    $cb.Size = New-Object Drawing.Point 330,32
     $form.Controls.Add($cb)
 
     $form.add_KeyDown({
+		& $FuncCleanupToolTip | Out-Null
+
         if ($_.KeyCode -eq 'Escape') {
             if (($cb.Text.Length -gt 0) -or (& $FuncCleanupToolTip)) {
                 $cb.Text = [string]::Empty
             } else {
                 $form.Close()
             }
-        }        
+        }
+			
+		if ($_.KeyCode -eq 'Enter') { 
+			$okay = & $FuncAddInstallSource $cb.Text
+			if ($okay) {
+            	$cb.Text = [string]::Empty
+            }
+        }		
     }.GetNewClosure())
 
     $install = New-Object System.Windows.Forms.Button
     $install.Text = "Install"
-    $install.Location = New-Object Drawing.Point 115,65
+    $install.Location = New-Object Drawing.Point 140,65
     $install.Size = New-Object Drawing.Point 70,24
-    $install.add_Click({ Select-PipAction 'Install'; $form.Close(); Execute-PipAction })
+    $install.add_Click({
+		$okay = & $FuncAddInstallSource $cb.Text
+		if ($okay) {
+        	$cb.Text = [string]::Empty
+        }
+        if ($cb.Text -ne [string]::Empty) {
+			return
+		}
+		Select-PipAction 'Install'
+		Execute-PipAction
+		$form.Close()
+	}.GetNewClosure())
     $form.Controls.Add($install)
 
-    $form.Size = New-Object Drawing.Point 320,135
+    $form.Size = New-Object Drawing.Point 360,140
     $form.SizeGripStyle = [System.Windows.Forms.SizeGripStyle]::Hide
     $form.FormBorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
     $form.Text = 'Install packages'
@@ -1966,7 +2001,7 @@ Function Check-PipDependencies {
     }
 }
 
-Function Select-PipAction($actionName) {
+Function global:Select-PipAction($actionName) {
     $n = 0
     foreach ($item in $actionsModel) {
         if ($item.ToString() -eq $actionName) {
@@ -1977,7 +2012,7 @@ Function Select-PipAction($actionName) {
     }
 }
 
-Function Execute-PipAction {
+Function global:Execute-PipAction {
 	$action = $Script:actionsModel[$actionListComboBox.SelectedIndex]
 	
 	if ($action.TakesList) {
