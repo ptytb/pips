@@ -637,7 +637,7 @@ Function Load-KnownPackageIndex {
 }
 
 Function global:Validate-GitLink($url) {
-	$r = [regex] '^(?<Prefix>\w+\+)?(?<Protocol>\w+)://(?<Host>[^/]+)/(?<User>[^/]+)/(?<Repo>[^/.]+)(?<Suffix>\.[^@]+)?(?:@(?<Hash>.+))?$'
+	$r = [regex] '^(?<Prefix>\w+\+)?(?<Protocol>\w+)://(?<Host>[^/]+)/(?<User>[^/]+)/(?<Repo>[^/@#]+)(?:@(?<Hash>[^#]+))?(?:#.*)?$'
 	$s = [regex] '^(?<Name>[^/]+)/(?<Repo>[^/]+)$'
 	
 	$m_short = $s.Match($url)
@@ -654,7 +654,7 @@ Function global:Validate-GitLink($url) {
 	}
 
 	$hash = if ($g['Hash'].Value) { "@$($g['Hash'].Value)" } else { [string]::Empty }
-	return "git+$($g['Protocol'])://$($g['Host'])/$($g['User'])/$($g['Repo'])$($g['Suffix'])$Hash#egg=$($g['Repo'])"
+	return "git+$($g['Protocol'])://$($g['Host'])/$($g['User'])/$($g['Repo'])$Hash#egg=$($g['Repo'])"
 }
 
 Function Generate-FormInstall {
