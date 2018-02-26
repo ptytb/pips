@@ -100,6 +100,8 @@ Function Get-ExistingPathOrNull($path) {
 $pypi_url = 'https://pypi.python.org/pypi/'
 $anaconda_url = 'https://anaconda.org/search?q='
 $peps_url = 'https://www.python.org/dev/peps/'
+$github_search_url = 'https://api.github.com/search/repositories?q={0}+language:python&sort=stars&order=desc'
+$github_url = 'https://github.com'
 
 $lastWidgetLeft = 5
 $lastWidgetTop = 5
@@ -433,7 +435,7 @@ Function Add-ComboBoxActions {
         { param($pkg,$out); $out -match ('Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' + $pkg) } )
 
     & $Add (Make-PipActionItem 'Install' `
-		{ param($pkg,$type); $actionCommands[$type].install.Invoke($pkg) } `
+		{ param($pkg,$type); $git_url = Validate-GitLink $pkg; if ($git_url) { $pkg = $git_url }; $actionCommands[$type].install.Invoke($pkg) } `
         { param($pkg,$out); $out -match ('Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' + $pkg) } )
 
     & $Add (Make-PipActionItem 'Download' `
@@ -635,7 +637,15 @@ Function Load-KnownPackageIndex {
 }
 
 Function global:Validate-GitLink($url) {
-	$r = [regex] '(?<Prefix>\w+\+)?(?<Protocol>\w+)://(?<Host>[^/]+)/(?<User>[^/]+)/(?<Repo>[^/.]+)(?<Suffix>\.[^@]+)?(?:@(?<Hash>.+))?'
+	$r = [regex] '^(?<Prefix>\w+\+)?(?<Protocol>\w+)://(?<Host>[^/]+)/(?<User>[^/]+)/(?<Repo>[^/.]+)(?<Suffix>\.[^@]+)?(?:@(?<Hash>.+))?$'
+	$s = [regex] '^(?<Name>[^/]+)/(?<Repo>[^/]+)$'
+	
+	$m_short = $s.Match($url)
+	$g_short = $m_short.Groups
+	if ($g_short.Count -gt 1) {
+		$url = "$github_url/$($g_short['Name'])/$($g_short['Repo'])"
+	}
+	
 	$m = $r.Match($url)
 	$g = $m.Groups
 	
@@ -793,9 +803,9 @@ Function Generate-FormInstall {
 }
 
 Function Generate-FormSearch {
-    $message = "Enter keywords to search PyPi and Conda`n`n* = list all packages`n`nChecked items will be kept in the search list"
-    $title = "pip search ... & conda search ..."
-    $default = "*"
+    $message = "Enter keywords to search PyPi, Conda, Github`n`nChecked items will be kept in the search list"
+    $title = "pip, conda, github search"
+    $default = ""
 
     $input = $(
         Add-Type -AssemblyName Microsoft.VisualBasic
@@ -807,11 +817,11 @@ Function Generate-FormSearch {
     }
 
     Write-PipLog ("Searching for " + $input)
-    Write-PipLog 'Double click a table row to open PyPi or Anaconda.com in browser (online)'
+    Write-PipLog 'Double click a table row to open PyPi, Anaconda.com or github.com in browser'
     
     Write-PipLog
     $stats = Get-SearchResults $input
-    Write-PipLog "Found $($stats.Total) packages: $($stats.PipCount) pip, $($stats.CondaCount) conda. Total $($dataModel.Rows.Count) packages in list."
+    Write-PipLog "Found $($stats.Total) packages: $($stats.PipCount) pip, $($stats.CondaCount) conda, $($stats.GithubCount) github. Total $($dataModel.Rows.Count) packages in list."
 	Write-PipLog
 }
 
@@ -1128,7 +1138,7 @@ Function Add-EnvToolButtonMenu {
 
 Function Generate-Form {
     $form = New-Object Windows.Forms.Form
-    $form.Text = "pip package browser"
+    $form.Text = "pips - python package browser"
     $form.Size = New-Object Drawing.Point 1125, 840
 	$form.topmost = $false
 	$form.KeyPreview = $true
@@ -1345,6 +1355,9 @@ Function Generate-Form {
             $urlName = [System.Web.HttpUtility]::UrlEncode($packageName)
             if ($row.Type -eq 'conda') {
                 $url = $anaconda_url
+            } elseif ($row.Type -eq 'git') {
+				$url = "$github_url/"
+				$urlName = $packageName
             } else {
                 $url = $pypi_url
             }
@@ -1677,7 +1690,7 @@ Function Get-CondaSearchResults($request) {
     $items = & $conda_exe search --json $request | ConvertFrom-Json
 
     $count = 0
-    $items.PSObject.Properties | forEach-Object {
+    $items.PSObject.Properties | ForEach-Object {
         $name = $_.Name
         $item = $_.Value
 
@@ -1702,6 +1715,26 @@ Function Get-CondaSearchResults($request) {
     return $count
 }
 
+Function Get-GithubSearchResults ($request) {
+	[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls11
+    $json = Invoke-WebRequest ($github_search_url -f [System.Web.HttpUtility]::UrlEncode($request))
+    $info = $json | ConvertFrom-Json
+	$items = $info.'items'
+	$count = 0
+	$items | ForEach-Object {
+		$row = $dataModel.NewRow()
+        $row.Select = $false
+        $row.Package = $_.'full_name'
+		$row.Version = ($_.'pushed_at' -replace 'T',' ') -replace 'Z',''
+        $row.Description = "$($_.'stargazers_count') $([char] 0x2729) $($_.'forks') $([char] 0x2442) $($_.'open_issues') $([char] 0x2757) $($_.'description')"
+        $row.Type = 'git'
+        $row.Status = ''
+        $dataModel.Rows.Add($row)
+		$count++
+	}
+	return $count
+}
+
 Function Get-SearchResults($request) {
     $previousSelected = Store-CheckedPipSearchResults    
     Clear-Rows
@@ -1716,11 +1749,12 @@ Function Get-SearchResults($request) {
     
     $pipCount = Get-PipSearchResults $request
     $condaCount = Get-CondaSearchResults $request
+	$githubCount = Get-GithubSearchResults $request
 
     $dataModel.EndLoadData()
     $dataGridView.EndInit()
 
-    return @{PipCount=$pipCount; CondaCount=$condaCount; Total=($pipCount + $condaCount)}
+    return @{PipCount=$pipCount; CondaCount=$condaCount; GithubCount=$githubCount; Total=($pipCount + $condaCount + $githubCount)}
 }
 
  Function Get-PythonPackages($outdatedOnly = $true) {
@@ -1810,7 +1844,7 @@ Function Get-SearchResults($request) {
     Highlight-PythonPackages
 
     Write-PipLog 'Package list updated.'
-    Write-PipLog 'Double click a table row to open PyPi in browser (online)'
+    Write-PipLog 'Double click a table row to open PyPi in browser'
     
     $count = $dataModel.Rows.Count
     $pipCount = $pipPackages.Count
@@ -1975,7 +2009,7 @@ Function Execute-PipAction {
     Write-PipLog '----'
     Write-PipLog 'All tasks finished.'
     Write-PipLog 'Select a row to highlight the relevant log piece'
-    Write-PipLog 'Double click a table row to open PyPi or Anaconda.com in browser (online)'
+    Write-PipLog 'Double click a table row to open PyPi, Anaconda.com or github.com in browser'
     Write-PipLog '----'
     Write-PipLog ''
 }
