@@ -314,14 +314,17 @@ Function Get-PythonOtherPackages {
     if (Exists-Directory $libs) {
         foreach ($item in dir $libs) {
             if ($item -is [System.IO.DirectoryInfo]) {
+				if (-not (Exists-File "$libs\$item\__init__.py")) {
+					continue
+				}
                 $packageName = "$item"
             } elseif ($item -is [System.IO.FileInfo]) {
-                if ($packageName -inotmatch $filter) {
+                if ($packageName -notmatch $filter) {
                     continue
                 }
                 $packageName = "$item" -replace $filter,''
             }
-            if (($packageName -cmatch $ignore) `
+            if (($packageName -match $ignore) `
                 -or ((Test-PackageInList $packageName) -ne -1)`
                 -or ((Test-PackageInList ($packageName -replace '_','-')) -ne -1)) {
                 continue
@@ -1305,7 +1308,7 @@ Function Generate-Form {
     
     $Script:isolatedCheckBox = Add-CheckBox 'isolated' { Toggle-VirtualEnv $Script:isolatedCheckBox.Checked }
     $toolTip = New-Object System.Windows.Forms.ToolTip
-    $toolTip.SetToolTip($isolatedCheckBox, "Ignore environment variables, user configuration and global packages.`n`n--isolated`n--local")
+    $toolTip.SetToolTip($isolatedCheckBox, "Ignore environmental variables, user configuration and global packages.`n`n--isolated`n--local")
 
     $null = Add-Button "Search..." { Generate-FormSearch }
 
