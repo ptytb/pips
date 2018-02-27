@@ -811,8 +811,19 @@ Function Generate-FormInstall {
 		$nAlreadyInList = Test-PackageInList $package		
 		if ($nAlreadyInList -ne -1) {
 			$oldRow = $dataModel.Rows[$nAlreadyInList]
-			$oldVersion = if ($oldRow.Version) { $oldRow.Version } else { $oldRow.Latest }
-			if ($oldVersion -eq $null) { $oldVersion = [string]::Empty }
+			
+			if (      -not [string]::IsNullOrEmpty($oldRow.Version)) {
+				$oldVersion = $oldRow.Version
+			} elseif (-not ($oldRow.Latest -eq $null)) {
+				$oldVersion = $oldRow.Latest
+			} elseif (-not [string]::IsNullOrEmpty($oldRow.Installed)) {
+				$oldVersion = $oldRow.Installed
+			} else {
+				$oldVersion = [string]::Empty
+			}
+			
+			#Write-Host "old='$oldVersion', new='$version'"
+			
 			$IsDifferentVersion = $version -ne $oldVersion
         } else {
 			$IsDifferentVersion = $true
