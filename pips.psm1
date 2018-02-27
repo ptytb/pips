@@ -439,7 +439,7 @@ Function Add-ComboBoxActions {
 			param($pkg,$type,$version)
 			$git_url = Validate-GitLink $pkg
 			if ($git_url) { $pkg = $git_url }
-			if ($version) { $pkg = "$pkg==$version" }
+			if (-not [string]::IsNullOrEmpty($version)) { $pkg = "$pkg==$version" }
 			$actionCommands[$type].install.Invoke($pkg) } `
         { param($pkg,$out); $out -match ('Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' + $pkg) } )
 
