@@ -150,6 +150,64 @@ AAAA+B8AAPAPAADwDwAA8A8AAIABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAQAA8A8AAPAP
 AADwDwAA+B8AAA==
 '@
 
+
+Function Set-WebClientWorkaround {
+	Function Set-UseUnsafeHeaderParsing	{
+	    param(
+	        [Parameter(Mandatory,ParameterSetName='Enable')]
+	        [switch]$Enable,
+
+	        [Parameter(Mandatory,ParameterSetName='Disable')]
+	        [switch]$Disable
+	    )
+
+	    $ShouldEnable = $PSCmdlet.ParameterSetName -eq 'Enable'
+
+	    $netAssembly = [Reflection.Assembly]::GetAssembly([System.Net.Configuration.SettingsSection])
+
+	    if ($netAssembly)
+	    {
+	        $bindingFlags = [Reflection.BindingFlags] 'Static,GetProperty,NonPublic'
+	        $settingsType = $netAssembly.GetType('System.Net.Configuration.SettingsSectionInternal')
+
+	        $instance = $settingsType.InvokeMember('Section', $bindingFlags, $null, $null, @())
+
+	        if ($instance)
+	        {
+	            $bindingFlags = 'NonPublic','Instance'
+	            $useUnsafeHeaderParsingField = $settingsType.GetField('useUnsafeHeaderParsing', $bindingFlags)
+
+	            if ($useUnsafeHeaderParsingField)
+	            {
+	              $useUnsafeHeaderParsingField.SetValue($instance, $ShouldEnable)
+	            }
+	        }
+	    }
+	}
+
+	[Net.ServicePointManager]::SecurityProtocol = (
+	    [Net.SecurityProtocolType]::Tls12 -bor `
+	    [Net.SecurityProtocolType]::Tls11 -bor `
+	    [Net.SecurityProtocolType]::Tls   -bor `
+		[Net.SecurityProtocolType]::Ssl3)
+
+	[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+	
+	Set-UseUnsafeHeaderParsing -Enable
+}
+
+Set-WebClientWorkaround
+Function Download-String($url) {
+	try {
+		$wc = New-Object System.Net.WebClient
+		$wc.Headers["User-Agent"] = "Mozilla/5.0 (compatible; MSIE 6.0;)"
+		$result = $wc.DownloadString($url)
+	} catch {
+		$result = $null
+	}
+	return $result
+}
+
 Function Convert-Base64ToBMP($base64Text) {
     $iconStream = [System.IO.MemoryStream][System.Convert]::FromBase64String($base64Text)
 	$iconBmp = [System.Drawing.Bitmap][System.Drawing.Image]::FromStream($iconStream)
@@ -1064,12 +1122,11 @@ Function global:Format-PythonPackageToolTip($info) {
 
 Function global:Download-PythonPackageDetails ($packageName) {
     $pypi_json_url = 'https://pypi.python.org/pypi/{0}/json'
-    $jsonUrl = [String]::Format($pypi_json_url, $packageName)
-    #$webClient = New-Object System.Net.WebClient
-    #$json = $webClient.DownloadString($jsonUrl)
-	$json = Invoke-WebRequest $jsonUrl
-    $info = $json | ConvertFrom-Json
-    $Global:PyPiPackageJsonCache.Add($packageName, $info)
+    $json = Download-String($pypi_json_url -f $packageName)
+	if (-not [string]::IsNullOrEmpty($json)) {
+		$info = $json | ConvertFrom-Json
+    	$Global:PyPiPackageJsonCache.Add($packageName, $info)
+	}    
 }
 
 Function global:Update-PythonPackageDetails {
@@ -1845,8 +1902,7 @@ Function Get-CondaSearchResults($request) {
 }
 
 Function Get-GithubSearchResults ($request) {
-	[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 -bor [System.Net.SecurityProtocolType]::Tls11
-    $json = Invoke-WebRequest ($github_search_url -f [System.Web.HttpUtility]::UrlEncode($request))
+    $json = Download-String ($github_search_url -f [System.Web.HttpUtility]::UrlEncode($request))
     $info = $json | ConvertFrom-Json
 	$items = $info.'items'
 	$count = 0
