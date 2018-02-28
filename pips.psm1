@@ -1774,9 +1774,17 @@ class DocView {
 	    # PEP Links
 	    $this.Alter_MatchingFragments($Script:pyRegexPEP, {
             param($index, $length, $match)
-            $pep_url = "${peps_url}$(($match -replace ' ', '-').ToLower())"
+			
+			$parts = "$match".Split(' -', [System.StringSplitOptions]::RemoveEmptyEntries)
+			if ($parts.Count -ne 2) {
+				return
+			}
+
+			($PEP, $number) = $parts
+			$pep_url = "${peps_url}pep-$(([int] $number).ToString('0000'))"
+
             $this.modifiedTextLengthDelta -= $this.docView.TextLength
-            $this.docView.SelectedText = "$match [$pep_url]"
+            $this.docView.SelectedText = "$match [$pep_url] "  # keep the space to prevent link merging
             $this.modifiedTextLengthDelta += $this.docView.TextLength
 	    })
 	
@@ -2157,6 +2165,9 @@ Function global:Execute-PipAction {
 		$checkedList = New-Object System.Collections.ArrayList
     }
 	
+	$tasksOkay = 0
+	$tasksFailed = 0
+	
     for ($i = 0; $i -lt $dataModel.Rows.Count; $i++) {
        if ($dataModel.Rows[$i].Select -eq $true) {
             $package = $dataModel.Rows[$i]
@@ -2176,10 +2187,12 @@ Function global:Execute-PipAction {
 
                 $dataModel.Columns['Status'].ReadOnly = $false
                 if ($action.Validate($package.Package, $result)) {
-                     $dataModel.Rows[$i].Status = "OK"
-                     Set-Unchecked $i
+                    $dataModel.Rows[$i].Status = "OK"
+                    Set-Unchecked $i
+					$tasksOkay++
                 } else {
-                     $dataModel.Rows[$i].Status = "Failed"
+                    $dataModel.Rows[$i].Status = "Failed"
+					$tasksFailed++
                 }
                 $dataModel.Columns['Status'].ReadOnly = $true
                 Set-SelectedRow $dataModel.Rows[$i]
@@ -2191,15 +2204,20 @@ Function global:Execute-PipAction {
 	
 	if ($action.TakesList) {
 		$null = $action.Execute($checkedList)
+		return
     }
-
-    Write-PipLog ''
-    Write-PipLog '----'
-    Write-PipLog 'All tasks finished.'
-    Write-PipLog 'Select a row to highlight the relevant log piece'
-    Write-PipLog 'Double click a table row to open PyPi, Anaconda.com or github.com in browser'
-    Write-PipLog '----'
-    Write-PipLog ''
+	
+	if (($tasksOkay -eq 0) -and ($tasksFailed -eq 0)) {
+		Write-PipLog 'Nothing is selected.'
+	} else {
+	    Write-PipLog ''
+	    Write-PipLog '----'
+	    Write-PipLog "All tasks finished, $tasksOkay ok, $tasksFailed failed."
+	    Write-PipLog 'Select a row to highlight the relevant log piece'
+	    Write-PipLog 'Double click a table row to open PyPi, Anaconda.com or github.com in browser'
+	    Write-PipLog '----'
+	    Write-PipLog ''
+    }
 }
 
 # by https://superuser.com/users/243093/megamorf
