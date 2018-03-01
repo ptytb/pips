@@ -323,7 +323,7 @@ Function Add-Buttons {
 }
 
 Function global:Get-PyDoc($request) {
-    $output = & (Get-PythonExe) -m pydoc ($request -replace '-','_')
+    $output = & (Get-PythonExe) -m pydoc ($request -replace '-','_').ToLower()
     return $output
 }
 
