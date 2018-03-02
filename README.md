@@ -17,7 +17,7 @@ This script helps to keep packages updated.
 - Manage environments
 - Filter and sort packages
 - Documentation viewer with simple highlighting and browser-like navigation
-- Completion for packages, versions, paths
+- Completion for packages, versions, paths, git tags
 
 
 ![](screenshot.png)

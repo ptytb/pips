@@ -19,7 +19,7 @@
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Net.WebClient")
 
 
-Function Get-Bin($command, $all = $false) {
+Function global:Get-Bin($command, $all = $false) {
     $commands = Get-Command -All -ErrorAction SilentlyContinue $command
     $found = $null
     if ($commands) {
@@ -706,7 +706,19 @@ Function Load-KnownPackageIndex {
     return $index
 }
 
-Function global:Validate-GitLink ($url) {
+Function ConvertFrom-RegexGroupsToObject($groups) {
+	$gitLinkInfo = New-Object PSCustomObject
+		
+	foreach ($group in $groups) {
+		if (-not [string]::IsNullOrEmpty($group.Value) -and $group.Name -ne "0") {
+			$gitLinkInfo | Add-Member NoteProperty "$($group.Name)" "$($group.Value)"
+		}
+	}
+	
+	return $gitLinkInfo
+}
+
+Function global:Validate-GitLink ($url, $AsObject = $false) {
 	$r = [regex] '^(?<Prefix>\w+\+)?(?<Protocol>\w+)://(?<Host>[^/]+)/(?<User>[^/]+)/(?<Repo>[^/@#]+)(?:@(?<Hash>[^#]+))?(?:#.*)?$'
 	$s = [regex] '^(?<Name>[^/]+)/(?<Repo>[^/]+)$'
 	$f = [regex] '^(?<Prefix>\w+\+)?file:///(?<Path>.+)$'
@@ -715,13 +727,21 @@ Function global:Validate-GitLink ($url) {
 	$g_file = $m_file.Groups
 	if ($g_file.Count -gt 1) {
 		if (Exists-Directory "$($g_file['Path'])/.git") {
-			return "git+file:///$($g_file['Path'] -replace '\\','/')"
+			if ($AsObject) {
+				return ConvertFrom-RegexGroupsToObject $g_file
+			} else {
+				return "git+file:///$($g_file['Path'] -replace '\\','/')"
+            }
 		} else {
 			return $null
 		}
 	}
 	if (Exists-Directory "$url/.git") {
-		return "git+file:///$($url -replace '\\','/')"
+		if ($AsObject) {
+			return [PSCustomObject]@{'Path' = $url;}
+		} else {
+			return "git+file:///$($url -replace '\\','/')"
+        }
 	}
 	
 	$m_short = $s.Match($url)
@@ -738,6 +758,11 @@ Function global:Validate-GitLink ($url) {
 	}
 
 	$hash = if ($g['Hash'].Value) { "@$($g['Hash'].Value)" } else { [string]::Empty }
+	
+	if ($AsObject) {
+		return ConvertFrom-RegexGroupsToObject $g
+	}
+	
 	return "git+$($g['Protocol'])://$($g['Host'])/$($g['User'])/$($g['Repo'])$Hash#egg=$($g['Repo'])"
 }
 
@@ -784,32 +809,43 @@ Function Generate-FormInstall {
 		$text = $cb.Text
 		$n = $text.LastIndexOfAny('\/')
 		
-		if (($n -gt -1) -and (Exists-Directory $text.Substring(0, $n + 1))) {
-			if ($cb.AutoCompleteSource -ne [System.Windows.Forms.AutoCompleteSource]::FileSystemDirectories) {
-				$cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
-				$cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::FileSystemDirectories
-				$cb.AutoCompleteCustomSource = $null
-        	}
-        } elseif ($text.Contains('==')) {
+		if ($text.Contains('==') -or $text.Contains('@')) {  # in cases when file path contains these, won't work; need state tracking
 			if (($cb.AutoCompleteSource -eq [System.Windows.Forms.AutoCompleteSource]::FileSystemDirectories) `
 				-or $cb.AutoCompleteCustomSource.Equals($Script:autoCompleteIndex) `
 				-or ($cb.AutoCompleteCustomSource.Equals($null))) {
 				$cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
 				$cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource				
-				$packageName = $text -replace '==.*',''
-
-				if (-not $Global:PyPiPackageJsonCache.Contains($packageName)) {
-					Download-PythonPackageDetails $packageName
-                }
 				
-				$releases = $Global:PyPiPackageJsonCache[$packageName].'releases' | Get-Member -Type Properties | ForEach-Object { $_.Name }
-				$autoCompletePackageVersion = New-Object System.Windows.Forms.AutoCompleteStringCollection
+				if ($text.Contains('==')) {  # completion for pip package version
+					$packageName = $text -replace '==.*',''
+					
+					if (-not $Global:PyPiPackageJsonCache.Contains($packageName)) {
+						Download-PythonPackageDetails $packageName
+	                }
+					
+					$releases = $Global:PyPiPackageJsonCache[$packageName].'releases' | Get-Member -Type Properties | ForEach-Object { $_.Name }
+					$completions_format = "{0}=={1}"
+				}
+				else {  # completion for git repo tags
+					$packageName = $text -replace '@.*',''
+					$gitLinkInfo = Validate-GitLink $packageName -AsObject $true
+					$releases = Get-GithubRepoTags $gitLinkInfo
+					$completions_format = "{0}@{1}"
+				}
+				
+				$autoCompletePackageVersion = New-Object System.Windows.Forms.AutoCompleteStringCollection				
 				foreach ($release in $releases) {
-					$autoCompletePackageVersion.Add("$packageName==$release")
-        		}				
+					$autoCompletePackageVersion.Add($completions_format -f @($packageName,$release))
+        		}
 				$cb.AutoCompleteCustomSource = $autoCompletePackageVersion
             }
-    	} else {
+    	} elseif (($n -gt -1) -and (Exists-Directory $text.Substring(0, $n + 1))) {
+			if ($cb.AutoCompleteSource -ne [System.Windows.Forms.AutoCompleteSource]::FileSystemDirectories) {
+				$cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
+				$cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::FileSystemDirectories
+				$cb.AutoCompleteCustomSource = $null
+        	}
+        } else {
 			if (-not ($cb.AutoCompleteCustomSource.Equals($Script:autoCompleteIndex))) {
 				$cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
 				$cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
@@ -1930,6 +1966,30 @@ Function Get-GithubSearchResults ($request) {
 		$count++
 	}
 	return $count
+}
+
+Function global:Get-GithubRepoTags($gitLinkInfo) {
+	if (-not $gitLinkInfo) {
+		return $null
+	}
+	
+	if ($gitLinkInfo.Path) {
+		$git = Get-Bin 'git'
+		if (-not $git) {
+			return $null
+		}
+		return (& $git -C $gitLinkInfo.Path tag)
+	}
+	
+	$github_tags_url = 'https://api.github.com/repos/{0}/{1}/tags'
+	$url = $github_tags_url -f $gitLinkInfo.User,$gitLinkInfo.Repo
+	$json = Download-String $url
+	if (-not [string]::IsNullOrEmpty($json)) {
+		$tags = $json | ConvertFrom-Json | ForEach-Object { $_.Name }
+		return $tags
+	}
+	
+	return $null
 }
 
 Function Get-SearchResults($request) {
