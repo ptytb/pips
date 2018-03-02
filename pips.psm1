@@ -345,8 +345,8 @@ Function Get-PythonBuiltinPackages() {
         if (($packageName -cmatch $ignore) -or ($trackDuplicates.Contains($packageName))) {
             continue
         }
-        $trackDuplicates.Add("$packageName") | Out-Null        
-        $builtinLibs.Add(@{Package=$packageName; Type='builtin'}) | Out-Null
+        $null = $trackDuplicates.Add("$packageName")
+        $null = $builtinLibs.Add(@{Package=$packageName; Type='builtin'})
     }
 
     $getBuiltinsScript = "import sys; print(','.join(sys.builtin_module_names))"
@@ -356,7 +356,7 @@ Function Get-PythonBuiltinPackages() {
         if ($trackDuplicates.Contains("$builtinModule")) {
             continue
         }
-        $builtinLibs.Add(@{Package=$builtinModule; Type='builtin'}) | Out-Null
+        $null = $builtinLibs.Add(@{Package=$builtinModule; Type='builtin'})
     }
 
     return ,$builtinLibs
@@ -387,7 +387,7 @@ Function Get-PythonOtherPackages {
                 -or ((Test-PackageInList ($packageName -replace '_','-')) -ne -1)) {
                 continue
             }
-            $otherLibs.Add(@{Package=$packageName; Type='other'}) | Out-Null
+            $null = $otherLibs.Add(@{Package=$packageName; Type='other'})
         }
     }
 
@@ -400,10 +400,10 @@ Function Get-CondaPackages() {
 
     if ($conda_exe) {
         $arguments =New-Object System.Collections.ArrayList
-        $arguments.Add('list') | Out-Null
-        $arguments.Add('--json') | Out-Null
-        $arguments.Add('--no-pip') | Out-Null
-        $arguments.Add('--show-channel-urls') | Out-Null
+        $null = $arguments.Add('list')
+        $null = $arguments.Add('--json')
+        $null = $arguments.Add('--no-pip')
+        $null = $arguments.Add('--show-channel-urls')
 
         # This one sounds nice but could give versions older than installed
         # conda update --dry-run --json --all
@@ -414,7 +414,7 @@ Function Get-CondaPackages() {
         $items = & $conda_exe $arguments | ConvertFrom-Json 
 
         foreach ($item in $items) {
-            $condaPackages.Add(@{Type='conda'; Package=$item.name; Version=$item.version}) | Out-Null
+            $null = $condaPackages.Add(@{Type='conda'; Package=$item.name; Version=$item.version})
         }
     }
 
@@ -424,7 +424,7 @@ Function Get-CondaPackages() {
 $actionCommands = @{
     pip=@{
         info          = { return (& (Get-PipExe) show              $args 2>&1) };
-        documentation = { (Show-DocView $pkg).Show() | Out-Null; return ''    };
+        documentation = { $null = (Show-DocView $pkg).Show(); return ''    };
         files         = { return (& (Get-PipExe) show    --files   $args 2>&1) };
         update        = { return (& (Get-PipExe) install -U        $args 2>&1) };
         install       = { return (& (Get-PipExe) install           $args 2>&1) };
@@ -454,7 +454,7 @@ $actionCommands.git     = $actionCommands.pip
 Function Copy-AsRequirementsTxt($list) {
 	$requirements = New-Object System.Text.StringBuilder
 	foreach ($item in $list) {
-		$requirements.AppendLine("$($item.Package)==$(if ($item.Installed) { $item.Installed } else { $item.Version })") | Out-Null
+		$null = $requirements.AppendLine("$($item.Package)==$(if ($item.Installed) { $item.Installed } else { $item.Version })")
 	}
 	Set-Clipboard $requirements.ToString()
 	Write-PipLog "Copied $($list.Count) items to clipboard."
@@ -470,7 +470,7 @@ Function Add-ComboBoxActions {
     }
 
     $actionsModel = New-Object System.Collections.ArrayList
-    $Add = { param($a) $actionsModel.Add($a) | Out-Null }
+    $Add = { param($a) $null = $actionsModel.Add($a) }
 
     & $Add (Make-PipActionItem 'Show Info' `
 		{ param($pkg,$type); $actionCommands[$type].info.Invoke($pkg) } `
@@ -575,8 +575,8 @@ Function Get-InterpreterRecord($path, $items) {
 		"{2} [{0}] {1}" -f $this.Arch.FileType, $this.PythonExe, $this.Version
 	} -Force
 
-    $items.Add($action) | Out-Null
-    $trackDuplicateInterpreters.Add($path) | Out-Null
+    $null = $items.Add($action)
+    $null = $trackDuplicateInterpreters.Add($path)
 
 	if ($Script:interpretersComboBox) {
 		$interpretersComboBox.DataSource = $null
@@ -972,7 +972,7 @@ Function Generate-FormInstall {
     $form.Controls.Add($cb)
 
     $form.add_KeyDown({
-		& $FuncCleanupToolTip | Out-Null
+		$null = & $FuncCleanupToolTip
 
         if ($_.KeyCode -eq 'Escape') {
             if (($cb.Text.Length -gt 0) -or (& $FuncCleanupToolTip)) {
@@ -1226,7 +1226,7 @@ Function global:Update-PythonPackageDetails {
 Function global:Request-FolderPathFromUser($text = [string]::Empty) {
     $selectFolderDialog = New-Object System.Windows.Forms.FolderBrowserDialog
 	$selectFolderDialog.Description = $text
-    $selectFolderDialog.ShowDialog() | Out-Null
+    $null = $selectFolderDialog.ShowDialog()
     $path = $selectFolderDialog.SelectedPath
     $path = Get-ExistingPathOrNull $path
 	return $path
@@ -1385,7 +1385,7 @@ Function Generate-Form {
 		}
 	})
 
-    Add-Buttons | Out-Null
+    $null = Add-Buttons
 
 	Add-ComboBoxActions	
 	$form.add_KeyDown({
@@ -1411,9 +1411,9 @@ Function Generate-Form {
 
     $null = Add-Button "Install..." { Generate-FormInstall }
 
-    NewLine-TopLayout | Out-Null
+    $null = NewLine-TopLayout
 
-    Add-Label "Filter results:" | Out-Null
+    $null = Add-Label "Filter results:"
     
     $Script:inputFilter = Add-Input {  # TextChanged Handler here
         param($input)
@@ -1476,14 +1476,12 @@ Function Generate-Form {
     $toolTipFilter = New-Object System.Windows.Forms.ToolTip
     $toolTipFilter.SetToolTip($inputFilter, "Esc to clear")
 
-    #dd-HorizontalSpacer | Out-Null
-
     $searchMethodComboBox = New-Object System.Windows.Forms.ComboBox
     $searchMethods = New-Object System.Collections.ArrayList
-    $searchMethods.Add('Whole Phrase') | Out-Null
-    $searchMethods.Add('Any Word') | Out-Null
-    $searchMethods.Add('All Words') | Out-Null
-    $searchMethods.Add('Exact Match') | Out-Null
+    $null = $searchMethods.Add('Whole Phrase')
+    $null = $searchMethods.Add('Any Word')
+    $null = $searchMethods.Add('All Words')
+    $null = $searchMethods.Add('Exact Match')
     $searchMethodComboBox.DataSource = $searchMethods
     $searchMethodComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
     $Script:searchMethodComboBox = $searchMethodComboBox
@@ -1499,7 +1497,7 @@ Function Generate-Form {
     $toolTipInterp = New-Object System.Windows.Forms.ToolTip
     $toolTipInterp.SetToolTip($labelInterp, "Ctrl+C to copy selected path")
 
-    Add-ComboBoxInterpreters | Out-Null
+    $null = Add-ComboBoxInterpreters
     $null = Add-Button "env: Open..." {
         $path = Request-FolderPathFromUser ("Choose a folder with python environment, created by either Virtualenv or pipenv`n`n" +
 			"Typically it contains dirs: Include, Lib, Scripts")
@@ -1886,8 +1884,8 @@ Function Get-PipSearchResults($request) {
     }
 
     $args = New-Object System.Collections.ArrayList
-    $args.Add('search') | Out-Null
-    $args.Add("$request") | Out-Null
+    $null = $args.Add('search')
+    $null = $args.Add("$request")
     $output = & $pip_exe $args
 
     $r = [regex] '^(.*?)\s*\((.*?)\)\s+-\s+(.*?)$'
@@ -2042,16 +2040,16 @@ Function Get-SearchResults($request) {
     
     if ($pip_exe) {
         $args = New-Object System.Collections.ArrayList
-        $args.Add('list') | Out-Null
-		$args.Add('--format=columns') | Out-Null
+        $null = $args.Add('list')
+		$null = $args.Add('--format=columns')
 
         if ($outdatedOnly) {
-            $args.Add('--outdated') | Out-Null
+            $null = $args.Add('--outdated')
         }
         
         if ($Script:isolatedCheckBox.Checked) {
-            $args.Add('--isolated') | Out-Null  # ignore user config
-			$args.Add('--local') | Out-Null     # ignore global packages
+            $null = $args.Add('--isolated')  # ignore user config
+			$null = $args.Add('--local')     # ignore global packages
         }
 
         $pip_list = & $pip_exe $args
@@ -2261,7 +2259,7 @@ Function global:Execute-PipAction {
                 $dataModel.Columns['Status'].ReadOnly = $true
                 Set-SelectedRow $dataModel.Rows[$i]
             } else {
-				$checkedList.Add($package) | Out-Null
+				$null = $checkedList.Add($package)
 			}
        }
     }
@@ -2293,7 +2291,7 @@ function Test-is64Bit {
 
     [byte[]]$data = New-Object -TypeName System.Byte[] -ArgumentList 4096
     $stream = New-Object -TypeName System.IO.FileStream -ArgumentList ($FilePath, 'Open', 'Read')
-    $stream.Read($data, 0, 4096) | Out-Null
+    $null = $stream.Read($data, 0, 4096)
 
     [int32]$PE_HEADER_ADDR = [System.BitConverter]::ToInt32($data, $PE_POINTER_OFFSET)
     [int32]$machineUint = [System.BitConverter]::ToUInt16($data, $PE_HEADER_ADDR + $MACHINE_OFFSET)
@@ -2388,5 +2386,5 @@ Function Start-Main() {
     
     [System.Windows.Forms.Application]::EnableVisualStyles()
     $form = Generate-Form
-    $form.ShowDialog() | Out-Null
+    $null = $form.ShowDialog()
 }
