@@ -499,8 +499,12 @@ Function Add-ComboBoxActions {
     & $Add (Make-PipActionItem 'Install' {
 			param($pkg,$type,$version)
 			$git_url = Validate-GitLink $pkg
-			if ($git_url) { $pkg = $git_url }
-			if (-not [string]::IsNullOrEmpty($version)) { $pkg = "$pkg==$version" }
+			if ($git_url) {
+				$pkg = $git_url
+			}
+			if (-not [string]::IsNullOrEmpty($version) -and ($type -ne 'git')) {  # as git version is a timestamp
+				$pkg = "$pkg==$version"
+			}
 			$actionCommands[$type].install.Invoke($pkg) } `
         { param($pkg,$out); $out -match ('Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' + $pkg) } )
 
