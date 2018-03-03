@@ -323,7 +323,12 @@ Function Add-Buttons {
 }
 
 Function global:Get-PyDoc($request) {
-    $output = & (Get-PythonExe) -m pydoc ($request -replace '-','_').ToLower()
+	$requestNormalized = $request -replace '-','_'
+    $output = & (Get-PythonExe) -m pydoc $requestNormalized
+
+	if ("$output".StartsWith('No Python documentation found')) {
+		$output = & (Get-PythonExe) -m pydoc ($requestNormalized).ToLower()
+	}
     return $output
 }
 
@@ -1104,17 +1109,17 @@ Function global:Open-LinkInBrowser($url) {
 }
 
 $Global:jobCounter = 0
-$Global:jobTimer = New-Object System.Windows.Forms.Timer
-$Global:jobTimer.Interval = 250
-$Global:jobTimer.add_Tick({ $null | Out-Null })  # this hack forces processing of two different event loops: window & PS object events
+#$Global:jobTimer = New-Object System.Windows.Forms.Timer
+#$Global:jobTimer.Interval = 250
+#$Global:jobTimer.add_Tick({ $null | Out-Null })  # this hack forces processing of two different event loops: window & PS object events
 [int] $Global:jobSemaphore = 0
 Function Run-SubProcessWithCallback($code, $callback, $params) {
     $Global:jobCounter++
     $n = $Global:jobCounter
 
     if ($Global:jobSemaphore -eq 0) {
-        $Global:jobTimer.Start()
-        Write-Host 'run timer'
+        #$Global:jobTimer.Start()
+        #Write-Host 'run timer'
         }
     $Global:jobSemaphore++;
     
@@ -1142,10 +1147,10 @@ Function Run-SubProcessWithCallback($code, $callback, $params) {
                 
                 $Global:jobSemaphore--;
                 if ($Global:jobSemaphore -eq 0) {                    
-                    $Global:jobTimer.Stop()
-                    Write-Host 'stop timer'
+                    #$Global:jobTimer.Stop()
+                    #Write-Host 'stop timer'
                 }
-                Write-Host "*** Cleaned up $n sem=$Global:jobSemaphore"
+                #Write-Host "*** Cleaned up $n sem=$Global:jobSemaphore"
             }           
         }
 }
@@ -2380,11 +2385,35 @@ public static extern short GetAsyncKeyState(int virtualKeyCode);
 }
 
 
-Function Start-Main() {
+Function Hide-ConsoleWindow {
+	Add-Type -Name Window -Namespace Console -MemberDefinition '
+	[DllImport("Kernel32.dll")]
+	public static extern IntPtr GetConsoleWindow();
+
+	[DllImport("user32.dll")]
+	public static extern bool ShowWindow(IntPtr hWnd, Int32 nCmdShow);
+'
+	
+	$consolePtr = [Console.Window]::GetConsoleWindow()
+	[Console.Window]::ShowWindow($consolePtr, 0)
+}
+
+Function Start-Main($HideConsole = $true) {	
     $env:PYTHONIOENCODING="utf-8"
     $env:LC_CTYPE="utf-8"
     
+	if ($HideConsole) {
+		Hide-ConsoleWindow
+    }
+	
     [System.Windows.Forms.Application]::EnableVisualStyles()
     $form = Generate-Form
-    $null = $form.ShowDialog()
+
+	$form.Add_Closing({[System.Windows.Forms.Application]::Exit(); Stop-Process $pid})
+	
+	$form.Show()
+	$form.Activate()
+
+	$appContext = New-Object System.Windows.Forms.ApplicationContext 
+	[void][System.Windows.Forms.Application]::Run($appContext)
 }
