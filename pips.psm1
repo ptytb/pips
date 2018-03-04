@@ -17,6 +17,7 @@
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Web.HttpUtility")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Net")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Net.WebClient")
+[Void][Reflection.Assembly]::LoadWithPartialName("Microsoft.VisualBasic")
 
 
 Function global:Get-Bin($command, $all = $false) {
@@ -1053,17 +1054,16 @@ Function Generate-FormInstall {
     $form.ShowDialog()
 }
 
+Function Request-UserString($message, $title, $default) {
+	return [Microsoft.VisualBasic.Interaction]::InputBox($message, $title, $default)
+}
+
 Function Generate-FormSearch {
     $message = "Enter keywords to search PyPi, Conda, Github`n`nChecked items will be kept in the search list"
     $title = "pip, conda, github search"
     $default = ""
-
-    $input = $(
-        Add-Type -AssemblyName Microsoft.VisualBasic
-        [Microsoft.VisualBasic.Interaction]::InputBox($message, $title, $default)
-    )
-    
-    if (! $input) {
+    $input = Request-UserString $message $title $default    
+    if (-not $input) {
         return
     }
 
@@ -1397,6 +1397,32 @@ Function Add-EnvToolButtonMenu {
 	$envToolsButton = Add-ButtonMenu 'env: Tools' $menu $menuclick
 }
 
+Function Add-ToolsButtonMenu {
+	$menu = @(
+		@{
+			Persistent = $true;
+			MenuText = 'View PyDoc for...';
+			Code = {
+				$message = "Enter requset in format`n`npackage.subpackage.Name`n`nor just symbol like 'print'"
+			    $title = "View PyDoc"
+			    $default = ""
+			    $input = Request-UserString $message $title $default    
+			    if (-not $input) {
+			        return
+			    }
+				(Show-DocView $input).Show()
+			};
+		};
+	)
+	
+	$menuclick = {
+		param($item)
+		$output = $item.Code.Invoke()
+	}
+	
+	$envToolsButton = Add-ButtonMenu 'Tools' $menu $menuclick
+}
+
 Function Generate-Form {
     $form = New-Object Windows.Forms.Form
     $form.Text = "pips - python package browser"
@@ -1443,8 +1469,8 @@ Function Generate-Form {
     $toolTip.SetToolTip($isolatedCheckBox, "Ignore environmental variables, user configuration and global packages.`n`n--isolated`n--local")
 
     $null = Add-Button "Search..." { Generate-FormSearch }
-
-    $null = Add-Button "Install..." { Generate-FormInstall }
+    $null = Add-Button "Install..." { Generate-FormInstall }	
+	Add-ToolsButtonMenu
 
     $null = NewLine-TopLayout
 
