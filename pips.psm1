@@ -1169,11 +1169,12 @@ Function Run-SubProcessWithCallback($code, $callback, $params) {
 $Global:PyPiPackageJsonCache = New-Object System.Collections.Hashtable
 
 Function global:Format-PythonPackageToolTip($info) {
-     $tt = "Summary: $($info.info.summary)`nAuthor: $($info.info.author)`nRelease: $($info.info.version)`n"
-     $lr = ($info.releases."$($info.info.version)")[0]
-     $tr = "Release Uploaded $($lr.upload_time)"
-     $tags = "`n`n$($info.info.classifiers -join "`n")"
-     return "${tt}${tr}${tags}"
+    $tt = "Summary: $($info.info.summary)`nAuthor: $($info.info.author)`nRelease: $($info.info.version)`n"
+	$ti = "License: $($info.info.license)`nHome Page: $($info.info.home_page)`n"
+    $lr = ($info.releases."$($info.info.version)")[0]
+    $tr = "Release Uploaded $($lr.upload_time)"
+    $tags = "`n`n$($info.info.classifiers -join "`n")"
+    return "${tt}${ti}${tr}${tags}"
 }
 
 Function global:Download-PythonPackageDetails ($packageName) {
