@@ -539,7 +539,7 @@ Function Add-ComboBoxActions {
 
 $trackDuplicateInterpreters = New-Object System.Collections.Generic.HashSet[String]
 
-Function Get-InterpreterRecord($path, $items) {
+Function Get-InterpreterRecord($path, $items, $user = $false) {
     if ($trackDuplicateInterpreters.Contains($path)) {
         return
     }
@@ -564,8 +564,8 @@ Function Get-InterpreterRecord($path, $items) {
 
 	$action = New-Object psobject -Property @{
 		Path		    = $path;
-		Version		    = $version;
-		Arch		    = Test-is64Bit $python;
+		Version		    = "$version";
+		Arch		    = (Test-is64Bit $python).FileType;
 		PythonExe	    = $python;
 		PipExe		    = Guess-EnvPath 'pip.exe';
 		CondaExe	    = Guess-EnvPath 'conda.exe';
@@ -575,9 +575,10 @@ Function Get-InterpreterRecord($path, $items) {
 		RequirementsTxt = Guess-EnvPath 'requirements.txt';
 		Pipfile  	    = Guess-EnvPath 'Pipfile';
         PipfileLock     = Guess-EnvPath 'Pipfile.lock';
+		User            = $user;
 	}
 	$action | Add-Member ScriptMethod ToString {
-		"{2} [{0}] {1}" -f $this.Arch.FileType, $this.PythonExe, $this.Version
+		"{2} [{0}] {1}" -f $this.Arch, $this.PythonExe, $this.Version
 	} -Force
 
     $null = $items.Add($action)
@@ -628,6 +629,16 @@ Function Find-Interpreters {
 
 Function Add-ComboBoxInterpreters {
     $interpreters = Find-Interpreters
+
+	foreach ($interpreter in $Global:settings.envs) {
+		if ($interpreter.User) {
+			$interpreter | Add-Member ScriptMethod ToString {
+				"{2} [{0}] {1}" -f $this.Arch, $this.PythonExe, $this.Version
+			} -Force
+			$null = $interpreters.Add($interpreter)
+        }
+	}
+	
     $Script:interpreters = $interpreters
     $interpretersComboBox = New-Object System.Windows.Forms.ComboBox
     $interpretersComboBox.DataSource = $interpreters
@@ -1508,7 +1519,7 @@ Function Generate-Form {
 			"Typically it contains dirs: Include, Lib, Scripts")
         if ($path) {
             $oldCount = $interpreters.Count
-            Get-InterpreterRecord $path $interpreters
+            Get-InterpreterRecord $path $interpreters -user $true
             if (($interpreters.Count -gt $oldCount) -or ($trackDuplicateInterpreters.Contains($path))) {
 				if ($interpreters.Count -gt $oldCount) {
                     Write-PipLog "Added virtual environment location: $path"
@@ -2398,19 +2409,48 @@ Function Hide-ConsoleWindow {
 	[Console.Window]::ShowWindow($consolePtr, 0)
 }
 
-Function Start-Main($HideConsole = $true) {	
+Function Save-PipsSettings {
+	$settingsPath = "$($env:LOCALAPPDATA)\pips"
+	$null = New-Item -Force -ItemType Directory -Path $settingsPath
+	$userInterpreterRecords = $interpreters | Where-Object { $_.User }
+	$settings = @{
+		"envs"=@($userInterpreterRecords);
+    }
+	try {
+		$settings | ConvertTo-Json | Out-File "$settingsPath\settings.json"
+    } catch {
+	}
+}
+
+Function Load-PipsSettings {
+	$settingsFile = "$($env:LOCALAPPDATA)\pips\settings.json"
+	if (Exists-File $settingsFile) {
+		try {
+			$Global:settings = Get-Content $settingsFile | ConvertFrom-Json
+        } catch {
+		}
+	}
+}
+
+Function Start-Main([switch] $HideConsole) {
     $env:PYTHONIOENCODING="utf-8"
     $env:LC_CTYPE="utf-8"
-    
+	
 	if ($HideConsole) {
 		Hide-ConsoleWindow
     }
 	
+	Load-PipsSettings
+	
     [System.Windows.Forms.Application]::EnableVisualStyles()
     $form = Generate-Form
 
-	$form.Add_Closing({[System.Windows.Forms.Application]::Exit(); Stop-Process $pid})
-	
+	$form.Add_Closing({
+		Save-PipsSettings
+		[System.Windows.Forms.Application]::Exit()
+		Stop-Process $pid
+	})
+
 	$form.Show()
 	$form.Activate()
 

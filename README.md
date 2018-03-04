@@ -26,7 +26,7 @@ This script helps to keep packages updated.
 ## todo
 
 
-- [ ] Save user env list
+- [X] Save user env list
 - [X] Add search with Github API
 - [X] Add editable packages to Install dialog (git, local); pip list --editable
 - [ ] Add some integration with VirusTotal (sha-256 of archive + link to VT for a starter)
