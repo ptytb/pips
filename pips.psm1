@@ -33,6 +33,10 @@ Function global:Get-Bin($command, $all = $false) {
     return $found
 }
 
+Function Get-CurrentInterpreter($item) {
+	return $Script:interpretersComboBox.SelectedItem."$item"
+}
+
 Function Get-PythonPath() {
     $Script:interpretersComboBox.SelectedItem.Path
 }
@@ -486,7 +490,14 @@ Function Add-ComboBoxActions {
         { param($pkg,$out); $out -match '.*' } )
 
     & $Add (Make-PipActionItem 'List Files' `
-		{ param($pkg,$type); $actionCommands[$type].files.Invoke($pkg) } `
+		{
+			param($pkg,$type);
+			if ($type -eq 'other') {
+				Get-ChildItem -Recurse "$(Get-CurrentInterpreter "SitePackagesDir")\$pkg" | ForEach-Object { $_.FullName }
+			} else {
+				$actionCommands[$type].files.Invoke($pkg)
+            }
+		} `
         { param($pkg,$out); $out -match $pkg } )
 	
     & $Add (Make-PipActionItem 'Update' `
@@ -544,12 +555,18 @@ Function Get-InterpreterRecord($path, $items, $user = $false) {
         return
     }
 
-    Function Guess-EnvPath ($fileName) {
+    Function Guess-EnvPath ($fileName, [switch] $directory) {
         $subdirs = @('\'; '\Scripts\'; '\.venv\Scripts\'; '\.venv\'; '\env\Scripts\'; '\env\'; '\bin\')
         foreach ($tryPath in $subdirs) {
             $target = "${path}${tryPath}${fileName}"
-            if (Exists-File $target) {
-                return $target
+            if ($directory) {
+				if (Exists-Directory $target) {
+	                return $target
+	            }
+			} else {
+				if (Exists-File $target) {
+	                return $target
+	            }
             }
         }
         return $null
@@ -575,6 +592,7 @@ Function Get-InterpreterRecord($path, $items, $user = $false) {
 		RequirementsTxt = Guess-EnvPath 'requirements.txt';
 		Pipfile  	    = Guess-EnvPath 'Pipfile';
         PipfileLock     = Guess-EnvPath 'Pipfile.lock';
+		SitePackagesDir = Guess-EnvPath 'Lib\site-packages' -directory;
 		User            = $user;
 	}
 	$action | Add-Member ScriptMethod ToString {
