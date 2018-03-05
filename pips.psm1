@@ -10,7 +10,6 @@
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Text.RegularExpressions")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Collections")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Collections.ArrayList")
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Collections.Hashtable")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Collections.Generic")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Collections.Generic.HashSet")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Web")
@@ -24,7 +23,7 @@ Function global:Get-Bin($command, $all = $false) {
     $commands = Get-Command -All -ErrorAction SilentlyContinue $command
     $found = $null
     if ($commands) {
-        $commands = $commands | foreach { $_.Source }
+        $commands = $commands | ForEach-Object { $_.Source }
         if ($all) {
             $found = $commands
         } else {
@@ -738,7 +737,7 @@ Function Load-KnownPackageIndex {
     $bf = New-Object System.Runtime.Serialization.Formatters.Binary.BinaryFormatter
     $index = $bf.Deserialize($fs)
     $fs.Close()
-    return $index
+    return ,$index
 }
 
 Function ConvertFrom-RegexGroupsToObject($groups) {
@@ -819,8 +818,29 @@ Function Generate-FormInstall {
         } else {
             $keys = $packageIndex.Keys
         }
+        # $dbg_n = 0
+        [int] $maxLength = 0
         foreach ($item in $keys) {
+            # $dbg_n++
+            # if ($dbg_n -gt 1000) {
+            #     break
+            # }
             $autoCompleteIndex.Add($item)
+            $maxLength = [Math]::Max($maxLength, $item.Length)
+        }
+        
+        # Write-PipLog $maxLength         
+        # Populate the Dictionary<WordLength: int, WordList: List[string]>
+        # for faster selection within Levenshtein distance (+/-) range
+        $Global:TypoErrorTable = New-Object 'System.Collections.Generic.Dictionary[[string],[System.Collections.Generic.List[string]]]'
+        for ($i = 1; $i -le $maxLength; $i++) {
+            $list = New-Object 'System.Collections.Generic.List[string]'
+            $null = $Global:TypoErrorTable.Add($i, $list)             
+        }
+        foreach ($item in $keys) {
+            $itemLength = $item.Length
+            $list = $Global:TypoErrorTable[$itemLength]
+            $list.Add($item)
         }
     }
 
@@ -967,7 +987,7 @@ Function Generate-FormInstall {
 
         if ($nAlreadyInList -ne -1) {
 			if (-not $IsDifferentVersion) {            
-				& $FuncShowToolTip "$package" "Package '$package' is already in the list"            
+				& $FuncShowToolTip "$package" "Package '$package' is already in the list"
 				return $false
             } else {
 				$row = $oldRow
@@ -1018,9 +1038,34 @@ Function Generate-FormInstall {
         }
 			
 		if ($_.KeyCode -eq 'Enter') { 
-			$okay = & $FuncAddInstallSource $cb.Text
-			if ($okay) {
-            	$cb.Text = [string]::Empty
+            $text = $cb.Text.Trim()
+            
+            if ([string]::IsNullOrEmpty($text)) {
+                return
+            }
+            
+            if (-not (Test-KeyPress -Keys ShiftKey)) {
+    			$okay = & $FuncAddInstallSource $text
+			    if ($okay) {
+        	       $cb.Text = [string]::Empty
+                   return
+                }
+            } else {
+        		$response = ([System.Windows.Forms.MessageBox]::Show(
+        			"Search for similar package names?`n`nShould take ~30 sec.",
+        			"Fuzzy name search", [System.Windows.Forms.MessageBoxButtons]::YesNo))
+                if ($response -ne 'Yes') {
+                    return
+                }
+            
+    			$candidates = Get-TypoErrorCandidates $text
+                if ($candidates.Count -le 10) {
+                    $candidatesToolTipText = "$($candidates -join "`n")"
+                } else {                     
+                    $candidatesToolTipText = "$(($candidates | Select-Object -First 10) -join "`n")`n...`n`nfull list in the log"
+                }
+    			& $FuncShowToolTip "$text" "Packages with similar names found in the index.`n`nDid you mean:`n`n$candidatesToolTipText"
+    			Write-PipLog "Fuzzy search candidates: $($candidates -join ', ')`n" 			
             }
         }		
     }.GetNewClosure())
@@ -1046,7 +1091,7 @@ Function Generate-FormInstall {
     $form.Size = New-Object Drawing.Point 360,140
     $form.SizeGripStyle = [System.Windows.Forms.SizeGripStyle]::Hide
     $form.FormBorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-    $form.Text = 'Install packages'
+    $form.Text = 'Install packages | [Shift+Enter] fuzzy name search'
     $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
     $form.MinimizeBox = $false
     $form.MaximizeBox = $false
@@ -1184,7 +1229,7 @@ Function Run-SubProcessWithCallback($code, $callback, $params) {
         }
 }
 
-$Global:PyPiPackageJsonCache = New-Object System.Collections.Hashtable
+$Global:PyPiPackageJsonCache = New-Object 'System.Collections.Generic.Dictionary[string,PSCustomObject]'
 
 Function global:Format-PythonPackageToolTip($info) {
     $tt = "Summary: $($info.info.summary)`nAuthor: $($info.info.author)`nRelease: $($info.info.version)`n"
@@ -2374,7 +2419,7 @@ function Test-is64Bit {
 }
 
 # from https://gallery.technet.microsoft.com/scriptcenter/Check-for-Key-Presses-with-7349aadc/file/148286/2/Test-KeyPress.ps1
-function Test-KeyPress
+Function global:Test-KeyPress
 {
     <#
         .SYNOPSIS
@@ -2440,6 +2485,97 @@ public static extern short GetAsyncKeyState(int virtualKeyCode);
     $Result -notcontains $false
 }
 
+$Global:FuncCalculateLevenshteinDistance = {
+	<#
+		.SYNOPSIS
+		Returns Levenshtein distance of two strings
+
+		.LINK
+		https://en.wikipedia.org/wiki/Damerau%E2%80%93Levenshtein_distance
+	
+		.OUTPUTS
+		System.Int32
+	#>
+
+    param([string] $word1, [string] $word2)
+    
+	[int] $len1 = $word1.Length
+	[int] $len2 = $word2.Length
+    
+    $v = [array]::CreateInstance([int], $len1 + 1, $len2 + 1)
+	
+    [int] $i = 0
+    [int] $j = 0
+
+	for ( ; $i -le $len1; $i++) {
+		$v[$i, 0] = $i
+	}
+    
+	for ( ; $j -le $len2; $j++) {
+		$v[0, $j] = $j
+	}
+
+	for ($i = 1; $i -le $len1; $i++) {
+        [int] $im1 = $i - 1
+		for ($j = 1; $j -le $len2; $j++) {
+            [int] $jm1 = $j - 1
+            
+            [char] $c1m1 = $word1[$im1]
+            [char] $c1m2 = $word1[$i - 2]
+            [char] $c2m1 = $word2[$jm1]
+            [char] $c2m2 = $word2[$j - 2]
+
+            if ($c1m1 -ceq $c2m1) {
+				[int] $cost = 0
+			} else {
+				[int] $cost = 1
+			}
+
+            [int] $v1 = $v[($im1), $j] + 1  # deletion
+            [int] $v2 = $v[$i, ($jm1)] + 1  # insertion
+            [int] $v3 = $v[($im1), ($jm1)] + $cost  # subtraction
+            
+			$v[$i, $j] = [Math]::Min([Math]::Min($v1, $v2), $v3)             
+            
+            if (($i -gt 1) -and ($j -gt 1) -and (
+                ($c1m1 -ceq $c2m2) -and ($c1m2 -ceq $c2m1)
+            )) {
+                [int] $v4 = $v[$i, $j]
+                [int] $v5 = $v[($i - 2), ($j - 2)] + $cost
+                $v[$i, $j] = [Math]::Min($v4, $v5)  # transposition
+            }
+		}
+    }
+
+	return $v[$len1, $len2]
+}
+
+Function global:Get-TypoErrorCandidates([string] $text, [int] $threshold = 2) {
+	$candidates = New-Object System.Collections.ArrayList
+    $text = $text.ToLower()
+    $textLength = $text.Length
+    # $stopWatch = [System.Diagnostics.Stopwatch]::StartNew()
+    # $dbg_n = 0
+    foreach ($n in ($textLength - $threshold)..($textLength + $threshold)) {
+        $items = $Global:TypoErrorTable[$n]
+        foreach ($item in $items) {
+            # $dbg_n++
+            # if ($dbg_n -gt 1000) {
+            #     break
+            # }
+            # if ([Math]::Abs($textLength - $item.Length) -gt $threshold) {
+            #     continue
+            # }
+            [int] $distance = & $Global:FuncCalculateLevenshteinDistance $text $item.ToLower()
+            if ($distance -le $threshold) {
+                $null = $candidates.Add(@{Text=$item; Distance=$distance})
+            }
+        }
+    }
+    # Write-PipLog $stopWatch.Elapsed.TotalMilliseconds
+	return ,($candidates | Sort-Object -Property Distance -Descending | ForEach-Object { $_.Text })
+}
+
 
 Function Hide-ConsoleWindow {
 	Add-Type -Name Window -Namespace Console -MemberDefinition '
@@ -2477,10 +2613,18 @@ Function Load-PipsSettings {
 	}
 }
 
-Function Start-Main([switch] $HideConsole) {
+Function Start-Main([switch] $HideConsole, [switch] $Debug) {
     $env:PYTHONIOENCODING="utf-8"
     $env:LC_CTYPE="utf-8"
-	
+    
+    if (-not $Debug) {
+       Set-StrictMode -Off
+       Set-PSDebug -Off
+    } else {
+       Set-StrictMode -Version latest
+       Set-PSDebug -Strict         
+    }
+    
 	if ($HideConsole) {
 		Hide-ConsoleWindow
     }
@@ -2493,7 +2637,9 @@ Function Start-Main([switch] $HideConsole) {
 	$form.Add_Closing({
 		Save-PipsSettings
 		[System.Windows.Forms.Application]::Exit()
-		Stop-Process $pid
+        if (-not [Environment]::UserInteractive) {
+	        Stop-Process $pid
+        }
 	})
 
 	$form.Show()

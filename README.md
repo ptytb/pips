@@ -29,7 +29,7 @@ This script helps to keep packages updated.
 - [X] Save user env list
 - [X] Add search with Github API
 - [X] Add editable packages to Install dialog (git, local); pip list --editable; Appropriate checkbox is still needed in the install dialog
-- [ ] Mistype verification with Damerau–Levenshtein distance (fuzzy). As PowerShell v3 is JIT-compiled, no need for external DLLs
+- [X] Mistype verification with Damerau–Levenshtein distance (fuzzy). As PowerShell v3 is JIT-compiled, no need for external DLLs
 - [ ] GPG signature verification for packages (with gpg.exe)
 - [ ] Add some integration with VirusTotal (sha-256 of archive + link to VT for a starter)
 - [ ] Fix "isolated" checkbox behavior is somewhat uncertain
