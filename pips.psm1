@@ -1560,7 +1560,8 @@ Some packages may generate garbage or show windows, don't panic.
 			        return
 			    }
                 $apropos = Get-PyDocApropos $input
-				(Show-DocView -SetContent $apropos).Show()
+                $docView = Show-DocView -SetContent ($apropos -join "`n") -Highlight $Script:pyRegexNameChain -NoDefaultHighlighting
+				$docView.Show()
             };
         };
 	)
@@ -1860,6 +1861,7 @@ $pyRegexSpecial   = Compile-Regex ("\b(" + (($pydocSpecial  | foreach { "${_}"  
 $pyRegexSpecialU  = Compile-Regex ("\b(" + (($pydocSpecialU | foreach { "__${_}__" }) -join '|') + ")\b")
 $pyRegexPEP       = Compile-Regex '\b(PEP[ -]?(?:\d+))'
 $pyRegexSubPkgs   = Compile-Regex 'PACKAGE CONTENTS\n((?:\s+[^\n]+\n)+)'
+$pyRegexNameChain = Compile-Regex '^\s*(\w+(?:\.\w+)*)' ($ro_compiled + $ro_multiline)
 
 $DrawingColor = New-Object Drawing.Color  # Workaround for PowerShell, which parses script classes before loading types
 
@@ -1870,7 +1872,7 @@ class DocView {
     [int]           $modifiedTextLengthDelta  # We've found all matches with immutual Text, but will be changing actual document
 	[String]        $packageName
 
-    DocView($content, $packageName) {
+    DocView($content, $packageName, $NoDefaultHighlighting = $false) {
 		$self = $this
 		$this.packageName = $packageName
         $this.modifiedTextLengthDelta = 0
@@ -1901,14 +1903,14 @@ class DocView {
 	            param($clickedIndex)
 
 	            for ($charIndex = $clickedIndex; $charIndex -gt 0; $charIndex--) {
-	                if ($self.docView.Text[$charIndex] -notmatch '\w') {
+	                if ($self.docView.Text[$charIndex] -notmatch '\w|\.') {
 	                    $begin = $charIndex + 1
 	                    break
 	                }
 	            }
 	        
 	            for ($charIndex = $clickedIndex; $charIndex -lt $self.docView.Text.Length; $charIndex++) {
-	                if ($self.docView.Text[$charIndex] -notmatch '\w') {
+	                if ($self.docView.Text[$charIndex] -notmatch '\w|\.') {
 	                    $end = $charIndex
 	                    break
 	                }
@@ -1962,13 +1964,15 @@ class DocView {
 				$self.Resize()
 			}.GetNewClosure())
 
-        $this.Highlight_Links()
-        $this.Highlight_PyDocSyntax()
-	    $this.docView.Select(0, 0)
-        $this.docView.ScrollToCaret()	    
+        if (-not $NoDefaultHighlighting) {
+            $this.Highlight_PEPLinks()
+            $this.Highlight_PyDocSyntax()
+        }         
     }
 	
 	[void] Show() {
+	    $this.docView.Select(0, 0)
+        $this.docView.ScrollToCaret()	    
 		$this.formDoc.ShowDialog()
 	}
 
@@ -2006,25 +2010,28 @@ class DocView {
         }
     }
 
-    [void] Highlight_Text($pattern, $foreground, $useBold) {
+    [void] Highlight_Text($pattern, $foreground, $useBold, $useUnderline) {
         $this.Alter_MatchingFragments($pattern, {
 		    $this.docView.SelectionColor = $foreground
             if ($useBold) {
                 $this.docView.SelectionFont = $fontBold
             }
+            if ($useUnderline) {
+                $this.docView.SelectionFont = $fontUnderline
+            }
 	    })
     }
 
     [void] Highlight_PyDocSyntax() {
-        $this.Highlight_Text($Script:pyRegexStrQuote,  ($Script:DrawingColor::DarkGreen),   $false)
-        $this.Highlight_Text($Script:pyRegexNumber,    ($Script:DrawingColor::DarkMagenta), $false)
-        $this.Highlight_Text($Script:pyRegexSection,   ($Script:DrawingColor::DarkCyan),    $true)
-        $this.Highlight_Text($Script:pyRegexKeyword,   ($Script:DrawingColor::DarkRed),     $true)
-        $this.Highlight_Text($Script:pyRegexSpecial,   ($Script:DrawingColor::DarkOrange),  $true)
-        $this.Highlight_Text($Script:pyRegexSpecialU,  ($Script:DrawingColor::DarkOrange),  $true)
+        $this.Highlight_Text($Script:pyRegexStrQuote,  ($Script:DrawingColor::DarkGreen),   $false, $false)
+        $this.Highlight_Text($Script:pyRegexNumber,    ($Script:DrawingColor::DarkMagenta), $false, $false)
+        $this.Highlight_Text($Script:pyRegexSection,   ($Script:DrawingColor::DarkCyan),    $true,  $false)
+        $this.Highlight_Text($Script:pyRegexKeyword,   ($Script:DrawingColor::DarkRed),     $true,  $false)
+        $this.Highlight_Text($Script:pyRegexSpecial,   ($Script:DrawingColor::DarkOrange),  $true,  $false)
+        $this.Highlight_Text($Script:pyRegexSpecialU,  ($Script:DrawingColor::DarkOrange),  $true,  $false)
     }
     
-    [void] Highlight_Links() {
+    [void] Highlight_PEPLinks() {
 	    # PEP Links
 	    $this.Alter_MatchingFragments($Script:pyRegexPEP, {
             param($index, $length, $match)
@@ -2065,13 +2072,19 @@ class DocView {
 	
 }
 
-Function global:Show-DocView($packageName, $SetContent = $null) {
+Function global:Show-DocView($packageName, $SetContent = $null, $Highlight = $null, [switch] $NoDefaultHighlighting) {
     if (-not $SetContent) {
 	    $content = (Get-PyDoc $packageName)
     } else {
         $content = $SetContent
     }
-    $viewer  = New-Object DocView -ArgumentList @((Tidy-Output $content), $packageName)
+    
+    $viewer = New-Object DocView -ArgumentList @((Tidy-Output $content), $packageName, $NoDefaultHighlighting)
+    
+    if ($Highlight) {
+        $viewer.Highlight_Text($Highlight, ([System.Drawing.Color]::Navy), $false, $true)
+    }
+    
 	return $viewer
 }
 
