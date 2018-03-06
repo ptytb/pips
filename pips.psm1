@@ -1168,10 +1168,8 @@ Function Generate-FormSearch {
         return
     }
 
-    Write-PipLog ("Searching for " + $input)
-    Write-PipLog 'Double click a table row to open PyPi, Anaconda.com or github.com in browser'
-    
-    Write-PipLog
+    Write-PipLog "Searching for $input"
+    Write-PipLog 'Double click or [Ctrl+Enter] a table row to open PyPi, Anaconda.com or github.com in browser'
     $stats = Get-SearchResults $input
     Write-PipLog "Found $($stats.Total) packages: $($stats.PipCount) pip, $($stats.CondaCount) conda, $($stats.GithubCount) github. Total $($dataModel.Rows.Count) packages in list."
 	Write-PipLog
@@ -1590,6 +1588,25 @@ Some packages may generate garbage or show windows, don't panic.
 	$envToolsButton = Add-ButtonMenu 'Tools' $menu $menuclick
 }
 
+Function global:Show-CurrentPackageInBrowser() {
+    $view_row = $dataGridView.CurrentRow
+    if ($view_row) {
+        $row = $view_row.DataBoundItem.Row
+        $packageName = $row.Package
+        $urlName = [System.Web.HttpUtility]::UrlEncode($packageName)
+        if ($row.Type -eq 'conda') {
+            $url = $anaconda_url
+        } elseif ($row.Type -eq 'git') {
+            $gitLinkInfo = Validate-GitLink $packageName -AsObject $true
+			$url = "$github_url/"
+			$urlName = "$($gitLinkInfo.User)/$($gitLinkInfo.Repo)"
+        } else {
+            $url = $pypi_url
+        }
+        Open-LinkInBrowser "${url}${urlName}"
+    }
+} 	
+
 Function Generate-Form {
     $form = New-Object Windows.Forms.Form
     $form.Text = "pips - python package browser"
@@ -1598,7 +1615,7 @@ Function Generate-Form {
 	$form.KeyPreview = $true
     $form.Icon = Convert-Base64ToICO $iconBase64_Snakes
 	$Script:form = $form
-	
+    
 	$form.add_KeyDown({
 		$gridViewActive = $form.ActiveControl -is [System.Windows.Forms.DataGridView]
 		if ($dataGridView.Focused -and $dataGridView.RowCount -gt 0) {			
@@ -1610,6 +1627,11 @@ Function Generate-Form {
 				Set-SelectedNRow ($dataGridView.RowCount - 1)
 				$_.Handled = $true
 			}
+            if ($_.KeyCode -eq 'Return' -and $_.Control) {
+                Show-CurrentPackageInBrowser
+				$_.Handled = $true
+                return
+            }
             if ($_.KeyCode -in @('Space', 'Return')) {
                 $oldSelect = $dataGridView.CurrentRow.DataBoundItem.Row.Select
                 $dataGridView.CurrentRow.DataBoundItem.Row.Select = -not $oldSelect
@@ -1804,27 +1826,9 @@ Function Generate-Form {
     $dataGridView.Add_CellMouseClick({ & $FuncHighlightLogFragment }.GetNewClosure())
     $dataGridView.Add_SelectionChanged({ & $FuncHighlightLogFragment }.GetNewClosure())
 
-    $FuncShowPackageInBrowser = {
-        $view_row = $dataGridView.CurrentRow
-        if ($view_row) {
-            $row = $view_row.DataBoundItem.Row
-            $packageName = $row.Package
-            $urlName = [System.Web.HttpUtility]::UrlEncode($packageName)
-            if ($row.Type -eq 'conda') {
-                $url = $anaconda_url
-            } elseif ($row.Type -eq 'git') {
-				$url = "$github_url/"
-				$urlName = $packageName
-            } else {
-                $url = $pypi_url
-            }
-            Open-LinkInBrowser "${url}${urlName}"
-        }
-    }
-
     $dataGridView.Add_CellMouseDoubleClick({
             if (($_.RowIndex -gt -1) -and ($_.ColumnIndex -gt 0)) {
-                & $FuncShowPackageInBrowser
+                Show-CurrentPackageInBrowser
             }
         }.GetNewClosure())
     $form.Add_Load({ $Script:formLoaded = $true })
@@ -2348,7 +2352,7 @@ Function Get-SearchResults($request) {
     Highlight-PythonPackages
 
     Write-PipLog 'Package list updated.'
-    Write-PipLog 'Double click a table row to open PyPi in browser'
+    Write-PipLog 'Double click or [Ctrl+Enter] a table row to open PyPi, Anaconda.com or github.com in browser'
     
     $count = $dataModel.Rows.Count
     $pipCount = $pipPackages.Count
@@ -2525,7 +2529,7 @@ Function global:Execute-PipAction {
 	    Write-PipLog '----'
 	    Write-PipLog "All tasks finished, $tasksOkay ok, $tasksFailed failed."
 	    Write-PipLog 'Select a row to highlight the relevant log piece'
-	    Write-PipLog 'Double click a table row to open PyPi, Anaconda.com or github.com in browser'
+        Write-PipLog 'Double click or [Ctrl+Enter] a table row to open PyPi, Anaconda.com or github.com in browser'
 	    Write-PipLog '----'
 	    Write-PipLog ''
     }
