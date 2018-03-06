@@ -41,7 +41,7 @@ This script helps to keep packages updated.
 - [X] Filter modes: Whole, And, Or, Regexp (RegExp seems feasible with Linq, but a little quirky)
 - [X] Fix peps url 0000 numbering
 - [X] Install packages dialog like in R Studio (with package name completion)
-- [ ] PyDoc and PyPi meta-info mirror local indexing and searching (binary indeces are too big, separated repo needed or even *git lfs*)
+- [X] PyDoc and PyPi <s>meta-info mirror local indexing and searching</s> already in PyDoc apropos & topics <s>(binary indeces are too big, separated repo needed or even *git lfs*)</s>
 - [X] Now assuming *utf-8* for IO whilst old(?) Python versions use cp1252, which generates empty strings for Chinese, Russian, etc.
 - [ ] Filter package search results for conda by relevant Architecture
 - [ ] Implement some missing conda commands

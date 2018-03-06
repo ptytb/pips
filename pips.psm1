@@ -16,7 +16,6 @@
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Web.HttpUtility")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Net")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Net.WebClient")
-[Void][Reflection.Assembly]::LoadWithPartialName("Microsoft.VisualBasic")
 
 
 Function global:Get-Bin($command, $all = $false) {
@@ -1099,8 +1098,65 @@ Function Generate-FormInstall {
     $form.ShowDialog()
 }
 
-Function Request-UserString($message, $title, $default) {
-	return [Microsoft.VisualBasic.Interaction]::InputBox($message, $title, $default)
+Function Request-UserString($message, $title, $default, $completionItems = $null) {
+    $Form                            = New-Object system.Windows.Forms.Form
+    $Form.ClientSize                 = '421,247'
+    $Form.text                       = $title
+    $Form.TopMost                    = $false
+    $Form.SizeGripStyle = [System.Windows.Forms.SizeGripStyle]::Hide
+    $Form.FormBorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    $Form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
+    $Form.MinimizeBox = $false
+    $Form.MaximizeBox = $false
+    $Form.Icon = $Script:form.Icon
+    
+    $TextBox1                        = New-Object system.Windows.Forms.TextBox
+    $TextBox1.multiline              = $false
+    $TextBox1.width                  = 379
+    $TextBox1.height                 = 20
+    $TextBox1.location               = New-Object System.Drawing.Point(21,165)
+
+    $ButtonCancel                    = New-Object system.Windows.Forms.Button
+    $ButtonCancel.text               = "Cancel"
+    $ButtonCancel.width              = 60
+    $ButtonCancel.height             = 30
+    $ButtonCancel.location           = New-Object System.Drawing.Point(140,200)
+    $ButtonCancel.DialogResult       = [System.Windows.Forms.DialogResult]::Cancel
+
+    $ButtonOK                        = New-Object system.Windows.Forms.Button
+    $ButtonOK.text                   = "OK"
+    $ButtonOK.width                  = 60
+    $ButtonOK.height                 = 30
+    $ButtonOK.location               = New-Object System.Drawing.Point(225,200)
+    $ButtonOK.DialogResult           = [System.Windows.Forms.DialogResult]::OK
+
+    $Label1                          = New-Object system.Windows.Forms.Label
+    $Label1.text                     = $message
+    $Label1.AutoSize                 = $false
+    $Label1.width                    = 371
+    $Label1.height                   = 123
+    $Label1.location                 = New-Object System.Drawing.Point(25,29)
+
+    $Form.controls.AddRange( @($TextBox1, $ButtonCancel, $ButtonOK, $Label1) )
+    $Form.AcceptButton = $ButtonOK
+    $Form.CancelButton = $ButtonCancel
+    
+    $TextBox1.Text = $default
+    if ($completionItems) {
+        $autoCompleteStrings = New-Object System.Windows.Forms.AutoCompleteStringCollection
+        $autoCompleteStrings.AddRange($completionItems)
+		$TextBox1.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::Suggest
+		$TextBox1.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
+		$TextBox1.AutoCompleteCustomSource = $autoCompleteStrings
+    }
+    
+    $result = $Form.ShowDialog()
+    
+    if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+        return $TextBox1.Text         
+    } else {
+        return $null
+    }         
 }
 
 Function Generate-FormSearch {
@@ -1442,22 +1498,71 @@ Function Add-EnvToolButtonMenu {
 	$envToolsButton = Add-ButtonMenu 'env: Tools' $menu $menuclick
 }
 
+Function global:Get-PyDocTopics() {
+    $pythonExe = Get-PythonExe
+    if ([string]::IsNullOrEmpty($pythonExe)) {
+        return 'No python executable found.'
+    }
+    $pyCode = "import pydoc; print('\n'.join(pydoc.Helper.topics.keys()))"
+    $output = & $pythonExe -c $pyCode 2>&1
+    return $output.Split("`n", [System.StringSplitOptions]::RemoveEmptyEntries)
+}
+
+Function global:Get-PyDocApropos($request) {
+    $pythonExe = Get-PythonExe
+    if ([string]::IsNullOrEmpty($pythonExe)) {
+        return 'No python executable found.'
+    }
+    $request = $request -replace '''',''
+    $pyCode = "import pydoc; pydoc.apropos('$request')"
+    $output = & $pythonExe -c $pyCode
+    return $output.Split("`n", [System.StringSplitOptions]::RemoveEmptyEntries)
+}
+
 Function Add-ToolsButtonMenu {
 	$menu = @(
 		@{
 			Persistent = $true;
 			MenuText = 'View PyDoc for...';
 			Code = {
-				$message = "Enter requset in format`n`npackage.subpackage.Name`n`nor just symbol like 'print'"
+				$message = "Enter requset in format: package.subpackage.Name
+                
+or symbol like 'print' or '%'
+
+or topic like 'FORMATTING'
+
+or keyword like 'elif'
+"
 			    $title = "View PyDoc"
 			    $default = ""
-			    $input = Request-UserString $message $title $default    
+                $topics = Get-PyDocTopics
+			    $input = Request-UserString $message $title $default $topics
 			    if (-not $input) {
 			        return
 			    }
 				(Show-DocView $input).Show()
 			};
 		};
+        @{
+            Persistent = $true;
+            MenuText = 'Search through PyDocs (apropos) ...'
+            Code = {                 
+				$message = "Enter keywords to search
+
+All module docs will be scanned.
+
+Some packages may generate garbage or show windows, don't panic.
+"
+			    $title = "PyDoc apropos"
+			    $default = ""
+			    $input = Request-UserString $message $title $default    
+			    if (-not $input) {
+			        return
+			    }
+                $apropos = Get-PyDocApropos $input
+				(Show-DocView -SetContent $apropos).Show()
+            };
+        };
 	)
 	
 	$menuclick = {
@@ -1955,8 +2060,12 @@ class DocView {
 	
 }
 
-Function global:Show-DocView($packageName) {
-	$content = (Get-PyDoc $packageName)
+Function global:Show-DocView($packageName, $SetContent = $null) {
+    if (-not $SetContent) {
+	    $content = (Get-PyDoc $packageName)
+    } else {
+        $content = $SetContent
+    }
     $viewer  = New-Object DocView -ArgumentList @((Tidy-Output $content), $packageName)
 	return $viewer
 }
