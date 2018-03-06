@@ -1593,6 +1593,11 @@ Function Generate-Form {
 				Set-SelectedNRow ($dataGridView.RowCount - 1)
 				$_.Handled = $true
 			}
+            if ($_.KeyCode -in @('Space', 'Return')) {
+                $oldSelect = $dataGridView.CurrentRow.DataBoundItem.Row.Select
+                $dataGridView.CurrentRow.DataBoundItem.Row.Select = -not $oldSelect
+                $_.Handled = $true
+            }
 		}
 	})
 
