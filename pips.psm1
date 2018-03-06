@@ -1501,22 +1501,32 @@ Function Add-EnvToolButtonMenu {
 Function global:Get-PyDocTopics() {
     $pythonExe = Get-PythonExe
     if ([string]::IsNullOrEmpty($pythonExe)) {
-        return 'No python executable found.'
+        Write-PipLog 'No python executable found.'
+        return
     }
     $pyCode = "import pydoc; print('\n'.join(pydoc.Helper.topics.keys()))"
     $output = & $pythonExe -c $pyCode 2>&1
-    return $output.Split("`n", [System.StringSplitOptions]::RemoveEmptyEntries)
+    if ($output) {
+        return $output.Split("`n", [System.StringSplitOptions]::RemoveEmptyEntries)
+    } else {
+        return
+    }
 }
 
 Function global:Get-PyDocApropos($request) {
     $pythonExe = Get-PythonExe
     if ([string]::IsNullOrEmpty($pythonExe)) {
-        return 'No python executable found.'
+        Write-PipLog 'No python executable found.'
+        return
     }
     $request = $request -replace '''',''
     $pyCode = "import pydoc; pydoc.apropos('$request')"
     $output = & $pythonExe -c $pyCode
-    return $output.Split("`n", [System.StringSplitOptions]::RemoveEmptyEntries)
+    if ($output) {
+        return $output.Split("`n", [System.StringSplitOptions]::RemoveEmptyEntries)
+    } else {
+        return
+    }
 }
 
 Function Add-ToolsButtonMenu {
@@ -1559,9 +1569,15 @@ Some packages may generate garbage or show windows, don't panic.
 			    if (-not $input) {
 			        return
 			    }
+                Write-PipLog "Searching apropos for $input"
                 $apropos = Get-PyDocApropos $input
-                $docView = Show-DocView -SetContent ($apropos -join "`n") -Highlight $Script:pyRegexNameChain -NoDefaultHighlighting
-				$docView.Show()
+                if ($apropos -and $apropos.Count -gt 0) {
+                    Write-PipLog "Found $($apropos.Count) topics"
+                    $docView = Show-DocView -SetContent ($apropos -join "`n") -Highlight $Script:pyRegexNameChain -NoDefaultHighlighting
+				    $docView.Show()
+                } else {
+                    Write-PipLog 'Nothing found.'
+                }
             };
         };
 	)
