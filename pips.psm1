@@ -1051,7 +1051,7 @@ Function Generate-FormInstall {
                 }
             } else {
         		$response = ([System.Windows.Forms.MessageBox]::Show(
-        			"Search for similar package names?`n`nShould take ~30 sec.",
+        			"Search for similar package names?`n`nShould take around 15 sec.",
         			"Fuzzy name search", [System.Windows.Forms.MessageBoxButtons]::YesNo))
                 if ($response -ne 'Yes') {
                     return
@@ -1237,17 +1237,17 @@ Function global:Open-LinkInBrowser($url) {
 }
 
 $Global:jobCounter = 0
-#$Global:jobTimer = New-Object System.Windows.Forms.Timer
-#$Global:jobTimer.Interval = 250
-#$Global:jobTimer.add_Tick({ $null | Out-Null })  # this hack forces processing of two different event loops: window & PS object events
+$Global:jobTimer = New-Object System.Windows.Forms.Timer
+$Global:jobTimer.Interval = 250
+$Global:jobTimer.add_Tick({ $null | Out-Null })  # this hack forces processing of two different event loops: window & PS object events
 [int] $Global:jobSemaphore = 0
 Function Run-SubProcessWithCallback($code, $callback, $params) {
     $Global:jobCounter++
     $n = $Global:jobCounter
 
     if ($Global:jobSemaphore -eq 0) {
-        #$Global:jobTimer.Start()
-        #Write-Host 'run timer'
+        $Global:jobTimer.Start()
+        # Write-Host 'run timer'
         }
     $Global:jobSemaphore++;
     
@@ -1275,10 +1275,10 @@ Function Run-SubProcessWithCallback($code, $callback, $params) {
                 
                 $Global:jobSemaphore--;
                 if ($Global:jobSemaphore -eq 0) {                    
-                    #$Global:jobTimer.Stop()
-                    #Write-Host 'stop timer'
+                    $Global:jobTimer.Stop()
+                    # Write-Host 'stop timer'
                 }
-                #Write-Host "*** Cleaned up $n sem=$Global:jobSemaphore"
+                # Write-Host "*** Cleaned up $n sem=$Global:jobSemaphore"
             }           
         }
 }
@@ -2661,12 +2661,12 @@ $Global:FuncCalculateLevenshteinDistance = {
 	for ( ; $j -le $len2; $j++) {
 		$v[0, $j] = $j
 	}
-
-	for ($i = 1; $i -le $len1; $i++) {
-        [int] $im1 = $i - 1
-		for ($j = 1; $j -le $len2; $j++) {
-            [int] $jm1 = $j - 1
-            
+    
+    [int] $im1 = 0
+	for ($i = 1; $i -le $len1; $i++, $im1++) {
+        [int] $rowMin = $i
+        [int] $jm1 = 0
+		for ($j = 1; $j -le $len2; $j++, $jm1++) {           
             [char] $c1m1 = $word1[$im1]
             [char] $c1m2 = $word1[$i - 2]
             [char] $c2m1 = $word2[$jm1]
@@ -2682,16 +2682,22 @@ $Global:FuncCalculateLevenshteinDistance = {
             [int] $v2 = $v[$i, ($jm1)] + 1  # insertion
             [int] $v3 = $v[($im1), ($jm1)] + $cost  # subtraction
             
-			$v[$i, $j] = [Math]::Min([Math]::Min($v1, $v2), $v3)             
+			[int] $v_ij = [Math]::Min([Math]::Min($v1, $v2), $v3)             
             
             if (($i -gt 1) -and ($j -gt 1) -and (
                 ($c1m1 -ceq $c2m2) -and ($c1m2 -ceq $c2m1)
             )) {
-                [int] $v4 = $v[$i, $j]
+                [int] $v4 = $v_ij
                 [int] $v5 = $v[($i - 2), ($j - 2)] + $cost
-                $v[$i, $j] = [Math]::Min($v4, $v5)  # transposition
+                $v_ij = [Math]::Min($v4, $v5)  # transposition
             }
+            
+            $rowMin = [Math]::Min($rowMin, $v_ij)
+            $v[$i, $j] = $v_ij
 		}
+        if ($rowMin -gt 2) {
+            return 3
+        }
     }
 
 	return $v[$len1, $len2]
@@ -2701,7 +2707,7 @@ Function global:Get-TypoErrorCandidates([string] $text, [int] $threshold = 2) {
 	$candidates = New-Object System.Collections.ArrayList
     $text = $text.ToLower()
     $textLength = $text.Length
-    # $stopWatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $stopWatch = [System.Diagnostics.Stopwatch]::StartNew()
     # $dbg_n = 0
     foreach ($n in ($textLength - $threshold)..($textLength + $threshold)) {
         $items = $Global:TypoErrorTable[$n]
@@ -2719,7 +2725,9 @@ Function global:Get-TypoErrorCandidates([string] $text, [int] $threshold = 2) {
             }
         }
     }
-    # Write-PipLog $stopWatch.Elapsed.TotalMilliseconds
+    $stopWatch.Stop()
+    Write-PipLog "Search finished in $($stopWatch.Elapsed.TotalSeconds.ToString(".00")) sec."
+    
 	return ,($candidates | Sort-Object -Property Distance -Descending | ForEach-Object { $_.Text })
 }
 
