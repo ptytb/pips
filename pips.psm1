@@ -1286,12 +1286,21 @@ Function Run-SubProcessWithCallback($code, $callback, $params) {
 $Global:PyPiPackageJsonCache = New-Object 'System.Collections.Generic.Dictionary[string,PSCustomObject]'
 
 Function global:Format-PythonPackageToolTip($info) {
+    $name = "$($info.info.name)`n`n"
     $tt = "Summary: $($info.info.summary)`nAuthor: $($info.info.author)`nRelease: $($info.info.version)`n"
 	$ti = "License: $($info.info.license)`nHome Page: $($info.info.home_page)`n"
-    $lr = ($info.releases."$($info.info.version)")[0]
-    $tr = "Release Uploaded $($lr.upload_time)"
-    $tags = "`n`n$($info.info.classifiers -join "`n")"
-    return "${tt}${ti}${tr}${tags}"
+    $lr = ($info.releases."$($info.info.version)")[0]  # The latest release
+    
+    $downloadStats = $info.releases |
+        ForEach-Object { $_.PSObject.Properties.Value.downloads } |
+        Measure-Object -Sum
+    
+    $tr = "Release Uploaded: $($lr.upload_time -replace 'T',' ')`n"
+    $stats_rd = "Release Downloads: $($lr.downloads)`n"
+    $stats_td = "Total Downloads: $($downloadStats.Sum.ToString("#,##0"))`n"     
+    $stats_tr = "Total Releases: $($downloadStats.Count)`n"     
+    $tags = "`n$($info.info.classifiers -join "`n")"
+    return "${name}${tt}${ti}${tr}${stats_rd}${stats_td}${stats_tr}${tags}"
 }
 
 Function global:Download-PythonPackageDetails ($packageName) {
@@ -1304,6 +1313,7 @@ Function global:Download-PythonPackageDetails ($packageName) {
 }
 
 Function global:Update-PythonPackageDetails {
+    $_ = $args[0]
     $viewRow = $dataGridView.Rows[$_.RowIndex]
     $rowItem = $viewRow.DataBoundItem
     $cells = $dataGridView.Rows[$_.RowIndex].Cells
@@ -1327,9 +1337,6 @@ Function global:Update-PythonPackageDetails {
     $cells['Status'].Value = 'Fetching...'
     $dataModel.Columns['Status'].ReadOnly = $true
     $viewRow.DefaultCellStyle.BackColor = [Drawing.Color]::Gray
-
-    $Global:dataModel = $dataModel
-    $Global:dataGridView = $dataGridView
 
     Run-SubProcessWithCallback ({
         # Worker: Separate process
@@ -1670,7 +1677,7 @@ Function Generate-Form {
 
     $null = Add-Label "Filter results:"
     
-    $Script:inputFilter = Add-Input {  # TextChanged Handler here
+    $inputFilter = Add-Input {  # TextChanged Handler here
         param($input)
         
         if ($Script:dataGridView.CurrentRow) {
@@ -1723,11 +1730,7 @@ Function Generate-Form {
 
         Highlight-PythonPackages
     }
-    $inputFilter.Add_KeyDown({
-            if ($_.KeyCode -eq 'Escape') {
-                $inputFilter.Text = [String]::Empty
-            }
-        })
+    $Script:inputFilter = $inputFilter
     $toolTipFilter = New-Object System.Windows.Forms.ToolTip
     $toolTipFilter.SetToolTip($inputFilter, "Esc to clear")
 
@@ -1775,20 +1778,56 @@ Function Generate-Form {
 	
     $dataGridView = New-Object System.Windows.Forms.DataGridView
     $Script:dataGridView = $dataGridView
+    $Global:dataGridView = $dataGridView
+
     $dataGridView.Location = New-Object Drawing.Point 7,($Script:lastWidgetTop + $Script:widgetLineHeight)
     $dataGridView.Size = New-Object Drawing.Point 800,450
-    $dataGridView.ShowCellToolTips = $true
+    $dataGridView.ShowCellToolTips = $false
     $dataGridView.Add_Sorted({ Highlight-PythonPackages })
+    
+    $dataGridToolTip = New-Object System.Windows.Forms.ToolTip
+    
     $dataGridView.Add_CellMouseEnter({
-            if (($_.RowIndex -gt -1)) {
-                Update-PythonPackageDetails
+        if (($_.RowIndex -gt -1)) {
+            Update-PythonPackageDetails $_
+            $text = $dataGridView.Rows[$_.RowIndex].Cells['Package'].ToolTipText
+            $dataGridToolTip.RemoveAll()
+            if (-not [string]::IsNullOrEmpty($text)) {
+                $dataGridToolTip.InitialDelay = 50
+                $dataGridToolTip.ReshowDelay = 10
+                $dataGridToolTip.AutoPopDelay = [Int16]::MaxValue
+                $dataGridToolTip.ShowAlways = $true
+                $dataGridToolTip.SetToolTip($dataGridView, $text)
             }
-        })
+        }
+    }.GetNewClosure())
+    $form.add_KeyDown({
+        if ($_.KeyCode -eq 'Escape') {
+            $dataGridToolTip.Hide($dataGridView)
+            $dataGridToolTip.InitialDelay = [Int16]::MaxValue
+            
+            if ($inputFilter.Focused) {
+                if ([string]::IsNullOrEmpty($inputFilter.Text)) {
+                    $dataGridView.Focus()                     
+                } else {
+                    $inputFilter.Text = [String]::Empty                     
+                }
+            } else {
+                $inputFilter.Focus()
+            }
+        }
+        if ($_.KeyCode -eq 'Return') {
+            if ($inputFilter.Focused) {
+                $dataGridView.Focus()
+            }
+        }
+    }.GetNewClosure())
     Init-PackageGridViewProperties
     
     $dataModel = New-Object System.Data.DataTable
     $dataGridView.DataSource = $dataModel    
     $Script:dataModel = $dataModel
+    $Global:dataModel = $dataModel
     Init-PackageUpdateColumns $dataModel
 
     $form.Controls.Add($dataGridView)
@@ -1844,7 +1883,7 @@ Function Generate-Form {
     & $FuncResizeForm
     $form.Add_Resize({ & $FuncResizeForm }.GetNewClosure())
     $form.Add_Shown({
-        Write-PipLog 'Hold Shift and hover the rows to fetch detailed info, then hover the Package column'
+        Write-PipLog 'Hold Shift and hover the rows to fetch the detailed info'
         $form.BringToFront()
         })
     return ,$form
@@ -2423,11 +2462,13 @@ Function Clear-Rows() {
 }
 
 function Set-SelectedNRow($n) {
+	if ($n -ge $dataGridView.RowCount -or $n -lt 0) {
+        return
+    }
 	$dataGridView.ClearSelection()
 	$dataGridView.FirstDisplayedScrollingRowIndex = $n
-	if ($n -lt $dataGridView.RowCount) {
-        $dataGridView.Rows[$n].Selected = $true
-    }
+    $dataGridView.Rows[$n].Selected = $true
+    $dataGridView.CurrentCell = $dataGridView[0, $n]
 }
 
 Function Set-SelectedRow($selectedRow) {
@@ -2436,6 +2477,7 @@ Function Set-SelectedRow($selectedRow) {
         if ($vRow.DataBoundItem.Row -eq $selectedRow) {
             $vRow.Selected = $true
             $dataGridView.FirstDisplayedScrollingRowIndex = $vRow.Index
+            $dataGridView.CurrentCell = $dataGridView[0, $vRow.Index]
             break
         }
 	}
@@ -2485,6 +2527,9 @@ Function global:Execute-PipAction {
 	
     for ($i = 0; $i -lt $dataModel.Rows.Count; $i++) {
        if ($dataModel.Rows[$i].Select -eq $true) {
+            Set-SelectedRow $dataModel.Rows[$i]
+            [System.Windows.Forms.Application]::DoEvents()
+            
             $package = $dataModel.Rows[$i]
             
             if (-not $action.TakesList) {
@@ -2510,7 +2555,6 @@ Function global:Execute-PipAction {
 					$tasksFailed++
                 }
                 $dataModel.Columns['Status'].ReadOnly = $true
-                Set-SelectedRow $dataModel.Rows[$i]
             } else {
 				$null = $checkedList.Add($package)
 			}
