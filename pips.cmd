@@ -3,7 +3,11 @@
 rem Minimize console window
 if not DEFINED IS_MINIMIZED set IS_MINIMIZED=1 && start "" /min "%~dpnx0" %* && exit
 
-rem .ps1 does not belong to PATHEXT by default
-powershell -Sta -NonInteractive -NoLogo -Command "using module .\pips.psd1; Start-Main -HideConsole"
+rem Set-Execution policy is required, otherwise won't be able to run any scripts at all.
+rem Get-Help about_Execution_Policies
+powershell -Sta -NonInteractive -NoLogo -Command "Set-ExecutionPolicy -Scope Process Bypass; Import-Module .\pips; Start-Main -HideConsole"
+
+rem Uncomment when debugging to see error messages
+rem pause
 
 exit
