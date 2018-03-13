@@ -1,4 +1,6 @@
 # pips
+
+
 **pips** is a GUI for pip and conda - Python package manager, written in PowerShell.
 
 This script helps to keep packages updated.
@@ -7,6 +9,7 @@ This script helps to keep packages updated.
 1. Hit Check for Updates
 2. Choose packages
 3. Select *Update* action and hit Execute
+
 
 ## features
 
@@ -50,3 +53,10 @@ This script helps to keep packages updated.
 - [ ] *conda* command has a nice options to work with but gives wierd output - suggests older package versions than installed. Needed intervention with channels?
 - [ ] conda activate & conda env creation
 - [ ] Provide conda patcher (conda from PyPI is deliberately broken by devs by means of changing entrypoints to "warning stub"). Conda is under *BSD 3-Clause License* -> sounds legit.
+
+
+## trademarks
+
+
+The Python logo used in this program is a trademark of [The Python Software Foundation](https://www.python.org/psf/trademarks/).
+This program is written in the PowerShell programming language and has a few pieces of inline Python code, and relies on external Python executables.
