@@ -7,6 +7,10 @@ rem Set-Execution policy is required, otherwise won't be able to run any scripts
 rem Get-Help about_Execution_Policies
 powershell -Sta -NonInteractive -NoLogo -Command "Set-ExecutionPolicy -Scope Process Bypass; Import-Module .\pips; Start-Main -HideConsole"
 
+if %errorlevel% neq 0 (
+	pause
+)
+
 rem Uncomment when debugging to see error messages
 rem pause
 

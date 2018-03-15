@@ -873,7 +873,7 @@ Function Generate-FormInstall {
 				if ($text.Contains('==')) {  # completion for pip package version
 					$packageName = $text -replace '==.*',''
 					
-					if (-not $Global:PyPiPackageJsonCache.Contains($packageName)) {
+					if (-not $Global:PyPiPackageJsonCache.ContainsKey($packageName)) {
 						Download-PythonPackageDetails $packageName
 	                }
 					
