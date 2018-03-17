@@ -27,6 +27,21 @@ This script helps to keep packages updated.
 ![](screenshot.png)
 
 
+## shortcuts
+
+
+| Keys                             | Action                                                   |
+| -------------------------------- | -------------------------------------------------------- |
+| Enter or Space                   | Toggle package selection                                 |
+| Shift+Enter (on package table)   | Execute action for selected packages                     |
+| Shift+Enter (install window)     | Fuzzy name search                                        |
+| Ctrl+Enter or Double click       | Open package home page in browser                        |
+| Escape                           | Clear filter, or Switch between filter and package table |
+| Shift+Mouse Hover                | Fetch package details for a tooltip                      |
+| Ctrl-C (on interpreter combobox) | Copy full python executable path                         |
+| Delete (on interpreter combobox) | Remove virtual env entry added by user                   | 
+
+
 ## todo
 
 

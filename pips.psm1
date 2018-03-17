@@ -32,7 +32,7 @@ Function global:Get-Bin($command, $all = $false) {
     return $found
 }
 
-Function Get-CurrentInterpreter($item) {
+Function global:Get-CurrentInterpreter($item) {
 	return $Script:interpretersComboBox.SelectedItem."$item"
 }
 
@@ -665,6 +665,7 @@ Function Add-ComboBoxInterpreters {
     $interpretersComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
     $Script:interpretersComboBox = $interpretersComboBox
     Add-TopWidget $interpretersComboBox 4
+    return $interpretersComboBox
 }
 
 Function Add-CheckBox($text, $code) {
@@ -1642,6 +1643,11 @@ Function Generate-Form {
 				$_.Handled = $true
                 return
             }
+            if ($_.KeyCode -eq 'Return' -and $_.Shift) {
+                Execute-PipAction
+				$_.Handled = $true
+                return
+            }
             if ($_.KeyCode -in @('Space', 'Return')) {
                 $oldSelect = $dataGridView.CurrentRow.DataBoundItem.Row.Select
                 $dataGridView.CurrentRow.DataBoundItem.Row.Select = -not $oldSelect
@@ -1653,14 +1659,6 @@ Function Generate-Form {
     $null = Add-Buttons
 
 	Add-ComboBoxActions	
-	$form.add_KeyDown({
-		$comboActive = $form.ActiveControl -is [System.Windows.Forms.ComboBox]
-		if (($_.KeyCode -eq 'C') -and ($_.Control) -and $comboActive) {
-			$python_exe = Get-PythonExe
-			Set-Clipboard $python_exe
-			Write-PipLog "Copied to clipboard: $python_exe"
-		}
-	})
 
     $group = New-Object System.Windows.Forms.Panel
     $group.Location = New-Object System.Drawing.Point 502,2
@@ -1758,7 +1756,7 @@ Function Generate-Form {
     $toolTipInterp = New-Object System.Windows.Forms.ToolTip
     $toolTipInterp.SetToolTip($labelInterp, "Ctrl+C to copy selected path")
 
-    $null = Add-ComboBoxInterpreters
+    $interpretersComboBox = Add-ComboBoxInterpreters
     $null = Add-Button "env: Open..." {
         $path = Request-FolderPathFromUser ("Choose a folder with python environment, created by either Virtualenv or pipenv`n`n" +
 			"Typically it contains dirs: Include, Lib, Scripts")
@@ -1778,6 +1776,56 @@ Function Generate-Form {
 	
 	Add-CreateEnvButtonMenu
 	Add-EnvToolButtonMenu
+    
+    $interpreters = $Script:interpreters
+    $trackDuplicateInterpreters = $Script:trackDuplicateInterpreters
+	$form.add_KeyDown({
+	    if ($Script:interpretersComboBox.Focused) {
+			if (($_.KeyCode -eq 'C') -and $_.Control) {
+				$python_exe = Get-PythonExe
+				Set-Clipboard $python_exe
+				Write-PipLog "Copied to clipboard: $python_exe"
+			}
+			if ($_.KeyCode -eq 'Delete') {
+                if (-not (Get-CurrentInterpreter 'User')) {
+                    Write-PipLog 'Can only delete venv which was added manually with env:Open or env:Create.'
+                    return
+                }
+                
+                $path = Get-CurrentInterpreter 'Path'
+                $failedToRemove = $false
+                
+                $response = ([System.Windows.Forms.MessageBox]::Show(
+        			"Remove venv path completely?`n`n${path}`n`n" +
+                    "Yes = Remove directory`nNo = Keep directory, forget entry`nCancel = Do nothing",
+        			"Removing venv", [System.Windows.Forms.MessageBoxButtons]::YesNoCancel))
+                    
+                if ($response -eq 'Yes') {
+                    $stats = Get-ChildItem -Recurse -Path $path | Measure-Object
+                    try {
+                        Remove-Item -Path $path -Recurse -Force 
+                    } catch { }
+                    if (Exists-Directory $path) {
+                        Write-PipLog "Cannot delete '$path'"
+                        $failedToRemove = $true
+                    } else {
+                        Write-PipLog "Removed $($stats.Count) items."
+                    }
+                }
+                
+                if ((($response -eq 'No') -or ($response -eq 'Yes')) -and -not $failedToRemove) {
+                    $interpreters.Remove($interpretersComboBox.SelectedItem)                    
+                    $Script:trackDuplicateInterpreters.Remove($path)
+                    $interpretersComboBox.DataSource = $null
+                    $interpretersComboBox.DataSource = $interpreters                     
+                    Write-PipLog "Removed venv '${path}' from list."
+                    
+                    $interpretersComboBox.SelectedIndex = 0
+                    Write-PipLog "Switching to '$(Get-CurrentInterpreter 'Path')'"
+                }
+			}
+		}
+	}.GetNewClosure())
 	
     $dataGridView = New-Object System.Windows.Forms.DataGridView
     $Script:dataGridView = $dataGridView
