@@ -36,46 +36,6 @@ Function global:Get-CurrentInterpreter($item) {
 	return $Script:interpretersComboBox.SelectedItem."$item"
 }
 
-Function Get-PythonPath() {
-    $Script:interpretersComboBox.SelectedItem.Path
-}
-
-Function Get-PythonArchitecture() {
-    $Script:interpretersComboBox.SelectedItem.Arch
-}
-
-Function Get-PythonExe() {
-    $Script:interpretersComboBox.SelectedItem.PythonExe
-}
-
-Function Get-PipExe() {
-    $Script:interpretersComboBox.SelectedItem.PipExe
-}
-
-Function Get-CondaExe() {
-    $Script:interpretersComboBox.SelectedItem.CondaExe
-}
-
-Function Get-VirtualenvExe() {
-    $Script:interpretersComboBox.SelectedItem.VirtualenvExe
-}
-
-Function Get-VenvActivate() {
-    $Script:interpretersComboBox.SelectedItem.VenvActivate
-}
-
-Function Get-PipenvExe() {
-    $Script:interpretersComboBox.SelectedItem.PipenvExe
-}
-
-Function Get-Pipfile() {
-    $Script:interpretersComboBox.SelectedItem.Pipfile
-}
-
-Function Get-PythonVersion() {
-    $Script:interpretersComboBox.SelectedItem.Version
-}
-
 Function Exists-File($path) {
     return [System.IO.File]::Exists($path)
 }
@@ -327,17 +287,17 @@ Function Add-Buttons {
 
 Function global:Get-PyDoc($request) {
 	$requestNormalized = $request -replace '-','_'
-    $output = & (Get-PythonExe) -m pydoc $requestNormalized
+    $output = & (Get-CurrentInterpreter 'PythonExe') -m pydoc $requestNormalized
 
 	if ("$output".StartsWith('No Python documentation found')) {
-		$output = & (Get-PythonExe) -m pydoc ($requestNormalized).ToLower()
+		$output = & (Get-CurrentInterpreter 'PythonExe') -m pydoc ($requestNormalized).ToLower()
 	}
     return $output
 }
 
 Function Get-PythonBuiltinPackages() {
     $builtinLibs = New-Object System.Collections.ArrayList
-    $path = Get-PythonPath
+    $path = Get-CurrentInterpreter 'Path'
     $libs = "${path}\Lib"
     $ignore = [regex] '^__'
     $filter = [regex] '\.py.?$'
@@ -358,7 +318,7 @@ Function Get-PythonBuiltinPackages() {
     }
 
     $getBuiltinsScript = "import sys; print(','.join(sys.builtin_module_names))"
-    $sys_builtin_module_names = & (Get-PythonExe) -c $getBuiltinsScript
+    $sys_builtin_module_names = & (Get-CurrentInterpreter 'PythonExe') -c $getBuiltinsScript
     $modules = $sys_builtin_module_names.Split(',')
     foreach ($builtinModule in $modules) {
         if ($trackDuplicates.Contains("$builtinModule")) {
@@ -372,7 +332,7 @@ Function Get-PythonBuiltinPackages() {
 
 Function Get-PythonOtherPackages {
     $otherLibs = New-Object System.Collections.ArrayList
-    $path = Get-PythonPath
+    $path = Get-CurrentInterpreter 'Path'
     $libs = "${path}\Lib\site-packages"
     $ignore = [regex] '\.dist-info$|\.egg-info$|\.egg$|^__pycache__$'
     $filter = [regex] '\.py.?$'
@@ -404,7 +364,7 @@ Function Get-PythonOtherPackages {
 
 Function Get-CondaPackages() {
     $condaPackages = New-Object System.Collections.ArrayList
-    $conda_exe = Get-CondaExe
+    $conda_exe = Get-CurrentInterpreter 'CondaExe'
 
     if ($conda_exe) {
         $arguments =New-Object System.Collections.ArrayList
@@ -431,26 +391,26 @@ Function Get-CondaPackages() {
 
 $actionCommands = @{
     pip=@{
-        info          = { return (& (Get-PipExe) show              $args 2>&1) };
+        info          = { return (& (Get-CurrentInterpreter 'PipExe') show              $args 2>&1) };
         documentation = { $null = (Show-DocView $pkg).Show(); return ''    };
-        files         = { return (& (Get-PipExe) show    --files   $args 2>&1) };
-        update        = { return (& (Get-PipExe) install -U        $args 2>&1) };
-        install       = { return (& (Get-PipExe) install           $args 2>&1) };
+        files         = { return (& (Get-CurrentInterpreter 'PipExe') show    --files   $args 2>&1) };
+        update        = { return (& (Get-CurrentInterpreter 'PipExe') install -U        $args 2>&1) };
+        install       = { return (& (Get-CurrentInterpreter 'PipExe') install           $args 2>&1) };
         install_dry   = { return 'Not supported on pip'                        };
-        install_nodep = { return (& (Get-PipExe) install --no-deps $args 2>&1) };
-        download      = { return (& (Get-PipExe) download          $args 2>&1) };
-        uninstall     = { return (& (Get-PipExe) uninstall --yes   $args 2>&1) };
+        install_nodep = { return (& (Get-CurrentInterpreter 'PipExe') install --no-deps $args 2>&1) };
+        download      = { return (& (Get-CurrentInterpreter 'PipExe') download          $args 2>&1) };
+        uninstall     = { return (& (Get-CurrentInterpreter 'PipExe') uninstall --yes   $args 2>&1) };
     };
     conda=@{
-        info          = { return (& (Get-CondaExe) list      -v --json                     $args 2>&1) };        
+        info          = { return (& (Get-CurrentInterpreter 'CondaExe') list      -v --json                     $args 2>&1) };        
         documentation = { return ''                                                                    };
         files         = { return ''                                                                    };
-        update        = { return (& (Get-CondaExe) update  --yes                           $args 2>&1) };
-        install       = { return (& (Get-CondaExe) install --yes --no-shortcuts            $args 2>&1) };
-        install_dry   = { return (& (Get-CondaExe) install --dry-run                       $args 2>&1) };
-        install_nodep = { return (& (Get-CondaExe) install --yes --no-shortcuts --no-deps  $args 2>&1) };
+        update        = { return (& (Get-CurrentInterpreter 'CondaExe') update  --yes                           $args 2>&1) };
+        install       = { return (& (Get-CurrentInterpreter 'CondaExe') install --yes --no-shortcuts            $args 2>&1) };
+        install_dry   = { return (& (Get-CurrentInterpreter 'CondaExe') install --dry-run                       $args 2>&1) };
+        install_nodep = { return (& (Get-CurrentInterpreter 'CondaExe') install --yes --no-shortcuts --no-deps  $args 2>&1) };
         download      = { return ''                                                                    };
-        uninstall     = { return (& (Get-CondaExe) uninstall --yes                         $args 2>&1) };
+        uninstall     = { return (& (Get-CurrentInterpreter 'CondaExe') uninstall --yes                         $args 2>&1) };
     };
 }
 $actionCommands.wheel   = $actionCommands.pip
@@ -1402,10 +1362,10 @@ Function Add-CreateEnvButtonMenu {
 			MenuText = 'with virtualenv';
 			Code = {
 				param($path)
-				$output = & (Get-VirtualenvExe) --python="$(Get-PythonExe)" $path 2>&1				
+				$output = & (Get-CurrentInterpreter 'VirtualenvExe') --python="$(Get-CurrentInterpreter 'PythonExe')" $path 2>&1				
 				return $output
 			};
-			IsAccessible = { [bool] (Get-VirtualenvExe) };
+			IsAccessible = { [bool] (Get-CurrentInterpreter 'VirtualenvExe') };
 		};
 		@{
 			MenuText = 'with pipenv';
@@ -1413,10 +1373,10 @@ Function Add-CreateEnvButtonMenu {
 				param($path)
 				$env:PIPENV_VENV_IN_PROJECT = 1
 				Set-Location -Path $path
-				$output = & (Get-PipenvExe) --python "$(Get-PythonVersion)" install 2>&1
+				$output = & (Get-CurrentInterpreter 'PipenvExe') --python "$(Get-CurrentInterpreter 'Version')" install 2>&1
 				return $output
 			};
-			IsAccessible = { [bool] (Get-PipenvExe) };
+			IsAccessible = { [bool] (Get-CurrentInterpreter 'PipenvExe') };
 		};
 		@{
 			Persistent = $true;
@@ -1431,7 +1391,7 @@ Function Add-CreateEnvButtonMenu {
 		Set-ActiveInterpreterWithPath $path
 		
 		$ruleName = "pip env $path"
-		$pythonExe = (Get-PythonExe)
+		$pythonExe = (Get-CurrentInterpreter 'PythonExe')
 		$firewallUserResponse = ([System.Windows.Forms.MessageBox]::Show(
 			"Create a firewall rule for the new environment?`n`nRule name: '$ruleName'`nPath: '$pythonExe'`nAllow outgoing connections`n`n" +
 			"You can edit the rule by running wf.msc",
@@ -1456,7 +1416,7 @@ Function Add-CreateEnvButtonMenu {
 	}
 	
 	$FuncGetPythonInfo = {
-		return (Get-PythonVersion)
+		return (Get-CurrentInterpreter 'Version')
 	}
 
 	$menuclick = {
@@ -1480,22 +1440,22 @@ Function Add-EnvToolButtonMenu {
 		@{
 			Persistent = $true;
 			MenuText = 'Python REPL';
-			Code = { Start-Process -FilePath (Get-PythonExe) -WorkingDirectory (Get-PythonPath) };
+			Code = { Start-Process -FilePath (Get-CurrentInterpreter 'PythonExe') -WorkingDirectory (Get-CurrentInterpreter 'Path') };
 		};
 		@{
 			MenuText = 'Shell with Virtualenv Activated';
-			Code = { Start-Process -FilePath cmd.exe -WorkingDirectory (Get-PythonPath) -ArgumentList "/K $(Get-VenvActivate)" };
-			IsAccessible = { (Get-VenvActivate) };
+			Code = { Start-Process -FilePath cmd.exe -WorkingDirectory (Get-CurrentInterpreter 'Path') -ArgumentList "/K $(Get-CurrentInterpreter 'VenvActivate')" };
+			IsAccessible = { (Get-CurrentInterpreter 'VenvActivate') };
 		};
 		@{
 			Persistent = $true;
 			MenuText = 'Open IDLE'
-			Code = { Start-Process -FilePath (Get-PythonExe) -WorkingDirectory (Get-PythonPath) -ArgumentList '-m idlelib.idle' -WindowStyle Hidden };
+			Code = { Start-Process -FilePath (Get-CurrentInterpreter 'PythonExe') -WorkingDirectory (Get-CurrentInterpreter 'Path') -ArgumentList '-m idlelib.idle' -WindowStyle Hidden };
 		};
 		@{
 			MenuText = 'pipenv shell'
-			Code = { Start-Process -FilePath (Get-Bin 'pipenv.exe') -WorkingDirectory (Get-PythonPath) -ArgumentList 'shell' };
-			IsAccessible = { [bool] (Get-Bin 'pipenv.exe') -and [bool] (Get-Pipfile) };
+			Code = { Start-Process -FilePath (Get-Bin 'pipenv.exe') -WorkingDirectory (Get-CurrentInterpreter 'Path') -ArgumentList 'shell' };
+			IsAccessible = { [bool] (Get-Bin 'pipenv.exe') -and [bool] (Get-CurrentInterpreter 'Pipfile') };
 		};
 	)
 	
@@ -1508,7 +1468,7 @@ Function Add-EnvToolButtonMenu {
 }
 
 Function global:Get-PyDocTopics() {
-    $pythonExe = Get-PythonExe
+    $pythonExe = Get-CurrentInterpreter 'PythonExe'
     if ([string]::IsNullOrEmpty($pythonExe)) {
         Write-PipLog 'No python executable found.'
         return
@@ -1523,7 +1483,7 @@ Function global:Get-PyDocTopics() {
 }
 
 Function global:Get-PyDocApropos($request) {
-    $pythonExe = Get-PythonExe
+    $pythonExe = Get-CurrentInterpreter 'PythonExe'
     if ([string]::IsNullOrEmpty($pythonExe)) {
         Write-PipLog 'No python executable found.'
         return
@@ -1782,7 +1742,7 @@ Function Generate-Form {
 	$form.add_KeyDown({
 	    if ($Script:interpretersComboBox.Focused) {
 			if (($_.KeyCode -eq 'C') -and $_.Control) {
-				$python_exe = Get-PythonExe
+				$python_exe = Get-CurrentInterpreter 'PythonExe'
 				Set-Clipboard $python_exe
 				Write-PipLog "Copied to clipboard: $python_exe"
 			}
@@ -2220,7 +2180,7 @@ Function Store-CheckedPipSearchResults() {
 }
 
 Function Get-PipSearchResults($request) {
-    $pip_exe = Get-PipExe
+    $pip_exe = Get-CurrentInterpreter 'PipExe'
     if (!$pip_exe) {
         Write-PipLog 'pip is not found!'
         return 0
@@ -2254,12 +2214,12 @@ Function Get-PipSearchResults($request) {
 }
 
 Function Get-CondaSearchResults($request) {
-    $conda_exe = Get-CondaExe
+    $conda_exe = Get-CurrentInterpreter 'CondaExe'
     if (! $conda_exe) {
         Write-PipLog 'conda is not found!'
         return 0
     }
-    $arch = Get-PythonArchitecture
+    $arch = Get-CurrentInterpreter 'Arch'
 
     # --info should give better details but not supported on every conda
     $items = & $conda_exe search --json $request | ConvertFrom-Json
@@ -2359,9 +2319,9 @@ Function Get-SearchResults($request) {
     Write-PipLog
     Write-PipLog 'Updating package list... '
     
-    $python_exe = Get-PythonExe
-    $pip_exe = Get-PipExe
-    $conda_exe = Get-CondaExe
+    $python_exe = Get-CurrentInterpreter 'PythonExe'
+    $pip_exe = Get-CurrentInterpreter 'PipExe'
+    $conda_exe = Get-CurrentInterpreter 'CondaExe'
     
     if ($python_exe) {
         Write-PipLog (& $python_exe --version 2>&1)
@@ -2537,7 +2497,7 @@ Function Set-SelectedRow($selectedRow) {
 Function Check-PipDependencies {
     Write-PipLog 'Checking dependencies...'
 
-    $pip_exe = Get-PipExe
+    $pip_exe = Get-CurrentInterpreter 'PipExe'
     if (!$pip_exe) {
         Write-PipLog 'pip is not found!'
         return
