@@ -30,16 +30,19 @@ This script helps to keep packages updated.
 ## shortcuts
 
 
-| Keys                             | Action                                                   |
-| -------------------------------- | -------------------------------------------------------- |
-| Enter or Space                   | Toggle package selection                                 |
-| Shift+Enter (on package table)   | Execute action for selected packages                     |
-| Shift+Enter (install window)     | Fuzzy name search                                        |
-| Ctrl+Enter or Double click       | Open package home page in browser                        |
-| Escape                           | Clear filter, or Switch between filter and package table |
-| Shift+Mouse Hover                | Fetch package details for a tooltip                      |
-| Ctrl-C (on interpreter combobox) | Copy full python executable path                         |
-| Delete (on interpreter combobox) | Remove virtual env entry added by user                   | 
+| Keys                             | Action                                                                     |
+| -------------------------------- | -------------------------------------------------------------------------- |
+| Enter or Space                   | Toggle package selection                                                   |
+| F1 .. F12                        | Choose a current action, in the same order it appears in the dropdown list |
+| Shift+Enter (on package table)   | Execute action for selected packages                                       |
+| Shift+Enter (install window)     | Fuzzy name search                                                          |
+| Ctrl+Enter or Double click       | Open package home page in browser                                          |
+| Escape                           | Clear filter, or Switch between filter and package table                   |
+| Enter (on Filter)                | Focus on packages editable                                                 | 
+| Shift+Mouse Hover                | Fetch package details for a tooltip                                        |
+| Ctrl-C (on interpreter combobox) | Copy full python executable path                                           |
+| Delete (on interpreter combobox) | Remove virtual env entry added by user, with confirmation                  |
+| / (in PyDoc browser)             | Toggle search                                                              |
 
 
 ## todo

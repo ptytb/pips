@@ -429,9 +429,11 @@ Function Copy-AsRequirementsTxt($list) {
 }
 
 Function Add-ComboBoxActions {
+    $actionItemCount = 0
+    
     Function Make-PipActionItem($name, $code, $validator, $takesList = $false) {
         $action = New-Object psobject -Property @{Name=$name; TakesList=$takesList;}
-        $action | Add-Member ScriptMethod ToString { $this.Name } -Force
+        $action | Add-Member ScriptMethod ToString { $this.Name + ' [F' + ++$Script:actionItemCount + ']' } -Force
 		$action | Add-Member ScriptMethod Execute  $code
 		$action | Add-Member ScriptMethod Validate $validator
         return $action
@@ -507,6 +509,8 @@ Function Add-ComboBoxActions {
     $actionListComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
     $Script:actionListComboBox = $actionListComboBox
     Add-TopWidget($actionListComboBox)    
+    
+    return $actionListComboBox
 }
 
 
@@ -1586,39 +1590,10 @@ Function Generate-Form {
 	$form.KeyPreview = $true
     $form.Icon = Convert-Base64ToICO $iconBase64_Snakes
 	$Script:form = $form
-    
-	$form.add_KeyDown({
-		$gridViewActive = $form.ActiveControl -is [System.Windows.Forms.DataGridView]
-		if ($dataGridView.Focused -and $dataGridView.RowCount -gt 0) {			
-			if ($_.KeyCode -eq 'Home') {
-				Set-SelectedNRow 0
-				$_.Handled = $true
-			}
-			if ($_.KeyCode -eq 'End') {
-				Set-SelectedNRow ($dataGridView.RowCount - 1)
-				$_.Handled = $true
-			}
-            if ($_.KeyCode -eq 'Return' -and $_.Control) {
-                Show-CurrentPackageInBrowser
-				$_.Handled = $true
-                return
-            }
-            if ($_.KeyCode -eq 'Return' -and $_.Shift) {
-                Execute-PipAction
-				$_.Handled = $true
-                return
-            }
-            if ($_.KeyCode -in @('Space', 'Return')) {
-                $oldSelect = $dataGridView.CurrentRow.DataBoundItem.Row.Select
-                $dataGridView.CurrentRow.DataBoundItem.Row.Select = -not $oldSelect
-                $_.Handled = $true
-            }
-		}
-	})
 
     $null = Add-Buttons
 
-	Add-ComboBoxActions	
+	$actionListComboBox = Add-ComboBoxActions	
 
     $group = New-Object System.Windows.Forms.Panel
     $group.Location = New-Object System.Drawing.Point 502,2
@@ -1897,6 +1872,46 @@ Function Generate-Form {
         Write-PipLog 'Hold Shift and hover the rows to fetch the detailed info'
         $form.BringToFront()
         })
+        
+	$form.add_KeyDown({
+        if ($_.KeyCode -in (1..12 | ForEach-Object { "F$_" })) {  # Handle F1..F12 functional keys
+            $n = [int]("$($_.KeyCode)" -replace 'F','') - 1
+            if ($n -lt $Script:actionListComboBox.DataSource.Count) {
+                $Script:actionListComboBox.SelectedIndex = $n
+            }
+        }
+        
+		if ($Script:dataGridView.Focused -and $Script:dataGridView.RowCount -gt 0) {			
+			if ($_.KeyCode -eq 'Home') {
+				Set-SelectedNRow 0
+				$_.Handled = $true
+			}
+            
+			if ($_.KeyCode -eq 'End') {
+				Set-SelectedNRow ($Script:dataGridView.RowCount - 1)
+				$_.Handled = $true
+			}
+            
+            if ($_.KeyCode -eq 'Return' -and $_.Control) {
+                Show-CurrentPackageInBrowser
+				$_.Handled = $true
+                return
+            }
+            
+            if ($_.KeyCode -eq 'Return' -and $_.Shift) {
+                Execute-PipAction
+				$_.Handled = $true
+                return
+            }
+            
+            if ($_.KeyCode -in @('Space', 'Return')) {
+                $oldSelect = $Script:dataGridView.CurrentRow.DataBoundItem.Row.Select
+                $Script:dataGridView.CurrentRow.DataBoundItem.Row.Select = -not $oldSelect
+                $_.Handled = $true
+            }             
+		}
+	}.GetNewClosure())
+        
     return ,$form
 }
 
@@ -2569,6 +2584,9 @@ Function global:Execute-PipAction {
             } else {
 				$null = $checkedList.Add($package)
 			}
+            
+            Set-SelectedRow $dataModel.Rows[$i]
+            [System.Windows.Forms.Application]::DoEvents()
        }
     }
 	
