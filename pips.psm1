@@ -1,4 +1,4 @@
-[Void][Reflection.Assembly]::LoadWithPartialName("System")
+﻿[Void][Reflection.Assembly]::LoadWithPartialName("System")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Drawing")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Drawing.Size")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Drawing.Point")
@@ -535,7 +535,10 @@ Function Add-ComboBoxActions {
 		{ param($list); Copy-AsRequirementsTxt($list) } `
         { param($pkg,$out); $out -match '.*' } `
 		$true )  # Yes, take a whole list of packages
-		
+
+    & $Add (Make-PipActionItem 'Dependency tree' `
+		{ param($list); Get-DependencyAsciiGraph $list } `
+        { param($pkg,$out); $out -match '.*' } )
 
     $Script:actionsModel = $actionsModel
 
@@ -2776,7 +2779,71 @@ Function global:Get-TypoErrorCandidates([string] $text, [int] $threshold = 2) {
 }
 
 
-Function Hide-ConsoleWindow {
+Function global:Get-DependencyAsciiGraph($name,
+										 $indent = 0,
+										 $hasSibling = $false,
+										 $dangling = (New-Object 'System.Collections.Generic.Stack[int]')) {
+	$output = & pip.exe show $name 2>&1
+
+	if ([string]::IsNullOrEmpty($output)) {
+		return
+	}
+
+    $reqs = $output[$output.Count - 1]
+
+	if ([string]::IsNullOrEmpty($reqs) -or -not $reqs.StartsWith('Requires:')) {
+		return
+	}
+
+	$n = "Requires:".Length
+    $children = $reqs.Substring($n).Split(', ', [System.StringSplitOptions]::RemoveEmptyEntries)
+    $hasChildren = $children.Length -gt 0
+    
+    $prefix = if ($indent -gt 0) {
+        if ($hasChildren) {
+            if ($hasSibling) {
+	            "$(' ' * $indent * 4)├$('─' * (4 - 1))┬ "
+	        } else {
+		    	"$(' ' * $indent * 4)└$('─' * (4 - 1))┬ "
+	        }
+        } else {
+            if ($hasSibling) {
+                "$(' ' * $indent * 4)├$('─' * 4) "
+            } else {
+                "$(' ' * $indent * 4)└$('─' * 4) "
+            }
+        }
+    } else {
+        ''
+    }
+    
+    if (-not [string]::IsNullOrEmpty($prefix)) {
+	    foreach ($i in $dangling) {
+	    	if ($i -ne -1) {
+				$prefix = $prefix.Remove($i, 1).Insert($i, '│')
+			}
+		}
+	}
+
+    "$prefix$name"  # Add a line to Return Stack
+
+	if ($hasSibling) {
+   		[void]$dangling.Push($indent * 4)
+	} else {
+		[void]$dangling.Push(-1)
+	}
+
+    $i = 1
+    foreach ($child in $children) {
+    	Get-DependencyAsciiGraph $child ($indent + 1) ($i -lt $children.Length) $dangling
+        $i++
+    }
+
+    [void]$dangling.Pop()
+}
+
+
+Function Show-ConsoleWindow([bool] $show) {
 	Add-Type -Name Window -Namespace Console -MemberDefinition '
 	[DllImport("Kernel32.dll")]
 	public static extern IntPtr GetConsoleWindow();
@@ -2786,7 +2853,8 @@ Function Hide-ConsoleWindow {
 '
 	
 	$consolePtr = [Console.Window]::GetConsoleWindow()
-	[Console.Window]::ShowWindow($consolePtr, 0)
+	$value = if ($show) { 2 } else { 0 }
+	[Console.Window]::ShowWindow($consolePtr, $value)
 }
 
 Function Save-PipsSettings {
@@ -2825,7 +2893,7 @@ Function Start-Main([switch] $HideConsole, [switch] $Debug) {
     }
     
 	if ($HideConsole) {
-		Hide-ConsoleWindow
+		Show-ConsoleWindow $false
     }
 	
 	Load-PipsSettings
@@ -2845,5 +2913,9 @@ Function Start-Main([switch] $HideConsole, [switch] $Debug) {
 	$form.Activate()
 
 	$appContext = New-Object System.Windows.Forms.ApplicationContext 
-	[void][System.Windows.Forms.Application]::Run($appContext)
+	try {
+		[void][System.Windows.Forms.Application]::Run($appContext)
+	} catch {
+		Show-ConsoleWindow $true
+	}
 }
