@@ -2804,25 +2804,51 @@ Function global:Get-TypoErrorCandidates([string] $text, [int] $threshold = 2) {
 	return ,($candidates | Sort-Object -Property Distance -Descending | ForEach-Object { $_.Text })
 }
 
+Function Get-PipDistributionInfo {
+    $python_code = '
+import pip
+import json
+pkgs = pip.get_installed_distributions(local_only=False, user_only=False)
+info = {p.key.lower(): {r.name.lower(): [str(s) for s in r.specifier] for r in p.requires()} for p in pkgs}
+print(json.dumps(info))
+' -join ';'
+    
+    $output = & (Get-CurrentInterpreter 'PythonExe') -c "`"$python_code`""
+    $pkgs = $output | ConvertFrom-Json     
+    return $pkgs
+}
 
-Function global:Get-DependencyAsciiGraph($name,
-										 $indent = 0,
-										 $hasSibling = $false,
-										 $dangling = (New-Object 'System.Collections.Generic.Stack[int]')) {
-	$output = & pip.exe show $name 2>&1
-
-	if ([string]::IsNullOrEmpty($output)) {
-		return
-	}
-
-    $reqs = $output[$output.Count - 1]
-
-	if ([string]::IsNullOrEmpty($reqs) -or -not $reqs.StartsWith('Requires:')) {
-		return
-	}
-
-	$n = "Requires:".Length
-    $children = $reqs.Substring($n).Split(', ', [System.StringSplitOptions]::RemoveEmptyEntries)
+Function Get-AsciiTree($name,
+                       $distributionInfo,
+                       $indent = 0,
+                       $hasSibling = $false,
+                       $dangling = (New-Object 'System.Collections.Generic.Stack[int]') ) {
+    # $output = & pip.exe show $name 2>&1
+    # 
+	# if ([string]::IsNullOrEmpty($output)) {
+	# 	return
+	# }
+    # 
+    # $reqs = $output[$output.Count - 1]
+    # 
+	# if ([string]::IsNullOrEmpty($reqs) -or -not $reqs.StartsWith('Requires:')) {
+	# 	return
+	# }
+    # 
+	# $n = "Requires:".Length
+    # $children = $reqs.Substring($n).Split(', ', [System.StringSplitOptions]::RemoveEmptyEntries)
+    
+    $children = $distributionInfo."$name".PSObject.Properties.Name  # dep name list from JSON from pip
+    
+    if ($children -eq $null) {
+        $children = @()
+    } else {
+        $children = @($children)  # ensure having array, not list of letters if item is alone
+        if ($children.Length -gt 1) {
+            $children = $children | Sort-Object
+        }
+    }
+    # Write-PipLog "$name children: '$children' $($children.Length) sibl=$hasSibling"
     $hasChildren = $children.Length -gt 0
     
     $prefix = if ($indent -gt 0) {
@@ -2851,7 +2877,7 @@ Function global:Get-DependencyAsciiGraph($name,
 		}
 	}
 
-    "$prefix$name"  # Add a line to Return Stack
+    "$prefix$name"  # Add a line to the Return Stack
 
 	if ($hasSibling) {
    		[void]$dangling.Push($indent * 4)
@@ -2861,13 +2887,19 @@ Function global:Get-DependencyAsciiGraph($name,
 
     $i = 1
     foreach ($child in $children) {
-    	Get-DependencyAsciiGraph $child ($indent + 1) ($i -lt $children.Length) $dangling
+        $childHasSiblings = ($i -lt $children.Length) -and ($children.Length -gt 1)
+    	Get-AsciiTree $child $distributionInfo ($indent + 1) $childHasSiblings $dangling 
         $i++
     }
 
     [void]$dangling.Pop()
 }
 
+Function global:Get-DependencyAsciiGraph($name) {
+    $distributionInfo = Get-PipDistributionInfo
+    $asciiTree = Get-AsciiTree $name.ToLower() $distributionInfo
+    return $asciiTree
+}
 
 Function Show-ConsoleWindow([bool] $show) {
 	Add-Type -Name Window -Namespace Console -MemberDefinition '
