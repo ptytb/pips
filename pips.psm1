@@ -2806,13 +2806,13 @@ Function global:Get-TypoErrorCandidates([string] $text, [int] $threshold = 2) {
 }
 
 Function Get-PipDistributionInfo {
-    $python_code = '
+    $python_code = @'
 import pip
 import json
 pkgs = pip.get_installed_distributions(local_only=False, user_only=False, skip=tuple())
-info = {p.key.lower(): {r.name.lower(): [str(s) for s in r.specifier] for r in p.requires()} for p in pkgs}
+info = {p.key: {'deps': {r.name: [str(s) for s in r.specifier] for r in p.requires()}, 'extras': p.extras} for p in pkgs}
 print(json.dumps(info))
-' -join ';'
+'@ -join ';'
     
     $output = & (Get-CurrentInterpreter 'PythonExe') -c "`"$python_code`""
     $pkgs = $output | ConvertFrom-Json     
@@ -2823,7 +2823,8 @@ Function Get-AsciiTree($name,
                        $distributionInfo,
                        $indent = 0,
                        $hasSibling = $false,
-                       $dangling = (New-Object 'System.Collections.Generic.Stack[int]') ) {
+                       $dangling = (New-Object 'System.Collections.Generic.Stack[int]'),
+                       $isExtra = $false) {
     # $output = & pip.exe show $name 2>&1
     # 
 	# if ([string]::IsNullOrEmpty($output)) {
@@ -2839,16 +2840,22 @@ Function Get-AsciiTree($name,
 	# $n = "Requires:".Length
     # $children = $reqs.Substring($n).Split(', ', [System.StringSplitOptions]::RemoveEmptyEntries)
     
-    $children = $distributionInfo."$name".PSObject.Properties.Name  # dep name list from JSON from pip
-    
+    $children = $distributionInfo."$name"."deps".PSObject.Properties.Name  # dep name list from JSON from pip                 
     if ($children -eq $null) {
         $children = @()
     } else {
-        $children = @($children)  # ensure having array, not list of letters if item is alone
-        if ($children.Length -gt 1) {
-            $children = $children | Sort-Object
-        }
+        $children = @($children)
     }
+    
+    $extras = @($distributionInfo."$name"."extras")     
+    if (($extras -ne $null) -and ($extras.Length -gt 0)) {
+        $children = @($children; $extras)
+    }
+    
+    if ($children.Length -gt 1) {
+        $children = @($children) | Sort-Object
+    }
+    
     # Write-PipLog "$name children: '$children' $($children.Length) sibl=$hasSibling"
     $hasChildren = $children.Length -gt 0
     
@@ -2877,8 +2884,10 @@ Function Get-AsciiTree($name,
 			}
 		}
 	}
+    
+    $suffix = if ($isExtra) { ' (*)' } else { '' }
 
-    "$prefix$name"  # Add a line to the Return Stack
+    "${prefix}${name}${suffix}"  # Add a line to the Return Stack
 
 	if ($hasSibling) {
    		[void]$dangling.Push($indent * 4)
@@ -2889,7 +2898,7 @@ Function Get-AsciiTree($name,
     $i = 1
     foreach ($child in $children) {
         $childHasSiblings = ($i -lt $children.Length) -and ($children.Length -gt 1)
-    	Get-AsciiTree $child $distributionInfo ($indent + 1) $childHasSiblings $dangling 
+    	Get-AsciiTree $child $distributionInfo ($indent + 1) $childHasSiblings $dangling ($child -in $extras)
         $i++
     }
 
