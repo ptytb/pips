@@ -1266,9 +1266,10 @@ Function global:Format-PythonPackageToolTip($info) {
     $tr = "Release Uploaded: $($lr.upload_time -replace 'T',' ')`n"
     $stats_rd = "Release Downloads: $($lr.downloads)`n"
     $stats_td = "Total Downloads: $($downloadStats.Sum.ToString("#,##0"))`n"     
-    $stats_tr = "Total Releases: $($downloadStats.Count)`n"     
+    $stats_tr = "Total Releases: $($downloadStats.Count)`n"
+    $deps = "`nRequires Python: $($info.info.requires_python)`nRequires libraries:`n`t$($info.info.requires_dist -join "`n`t")`n"
     $tags = "`n$($info.info.classifiers -join "`n")"
-    return "${name}${tt}${ti}${tr}${stats_rd}${stats_td}${stats_tr}${tags}"
+    return "${name}${tt}${ti}${tr}${stats_rd}${stats_td}${stats_tr}${deps}${tags}"
 }
 
 Function global:Download-PythonPackageDetails ($packageName) {
@@ -2487,7 +2488,7 @@ Function Clear-Rows() {
     $dataGridView.EndInit()   
 }
 
-function Set-SelectedNRow($n) {
+Function global:Set-SelectedNRow($n) {
 	if ($n -ge $dataGridView.RowCount -or $n -lt 0) {
         return
     }
@@ -2808,7 +2809,7 @@ Function Get-PipDistributionInfo {
     $python_code = '
 import pip
 import json
-pkgs = pip.get_installed_distributions(local_only=False, user_only=False)
+pkgs = pip.get_installed_distributions(local_only=False, user_only=False, skip=tuple())
 info = {p.key.lower(): {r.name.lower(): [str(s) for s in r.specifier] for r in p.requires()} for p in pkgs}
 print(json.dumps(info))
 ' -join ';'
