@@ -432,8 +432,8 @@ Function Add-ComboBoxActions {
     $actionItemCount = 0
     
     Function Make-PipActionItem($name, $code, $validator, $takesList = $false) {
-        $action = New-Object psobject -Property @{Name=$name; TakesList=$takesList;}
-        $action | Add-Member ScriptMethod ToString { $this.Name + ' [F' + ++$Script:actionItemCount + ']' } -Force
+        $action = New-Object psobject -Property @{Name=$name; TakesList=$takesList; Id=(++$Script:actionItemCount);}
+        $action | Add-Member ScriptMethod ToString { "$($this.Name) [F$($this.Id)]" } -Force
 		$action | Add-Member ScriptMethod Execute  $code
 		$action | Add-Member ScriptMethod Validate $validator
         return $action
@@ -1277,8 +1277,10 @@ Function global:Download-PythonPackageDetails ($packageName) {
     $json = Download-String($pypi_json_url -f $packageName)
 	if (-not [string]::IsNullOrEmpty($json)) {
 		$info = $json | ConvertFrom-Json
-    	$Global:PyPiPackageJsonCache.Add($packageName, $info)
-	}    
+        if ($info -ne $null) {
+    	       $Global:PyPiPackageJsonCache.Add($packageName, $info)
+        }
+	}
 }
 
 Function global:Update-PythonPackageDetails {
@@ -1322,13 +1324,15 @@ Function global:Update-PythonPackageDetails {
     }) ({
         # Callback: Access over $Global in here
         $message = $event.SourceArgs        
-        $Global:PyPiPackageJsonCache.Add($message.Params.PackageName, $message.Result)
-        
+        $okay = $message.Result -ne $null
+        if ($okay) {
+            $Global:PyPiPackageJsonCache.Add($message.Params.PackageName, $message.Result)
+        }
         $viewRow = $Global:dataGridView.Rows[$message.Params.RowIndex]
         $viewRow.DefaultCellStyle.BackColor = [Drawing.Color]::Empty
         $row = $viewRow.DataBoundItem.Row        
         $Global:dataModel.Columns['Status'].ReadOnly = $false
-        $row.Status = 'OK'
+        $row.Status = if ($okay) { 'OK' } else { 'Failed' }
         $Global:dataModel.Columns['Status'].ReadOnly = $true        
     }) @{PackageName=$packageName; RowIndex=$_.RowIndex}
 }
@@ -1805,6 +1809,7 @@ Function Generate-Form {
         }
         if ($_.KeyCode -eq 'Return') {
             if ($inputFilter.Focused) {
+                $_.Handled = $true
                 $dataGridView.Focus()
             }
         }
@@ -2534,7 +2539,7 @@ Function Check-PipDependencies {
 Function global:Select-PipAction($actionName) {
     $n = 0
     foreach ($item in $actionsModel) {
-        if ($item.ToString() -eq $actionName) {
+        if ($item.Name -eq $actionName) {
             $actionListComboBox.SelectedIndex = $n
             return
         }
