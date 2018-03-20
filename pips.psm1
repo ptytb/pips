@@ -1396,7 +1396,7 @@ Function Add-CreateEnvButtonMenu {
     
     $FuncUpdateInterpreters = {
         param($path)
-        Get-InterpreterRecord $path $interpreters
+        Get-InterpreterRecord $path $interpreters -user $true
         Set-ActiveInterpreterWithPath $path
         
         $ruleName = "pip env $path"
