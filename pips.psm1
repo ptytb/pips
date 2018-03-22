@@ -938,7 +938,7 @@ Function Generate-FormInstall {
             ($package, $version) = ($pv_group['Name'].Value, $pv_group['Version'].Value)
         }
 
-        if (-not ($packageIndex.Contains($package))) {
+        if (-not ($autoCompleteIndex.Contains($package))) {
             return $false
         }
         
@@ -1023,7 +1023,7 @@ Function Generate-FormInstall {
             }
             
             if (-not (Test-KeyPress -Keys ShiftKey)) {
-                $okay = & $FuncAddInstallSource $text
+                $okay = & $FuncAddInstallSource $text.ToLower()
                 if ($okay) {
                    $cb.Text = [string]::Empty
                    return
