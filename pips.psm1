@@ -1823,6 +1823,10 @@ Function Generate-Form {
                 $_.Handled = $true
                 $dataGridView.Focus()
             }
+        }     
+        if ($inputFilter.Focused -and ($_.KeyCode -in @('Up', 'Down'))) {
+            $Script:dataGridView.Focus()
+            $_.Handled = $false
         }
     }.GetNewClosure())
     Init-PackageGridViewProperties
@@ -1916,8 +1920,8 @@ Function Generate-Form {
             }
             
             if ($_.KeyCode -eq 'Return' -and $_.Shift) {
-                Execute-PipAction
                 $_.Handled = $true
+                Execute-PipAction
                 return
             }
             
@@ -1925,7 +1929,7 @@ Function Generate-Form {
                 $oldSelect = $Script:dataGridView.CurrentRow.DataBoundItem.Row.Select
                 $Script:dataGridView.CurrentRow.DataBoundItem.Row.Select = -not $oldSelect
                 $_.Handled = $true
-            }             
+            }
         }
     }.GetNewClosure())
         
@@ -2762,7 +2766,7 @@ $Global:FuncCalculateLevenshteinDistance = {
             [char] $c2m1 = $word2[$jm1]
             [char] $c2m2 = $word2[$j - 2]
 
-            if ($c1m1 -ceq $c2m1) {
+            if ([char]::Equals($c1m1, $c2m1)) {
                 [int] $cost = 0
             } else {
                 [int] $cost = 1
@@ -2775,7 +2779,7 @@ $Global:FuncCalculateLevenshteinDistance = {
             [int] $v_ij = [Math]::Min([Math]::Min($v1, $v2), $v3)             
             
             if (($i -gt 1) -and ($j -gt 1) -and (
-                ($c1m1 -ceq $c2m2) -and ($c1m2 -ceq $c2m1)
+                [char]::Equals($c1m1, $c2m2) -and [char]::Equals($c1m2, $c2m1)
             )) {
                 [int] $v4 = $v_ij
                 [int] $v5 = $v[($i - 2), ($j - 2)] + $cost
