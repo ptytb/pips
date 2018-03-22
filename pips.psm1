@@ -81,6 +81,8 @@ $search_columns = ("Select", "Package", "Version", "Description", "Type", "Statu
 $formLoaded = $false
 $outdatedOnly = $true
 $interpreters = $null
+$packageIndex = $null
+$autoCompleteIndex = $null
 
 $iconBase64_DownArrow = @'
 iVBORw0KGgoAAAANSUhEUgAAAAsAAAALCAYAAACprHcmAAAABGdBTUEAALGPC/xhBQAAAAlwSFlz
@@ -497,9 +499,16 @@ Function Add-ComboBoxActions {
         { param($list); Copy-AsRequirementsTxt($list) } `
         { param($pkg,$out); $out -match '.*' } `
         $true )  # Yes, take a whole list of packages
-
+        
+    $PIPTREE_LEGEND = "
+Tree legend:
+* = Extra package
+x = Package doesn't exist in index
+∞ = Dependency loop found
+"
+    
     & $Add (Make-PipActionItem 'Dependency tree' `
-        { param($list); Get-DependencyAsciiGraph $list } `
+        { param($list); $Script:PIPTREE_LEGEND; Get-DependencyAsciiGraph $list }.GetNewClosure() `
         { param($pkg,$out); $out -match '.*' } )
 
     $Script:actionsModel = $actionsModel
@@ -774,47 +783,49 @@ Function global:Set-PackageListEditable ($enable) {
         }
     }
 }
+    
+Function global:Prepare-PackageAutoCompletion {
+    if ($Script:packageIndex -ne $null) {
+        return
+    }
+
+    $Script:packageIndex = Load-KnownPackageIndex
+
+    $Script:autoCompleteIndex = New-Object System.Windows.Forms.AutoCompleteStringCollection
+    if ($packageIndex.Keys -eq $null) {
+        $keys = $packageIndex
+    } else {
+        $keys = $packageIndex.Keys
+    }
+    # $dbg_n = 0
+    [int] $maxLength = 0
+    foreach ($item in $keys) {
+        # $dbg_n++
+        # if ($dbg_n -gt 1000) {
+        #     break
+        # }
+        [void] $autoCompleteIndex.Add($item.ToLower())
+        $maxLength = [Math]::Max($maxLength, $item.Length)
+    }
+    
+    # Write-PipLog $maxLength         
+    # Populate the Dictionary<WordLength: int, WordList: List[string]>
+    # for faster selection within Levenshtein distance (+/-) range
+    $Global:TypoErrorTable = New-Object 'System.Collections.Generic.Dictionary[[string],[System.Collections.Generic.List[string]]]'
+    for ($i = 1; $i -le $maxLength; $i++) {
+        $list = New-Object 'System.Collections.Generic.List[string]'
+        [void] $Global:TypoErrorTable.Add($i, $list)             
+    }
+    foreach ($item in $keys) {
+        $itemLength = $item.Length
+        $list = $Global:TypoErrorTable[$itemLength]
+        [void] $list.Add($item.ToLower())
+    }
+}
 
 Function Generate-FormInstall {
-    Function Prepare-PackageAutoCompletion {
-        $Script:packageIndex = Load-KnownPackageIndex
-
-        $Script:autoCompleteIndex = New-Object System.Windows.Forms.AutoCompleteStringCollection
-        if ($packageIndex.Keys -eq $null) {
-            $keys = $packageIndex
-        } else {
-            $keys = $packageIndex.Keys
-        }
-        # $dbg_n = 0
-        [int] $maxLength = 0
-        foreach ($item in $keys) {
-            # $dbg_n++
-            # if ($dbg_n -gt 1000) {
-            #     break
-            # }
-            $autoCompleteIndex.Add($item)
-            $maxLength = [Math]::Max($maxLength, $item.Length)
-        }
-        
-        # Write-PipLog $maxLength         
-        # Populate the Dictionary<WordLength: int, WordList: List[string]>
-        # for faster selection within Levenshtein distance (+/-) range
-        $Global:TypoErrorTable = New-Object 'System.Collections.Generic.Dictionary[[string],[System.Collections.Generic.List[string]]]'
-        for ($i = 1; $i -le $maxLength; $i++) {
-            $list = New-Object 'System.Collections.Generic.List[string]'
-            $null = $Global:TypoErrorTable.Add($i, $list)             
-        }
-        foreach ($item in $keys) {
-            $itemLength = $item.Length
-            $list = $Global:TypoErrorTable[$itemLength]
-            $list.Add($item)
-        }
-    }
-
-    if ($Script:packageIndex -eq $null) {
-        Prepare-PackageAutoCompletion
-    }
-
+    Prepare-PackageAutoCompletion
+    
     $form = New-Object System.Windows.Forms.Form
     $form.KeyPreview = $true
     
@@ -2798,7 +2809,7 @@ Function global:Get-TypoErrorCandidates([string] $text, [int] $threshold = 2) {
             # if ([Math]::Abs($textLength - $item.Length) -gt $threshold) {
             #     continue
             # }
-            [int] $distance = & $Global:FuncCalculateLevenshteinDistance $text $item.ToLower()
+            [int] $distance = & $Global:FuncCalculateLevenshteinDistance $text $item  # .ToLower()
             if ($distance -le $threshold) {
                 $null = $candidates.Add(@{Text=$item; Distance=$distance})
             }
@@ -2829,7 +2840,8 @@ Function Get-AsciiTree($name,
                        $indent = 0,
                        $hasSibling = $false,
                        $dangling = (New-Object 'System.Collections.Generic.Stack[int]'),
-                       $isExtra = $false) {
+                       $isExtra = $false,
+                       $loopTracking = (New-Object 'System.Collections.Generic.HashSet[string]')) {
     # $output = & pip.exe show $name 2>&1
     # 
     # if ([string]::IsNullOrEmpty($output)) {
@@ -2863,9 +2875,10 @@ Function Get-AsciiTree($name,
     
     # Write-PipLog "$name children: '$children' $($children.Length) sibl=$hasSibling"
     $hasChildren = $children.Length -gt 0
-    
+    $isLooped = $loopTracking.Contains($name)
+   
     $prefix = if ($indent -gt 0) {
-        if ($hasChildren) {
+        if ($hasChildren -and -not $isLooped) {
             if ($hasSibling) {
                 "$(' ' * $indent * 4)├$('─' * (4 - 1))┬ "
             } else {
@@ -2890,7 +2903,11 @@ Function Get-AsciiTree($name,
         }
     }
     
-    $suffix = if ($isExtra) { ' (*)' } else { '' }
+    $suffixList = @()
+    if ($isExtra) { $suffixList += @('*') }     
+    if ($isLooped) { $suffixList += @('∞') }
+    if (-not $Script:autoCompleteIndex.Contains($name.ToLower())) { $suffixList += @('x') }  # unavailable package
+    $suffix = if ($suffixList.Count -eq 0) { '' } else { " ($($suffixList -join ' '))" }
 
     "${prefix}${name}${suffix}"  # Add a line to the Return Stack
 
@@ -2900,17 +2917,28 @@ Function Get-AsciiTree($name,
         [void]$dangling.Push(-1)
     }
 
-    $i = 1
-    foreach ($child in $children) {
-        $childHasSiblings = ($i -lt $children.Length) -and ($children.Length -gt 1)
-        Get-AsciiTree $child $distributionInfo ($indent + 1) $childHasSiblings $dangling ($child -in $extras)
-        $i++
+    if (-not $isLooped) {
+        [void]$loopTracking.Add($name)
+        $i = 1
+        foreach ($child in $children) {
+            $childHasSiblings = ($i -lt $children.Length) -and ($children.Length -gt 1)
+            Get-AsciiTree $child `
+                $distributionInfo `
+                ($indent + 1) `
+                $childHasSiblings `
+                $dangling `
+                ($child -in $extras) `
+                $loopTracking
+            $i++
+        }
+        [void]$loopTracking.Remove($name)
     }
 
     [void]$dangling.Pop()
 }
 
 Function global:Get-DependencyAsciiGraph($name) {
+    Prepare-PackageAutoCompletion  # for checking presence of pkg in the index
     $distributionInfo = Get-PipDistributionInfo
     $asciiTree = Get-AsciiTree $name.ToLower() $distributionInfo
     return $asciiTree
