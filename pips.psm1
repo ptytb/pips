@@ -465,16 +465,16 @@ Function Add-ComboBoxActions {
     
     & $Add (Make-PipActionItem 'Update' `
         { param($pkg,$type); $actionCommands[$type].update.Invoke($pkg) } `
-        { param($pkg,$out); $out -match ('Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' + $pkg) } )
+        { param($pkg,$out); $out -match "Successfully installed (?:[^\s]+\s+)*$pkg" } )
 
     & $Add (Make-PipActionItem 'Install (Dry Run)' `
         { param($pkg,$type); $actionCommands[$type].install_dry.Invoke($pkg) } `
-        { param($pkg,$out); $out -match ('Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' + $pkg) } )
+        { param($pkg,$out); $out -match "Successfully installed (?:[^\s]+\s+)*$pkg" } )
 
     & $Add (Make-PipActionItem 'Install (No Deps)' `
         { param($pkg,$type); $actionCommands[$type].install_nodep.Invoke($pkg) } `
-        { param($pkg,$out); $out -match ('Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' + $pkg) } )
-
+        { param($pkg,$out); $out -match "Successfully installed (?:[^\s]+\s+)*$pkg" } )
+        
     & $Add (Make-PipActionItem 'Install' {
             param($pkg,$type,$version)
             $git_url = Validate-GitLink $pkg
@@ -485,7 +485,7 @@ Function Add-ComboBoxActions {
                 $pkg = "$pkg==$version"
             }
             $actionCommands[$type].install.Invoke($pkg) } `
-        { param($pkg,$out); $out -match ('Successfully installed |Installing collected packages:\s*(\s*\S*,\s*)*' + $pkg) } )
+        { param($pkg,$out); ($out -match "Successfully installed (?:[^\s]+\s+)*$pkg") } )
 
     & $Add (Make-PipActionItem 'Download' `
         { param($pkg,$type); $actionCommands[$type].download.Invoke($pkg) } `
@@ -1447,7 +1447,7 @@ Function Add-CreateEnvButtonMenu {
         if ($path -eq $null) { return }
         Write-PipLog "Create $($tool.MenuText), please wait..."        
         $output = $tool.Code.Invoke( @($path) )
-        Write-PipLog (Tidy-Output $output)
+        Write-PipLog ($output -join "`n")
 
         $FuncUpdateInterpreters.Invoke($path)
     }.GetNewClosure()
@@ -2180,12 +2180,12 @@ class DocView {
 
 Function global:Show-DocView($packageName, $SetContent = $null, $Highlight = $null, [switch] $NoDefaultHighlighting) {
     if (-not $SetContent) {
-        $content = (Get-PyDoc $packageName)
+        $content = (Get-PyDoc $packageName) -join "`n"
     } else {
         $content = $SetContent
     }
     
-    $viewer = New-Object DocView -ArgumentList @((Tidy-Output $content), $packageName, $NoDefaultHighlighting)
+    $viewer = New-Object DocView -ArgumentList @($content, $packageName, $NoDefaultHighlighting)
     
     if ($Highlight) {
         $viewer.Highlight_Text($Highlight, ([System.Drawing.Color]::Navy), $false, $true)
@@ -2483,10 +2483,6 @@ Function Test-PackageInList($name) {
     return -1
 }
 
-Function global:Tidy-Output($text) {
-    return ($text -replace '$', "`n")
-}
-
 Function Clear-Rows() {
     $Script:outdatedOnly = $true
     $Script:inputFilter.Clear()
@@ -2540,7 +2536,7 @@ Function Check-PipDependencies {
     }
 
     $result = & $pip_exe check 2>&1
-    $result = Tidy-Output $result
+    $result = $result -join "`n"
     
     if ($result -match 'No broken requirements found') {
         Write-PipLog "OK"
@@ -2584,10 +2580,10 @@ Function global:Execute-PipAction {
                 Write-PipLog $action.Name ' ' $package.Package
                 
                 $version = if ($package.Version) { $package.Version } else { $package.Latest }
-                $result = $action.Execute($package.Package, $package.Type, $version)
+                $result = $action.Execute($package.Package, $package.Type, $version) -join "`n"
                 
                 $logFrom = $Script:logView.TextLength 
-                Write-PipLog (Tidy-Output $result)
+                Write-PipLog $result
                 $logTo = $Script:logView.TextLength - $logFrom
                 $dataModel.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $logFrom
                 $dataModel.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
