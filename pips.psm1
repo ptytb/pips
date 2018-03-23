@@ -393,15 +393,15 @@ Function Get-CondaPackages() {
 
 $actionCommands = @{
     pip=@{
-        info          = { return (& (Get-CurrentInterpreter 'PipExe') show              $args 2>&1) };
+        info          = { return (& (Get-CurrentInterpreter 'PythonExe') -m pip  show              $args 2>&1) };
         documentation = { $null = (Show-DocView $pkg).Show(); return ''    };
-        files         = { return (& (Get-CurrentInterpreter 'PipExe') show    --files   $args 2>&1) };
-        update        = { return (& (Get-CurrentInterpreter 'PipExe') install -U        $args 2>&1) };
-        install       = { return (& (Get-CurrentInterpreter 'PipExe') install           $args 2>&1) };
+        files         = { return (& (Get-CurrentInterpreter 'PythonExe') -m pip  show    --files   $args 2>&1) };
+        update        = { return (& (Get-CurrentInterpreter 'PythonExe') -m pip  install -U        $args 2>&1) };
+        install       = { return (& (Get-CurrentInterpreter 'PythonExe') -m pip  install           $args 2>&1) };
         install_dry   = { return 'Not supported on pip'                        };
-        install_nodep = { return (& (Get-CurrentInterpreter 'PipExe') install --no-deps $args 2>&1) };
-        download      = { return (& (Get-CurrentInterpreter 'PipExe') download          $args 2>&1) };
-        uninstall     = { return (& (Get-CurrentInterpreter 'PipExe') uninstall --yes   $args 2>&1) };
+        install_nodep = { return (& (Get-CurrentInterpreter 'PythonExe') -m pip  install --no-deps $args 2>&1) };
+        download      = { return (& (Get-CurrentInterpreter 'PythonExe') -m pip  download          $args 2>&1) };
+        uninstall     = { return (& (Get-CurrentInterpreter 'PythonExe') -m pip  uninstall --yes   $args 2>&1) };
     };
     conda=@{
         info          = { return (& (Get-CurrentInterpreter 'CondaExe') list      -v --json                     $args 2>&1) };        
@@ -2806,9 +2806,6 @@ Function global:Get-TypoErrorCandidates([string] $text, [int] $threshold = 2) {
             # $dbg_n++
             # if ($dbg_n -gt 1000) {
             #     break
-            # }
-            # if ([Math]::Abs($textLength - $item.Length) -gt $threshold) {
-            #     continue
             # }
             [int] $distance = & $Global:FuncCalculateLevenshteinDistance $text $item  # .ToLower()
             if ($distance -le $threshold) {
