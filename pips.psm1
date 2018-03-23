@@ -1638,6 +1638,7 @@ Function Generate-Form {
         }
 
         $searchText = $input.Text -replace "'","''"
+        $searchText = $searchText -replace '\[|\]',''
         
         Function Create-SearchSubQuery($column, $searchText, $junction) {
             return "$column LIKE '%" + ( ($searchText -split '\s+' | where { -not [String]::IsNullOrEmpty($_) }) -join  "%' $junction $column LIKE '%" ) + "%'"
@@ -2823,9 +2824,9 @@ Function global:Get-TypoErrorCandidates([string] $text, [int] $threshold = 2) {
 
 Function Get-PipDistributionInfo {
     $python_code = @'
-import pip
+import pkg_resources
 import json
-pkgs = pip.get_installed_distributions(local_only=False, user_only=False, skip=tuple())
+pkgs = pkg_resources.working_set
 info = {p.key: {'deps': {r.name: [str(s) for s in r.specifier] for r in p.requires()}, 'extras': p.extras} for p in pkgs}
 print(json.dumps(info))
 '@ -join ';'
