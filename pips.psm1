@@ -2571,12 +2571,12 @@ Function global:Execute-PipAction {
     
     for ($i = 0; $i -lt $dataModel.Rows.Count; $i++) {
        if ($dataModel.Rows[$i].Select -eq $true) {
-            Set-SelectedRow $dataModel.Rows[$i]
-            [System.Windows.Forms.Application]::DoEvents()
-            
             $package = $dataModel.Rows[$i]
             
             if (-not $action.TakesList) {
+                Set-SelectedRow $dataModel.Rows[$i]
+                [System.Windows.Forms.Application]::DoEvents()
+            
                 Write-PipLog ""
                 Write-PipLog $action.Name ' ' $package.Package
                 
@@ -2599,12 +2599,12 @@ Function global:Execute-PipAction {
                     $tasksFailed++
                 }
                 $dataModel.Columns['Status'].ReadOnly = $true
+            
+                Set-SelectedRow $dataModel.Rows[$i]
+                [System.Windows.Forms.Application]::DoEvents()
             } else {
                 $null = $checkedList.Add($package)
             }
-            
-            Set-SelectedRow $dataModel.Rows[$i]
-            [System.Windows.Forms.Application]::DoEvents()
        }
     }
     
