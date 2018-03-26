@@ -33,7 +33,11 @@ Function global:Get-Bin($command, $all = $false) {
 }
 
 Function global:Get-CurrentInterpreter($item) {
-    return $Script:interpretersComboBox.SelectedItem."$item"
+    if (-not [string]::IsNullOrEmpty($item)) {
+        return $Script:interpretersComboBox.SelectedItem."$item"
+    } else {
+        return $Script:interpretersComboBox.SelectedItem
+    }
 }
 
 Function Exists-File($path) {
@@ -525,6 +529,17 @@ x = Package doesn't exist in index
 
 $trackDuplicateInterpreters = New-Object System.Collections.Generic.HashSet[String]
 
+
+Function Create-EnvironmentVariablesDataTable {
+    $environmentVariables = New-Object System.Data.DataTable
+    foreach ($column in @('Enabled', 'Variable', 'Value')) {
+        $type = if ($column -ne 'Enabled') { ([string]) } else { ([bool]) }
+        $column = New-Object System.Data.DataColumn $column,$type
+        $environmentVariables.Columns.Add($column)
+    }
+    return ,$environmentVariables
+}
+
 Function Get-InterpreterRecord($path, $items, $user = $false) {
     if ($trackDuplicateInterpreters.Contains($path)) {
         return
@@ -553,22 +568,23 @@ Function Get-InterpreterRecord($path, $items, $user = $false) {
     }
     $versionString = & $python --version 2>&1
     $version = [regex]::Match($versionString, '\s+(\d+\.\d+)').Groups[1]
-
+    
     $action = New-Object psobject -Property @{
-        Path            = $path;
-        Version            = "$version";
-        Arch            = (Test-is64Bit $python).FileType;
-        PythonExe        = $python;
-        PipExe            = Guess-EnvPath 'pip.exe';
-        CondaExe        = Guess-EnvPath 'conda.exe';
-        VirtualenvExe   = Guess-EnvPath 'virtualenv.exe';
-        VenvActivate    = Guess-EnvPath 'activate.bat';
-        PipenvExe        = Guess-EnvPath 'pipenv.exe';
-        RequirementsTxt = Guess-EnvPath 'requirements.txt';
-        Pipfile          = Guess-EnvPath 'Pipfile';
-        PipfileLock     = Guess-EnvPath 'Pipfile.lock';
-        SitePackagesDir = Guess-EnvPath 'Lib\site-packages' -directory;
-        User            = $user;
+        Path                 = $path;
+        Version              = "$version";
+        Arch                 = (Test-is64Bit $python).FileType;
+        PythonExe            = $python;
+        PipExe               = Guess-EnvPath 'pip.exe';
+        CondaExe             = Guess-EnvPath 'conda.exe';
+        VirtualenvExe        = Guess-EnvPath 'virtualenv.exe';
+        VenvActivate         = Guess-EnvPath 'activate.bat';
+        PipenvExe            = Guess-EnvPath 'pipenv.exe';
+        RequirementsTxt      = Guess-EnvPath 'requirements.txt';
+        Pipfile              = Guess-EnvPath 'Pipfile';
+        PipfileLock          = Guess-EnvPath 'Pipfile.lock';
+        SitePackagesDir      = Guess-EnvPath 'Lib\site-packages' -directory;
+        User                 = $user;
+        EnvironmentVariables = $null; # if ($user) { @{} } else { $null }
     }
     $action | Add-Member ScriptMethod ToString {
         "{2} [{0}] {1}" -f $this.Arch, $this.PythonExe, $this.Version
@@ -627,8 +643,8 @@ Function Add-ComboBoxInterpreters {
         if ($interpreter.User) {
             $interpreter | Add-Member ScriptMethod ToString {
                 "{2} [{0}] {1}" -f $this.Arch, $this.PythonExe, $this.Version
-            } -Force
-            $null = $interpreters.Add($interpreter)
+            } -Force             
+            [void]$interpreters.Add($interpreter)
         }
     }
     
@@ -1162,7 +1178,7 @@ Function Init-PackageGridViewProperties() {
     $dataGridView.ReadOnly = $false
     $dataGridView.AllowUserToResizeRows = $false
     $dataGridView.AllowUserToResizeColumns = $false
-    $dataGridView.VirtualMode = $true
+    $dataGridView.VirtualMode = $false
     $dataGridView.AutoGenerateColumns = $true
     $dataGridView.AllowUserToAddRows = $false
     $dataGridView.AllowUserToDeleteRows = $false
@@ -1476,6 +1492,20 @@ Function Add-EnvToolButtonMenu {
             MenuText = 'pipenv shell'
             Code = { Start-Process -FilePath (Get-Bin 'pipenv.exe') -WorkingDirectory (Get-CurrentInterpreter 'Path') -ArgumentList 'shell' };
             IsAccessible = { [bool] (Get-Bin 'pipenv.exe') -and [bool] (Get-CurrentInterpreter 'Pipfile') };
+        };
+        @{
+            Persistent = $true;
+            MenuText = 'Environment variables...';
+            Code = {
+                $interpreter = Get-CurrentInterpreter 
+                if ($interpreter.User) {
+                    Generate-FormEnvironmentVariables $interpreter
+                } else {
+                    $path = $interpreter.Path
+                    Write-PipLog "WARNING: Editing global variables for global interpreter $path"
+                    & rundll32 sysdm.cpl,EditEnvironmentVariables                     
+                }
+            };
         };
     )
     
@@ -1935,6 +1965,152 @@ Function Generate-Form {
     }.GetNewClosure())
         
     return ,$form
+}
+
+Function Generate-FormEnvironmentVariables($interpreterRecord) {
+    $Form                            = New-Object system.Windows.Forms.Form
+    $Form.ClientSize                 = '659,453'
+    $Form.Text                       = "Environment Variables"
+    $Form.TopMost                    = $false
+    $Form.SizeGripStyle = [System.Windows.Forms.SizeGripStyle]::Hide
+    $Form.FormBorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    $Form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
+    $Form.MinimizeBox = $false
+    $Form.MaximizeBox = $false
+    $Form.KeyPreview = $true
+    $Form.Icon = $Script:form.Icon
+
+    $VariablesGroup                  = New-Object system.Windows.Forms.Groupbox
+    $VariablesGroup.height           = 372
+    $VariablesGroup.width            = 624
+    $VariablesGroup.text             = "Variables for environment for $($interpreterRecord."Path")"
+    $VariablesGroup.location         = New-Object System.Drawing.Point(16,24)
+
+    $New                             = New-Object system.Windows.Forms.Button
+    $New.text                        = "New"
+    $New.width                       = 94
+    $New.height                      = 25
+    $New.location                    = New-Object System.Drawing.Point(409,330)
+
+    $Delete                          = New-Object system.Windows.Forms.Button
+    $Delete.text                     = "Delete"
+    $Delete.width                    = 95
+    $Delete.height                   = 25
+    $Delete.location                 = New-Object System.Drawing.Point(515,330)
+
+    $DataGridView1                   = New-Object System.Windows.Forms.DataGridView
+    $DataGridView1.width             = 592
+    $DataGridView1.height            = 288
+    $DataGridView1.location          = New-Object System.Drawing.Point(16,20)
+    $DataGridView1.ColumnHeadersVisible = $true
+    $DataGridView1.RowHeadersVisible = $false
+    $DataGridView1.AutoGenerateColumns = $true
+    $DataGridView1.AllowUserToAddRows = $false
+    $DataGridView1.AllowUserToDeleteRows = $true
+    $DataGridView1.AutoSizeColumnsMode = [System.Windows.Forms.DataGridViewAutoSizeColumnsMode]::AllCells
+    $DataGridView1.DataSource        = Create-EnvironmentVariablesDataTable
+
+    $ButtonCancel                    = New-Object system.Windows.Forms.Button
+    $ButtonCancel.text               = "Cancel"
+    $ButtonCancel.width              = 96
+    $ButtonCancel.height             = 26
+    $ButtonCancel.location           = New-Object System.Drawing.Point(531,412)
+    $ButtonCancel.DialogResult       = [System.Windows.Forms.DialogResult]::Cancel
+
+    $ButtonOk                         = New-Object system.Windows.Forms.Button
+    $ButtonOk.text                    = "OK"
+    $ButtonOk.width                   = 94
+    $ButtonOk.height                  = 26
+    $ButtonOk.location                = New-Object System.Drawing.Point(425,412)
+    $ButtonOK.DialogResult            = [System.Windows.Forms.DialogResult]::OK
+
+    $ButtonWrite                         = New-Object system.Windows.Forms.Button
+    $ButtonWrite.text                    = "Save to Activate Script"
+    $ButtonWrite.width                   = 151
+    $ButtonWrite.height                  = 26
+    $ButtonWrite.location                = New-Object System.Drawing.Point(19,412)
+
+    $Form.controls.AddRange(@($VariablesGroup,$ButtonOk,$ButtonCancel,$ButtonWrite))
+    $VariablesGroup.controls.AddRange(@($DataGridView1,$New,$Delete))
+    $Form.AcceptButton = $ButtonOK
+    $Form.CancelButton = $ButtonCancel
+    
+    # Convert form's DataTable back to '$interpreterRecord.EnvironmentVariables'
+    $FuncDataTableToEnvVars = {
+        $newVars = New-Object System.Collections.ArrayList
+        for ($i = 0; $i -lt $DataGridView1.Rows.Count; $i++) {
+            $row = $DataGridView1.Rows[$i].DataBoundItem.Row
+            $value = if([string]::IsNullOrEmpty($row.Value)) { $null } else { $row.Value }
+            [void]$newVars.Add((New-Object PSObject -Property @{
+                'Variable'=$row.Variable;
+                'Value'=$value;
+                'Enabled'=[bool]$row.Enabled;
+            }))
+        }
+        $interpreterRecord | Add-Member -Force NoteProperty `
+            -Name 'EnvironmentVariables' `
+            -Value $newVars
+    }.GetNewClosure()
+    
+    $New.Add_Click({
+            $row  = $DataGridView1.DataSource.NewRow()         
+            $row.Enabled = $true
+            $DataGridView1.DataSource.Rows.Add($row)
+        }.GetNewClosure())
+    
+    $Delete.Add_Click({
+            if ($DataGridView1.CurrentRow -ne $null) {
+                $DataGridView1.CurrentRow.DataBoundItem.Delete()
+            }
+        }.GetNewClosure())
+        
+    $ButtonWrite.Add_Click({
+            & $FuncDataTableToEnvVars
+        
+            $lines = Get-Content $interpreterRecord.VenvActivate
+            $newLines = New-Object System.Collections.ArrayList
+            $skipRegion = $false
+            
+            $newLines.Add("@echo off")
+            $newLines.Add("rem pips vars begin")
+            $interpreterRecord.EnvironmentVariables |
+                Where-Object { $_.Enabled } |
+                ForEach-Object { $newLines.Add("set `"$($_.Variable)=$($_.Value)`"") }
+            $newLines.Add("rem pips vars end")
+            
+            foreach ($line in $lines) {
+                if ($line -match 'pips vars begin') {
+                    $skipRegion = $true
+                } elseif ($line -match 'pips vars end') {
+                    $skipRegion = $false
+                } elseif (-not $skipRegion -and -not ($line -match '^@echo off')) {
+                    $newLines.Add($line)
+                }
+            }             
+            
+            $Utf8NoBomEncoding = New-Object System.Text.UTF8Encoding $False
+            [System.IO.File]::WriteAllLines(
+                $interpreterRecord.VenvActivate,
+                $newLines,
+                $Utf8NoBomEncoding)                 
+        }.GetNewClosure())
+    
+    # Convert '$interpreterRecord.EnvironmentVariables' object to DataTable
+    $interpreterRecord.EnvironmentVariables |
+        Sort-Object -Property Variable |
+        ForEach-Object {
+            $row  = $DataGridView1.DataSource.NewRow()
+            $row.Variable = $_.Variable
+            $row.Value    = $_.Value
+            $row.Enabled  = $_.Enabled
+            $DataGridView1.DataSource.Rows.Add($row)
+        }
+    
+    $result = $Form.ShowDialog()
+        
+    if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+        & $FuncDataTableToEnvVars
+    }
 }
 
 
@@ -2964,7 +3140,7 @@ Function Save-PipsSettings {
         "envs"=@($userInterpreterRecords);
     }
     try {
-        $settings | ConvertTo-Json | Out-File "$settingsPath\settings.json"
+        $settings | ConvertTo-Json -Depth 10 | Out-File "$settingsPath\settings.json"
     } catch {
     }
 }

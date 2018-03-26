@@ -17,12 +17,13 @@ This script helps to keep packages updated.
 - Dependency-free
 - Search and install from **pip**, **conda** and **github**
 - Looks up for installed Python distributions
-- Manage environments
 - Filter and sort packages
+- Manage environments
+- Adds firewall rules for venv
+- Manage environment variables for venv
 - Documentation viewer with simple highlighting and browser-like navigation
 - Completion for packages, versions, paths, git tags, PyDoc topics
 - Package name typosquatting check
-
 
 ![](screenshot.png)
 
