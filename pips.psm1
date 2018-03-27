@@ -584,7 +584,7 @@ Function Get-InterpreterRecord($path, $items, $user = $false) {
         PipfileLock          = Guess-EnvPath 'Pipfile.lock';
         SitePackagesDir      = Guess-EnvPath 'Lib\site-packages' -directory;
         User                 = $user;
-        EnvironmentVariables = $null; # if ($user) { @{} } else { $null }
+        EnvironmentVariables = $null; 
     }
     $action | Add-Member ScriptMethod ToString {
         "{2} [{0}] {1}" -f $this.Arch, $this.PythonExe, $this.Version
@@ -1969,7 +1969,7 @@ Function Generate-Form {
 
 Function Generate-FormEnvironmentVariables($interpreterRecord) {
     $Form                            = New-Object system.Windows.Forms.Form
-    $Form.ClientSize                 = '659,453'
+    $Form.ClientSize                 = '659,653'
     $Form.Text                       = "Environment Variables"
     $Form.TopMost                    = $false
     $Form.SizeGripStyle = [System.Windows.Forms.SizeGripStyle]::Hide
@@ -1981,26 +1981,26 @@ Function Generate-FormEnvironmentVariables($interpreterRecord) {
     $Form.Icon = $Script:form.Icon
 
     $VariablesGroup                  = New-Object system.Windows.Forms.Groupbox
-    $VariablesGroup.height           = 372
+    $VariablesGroup.height           = 322
     $VariablesGroup.width            = 624
-    $VariablesGroup.text             = "Variables for environment for $($interpreterRecord."Path")"
+    $VariablesGroup.text             = "Environment Variables for $($interpreterRecord."Path")"
     $VariablesGroup.location         = New-Object System.Drawing.Point(16,24)
 
     $New                             = New-Object system.Windows.Forms.Button
     $New.text                        = "New"
     $New.width                       = 94
     $New.height                      = 25
-    $New.location                    = New-Object System.Drawing.Point(409,330)
+    $New.location                    = New-Object System.Drawing.Point(409,280)
 
     $Delete                          = New-Object system.Windows.Forms.Button
     $Delete.text                     = "Delete"
     $Delete.width                    = 95
     $Delete.height                   = 25
-    $Delete.location                 = New-Object System.Drawing.Point(515,330)
+    $Delete.location                 = New-Object System.Drawing.Point(515,280)
 
     $DataGridView1                   = New-Object System.Windows.Forms.DataGridView
     $DataGridView1.width             = 592
-    $DataGridView1.height            = 288
+    $DataGridView1.height            = 238
     $DataGridView1.location          = New-Object System.Drawing.Point(16,20)
     $DataGridView1.ColumnHeadersVisible = $true
     $DataGridView1.RowHeadersVisible = $false
@@ -2009,29 +2009,54 @@ Function Generate-FormEnvironmentVariables($interpreterRecord) {
     $DataGridView1.AllowUserToDeleteRows = $true
     $DataGridView1.AutoSizeColumnsMode = [System.Windows.Forms.DataGridViewAutoSizeColumnsMode]::AllCells
     $DataGridView1.DataSource        = Create-EnvironmentVariablesDataTable
+    
+    $StartupScriptGroup              = New-Object system.Windows.Forms.Groupbox
+    $StartupScriptGroup.height       = 222
+    $StartupScriptGroup.width        = 624
+    $StartupScriptGroup.text         = "Activate Script additional commands at startup (Windows batch)"
+    $StartupScriptGroup.location     = New-Object System.Drawing.Point(16,360)
+    
+    $TextBox1                        = New-Object System.Windows.Forms.TextBox
+    $TextBox1.Multiline              = $true
+    $TextBox1.WordWrap               = $false
+    $TextBox1.AcceptsReturn          = $true
+    $TextBox1.AcceptsTab             = $true
+    $TextBox1.ScrollBars             = 'Both'
+    $TextBox1.width                  = 592
+    $TextBox1.height                 = 185
+    $TextBox1.Text                   = 'REM Run these commands when virtualenv being activated'
+    $TextBox1.location               = New-Object System.Drawing.Point(16,20)
 
     $ButtonCancel                    = New-Object system.Windows.Forms.Button
     $ButtonCancel.text               = "Cancel"
     $ButtonCancel.width              = 96
     $ButtonCancel.height             = 26
-    $ButtonCancel.location           = New-Object System.Drawing.Point(531,412)
+    $ButtonCancel.location           = New-Object System.Drawing.Point(531,612)
     $ButtonCancel.DialogResult       = [System.Windows.Forms.DialogResult]::Cancel
 
     $ButtonOk                         = New-Object system.Windows.Forms.Button
     $ButtonOk.text                    = "OK"
     $ButtonOk.width                   = 94
     $ButtonOk.height                  = 26
-    $ButtonOk.location                = New-Object System.Drawing.Point(425,412)
+    $ButtonOk.location                = New-Object System.Drawing.Point(425,612)
     $ButtonOK.DialogResult            = [System.Windows.Forms.DialogResult]::OK
 
-    $ButtonWrite                         = New-Object system.Windows.Forms.Button
-    $ButtonWrite.text                    = "Save to Activate Script"
-    $ButtonWrite.width                   = 151
-    $ButtonWrite.height                  = 26
-    $ButtonWrite.location                = New-Object System.Drawing.Point(19,412)
+    $ButtonWrite                      = New-Object system.Windows.Forms.Button
+    $ButtonWrite.text                 = "Save to Activate Script"
+    $ButtonWrite.width                = 151
+    $ButtonWrite.height               = 26
+    $ButtonWrite.location             = New-Object System.Drawing.Point(19,612)
+    
+    $ButtonRestore                    = New-Object system.Windows.Forms.Button
+    $ButtonRestore.text               = "Restore Activate Script"
+    $ButtonRestore.width              = 151
+    $ButtonRestore.height             = 26
+    $ButtonRestore.location           = New-Object System.Drawing.Point(180,612)
 
-    $Form.controls.AddRange(@($VariablesGroup,$ButtonOk,$ButtonCancel,$ButtonWrite))
-    $VariablesGroup.controls.AddRange(@($DataGridView1,$New,$Delete))
+    $Form.controls.AddRange(@($VariablesGroup,$StartupScriptGroup,$ButtonOk,
+                             $ButtonCancel,$ButtonWrite,$ButtonRestore))
+    $VariablesGroup.Controls.AddRange(@($DataGridView1,$New,$Delete))
+    $StartupScriptGroup.Controls.AddRange(@($TextBox1))
     $Form.AcceptButton = $ButtonOK
     $Form.CancelButton = $ButtonCancel
     
@@ -2049,7 +2074,52 @@ Function Generate-FormEnvironmentVariables($interpreterRecord) {
         }
         $interpreterRecord | Add-Member -Force NoteProperty `
             -Name 'EnvironmentVariables' `
-            -Value $newVars
+            -Value $newVars         
+            
+        $interpreterRecord | Add-Member -Force NoteProperty `
+            -Name 'StartupScript' `
+            -Value $TextBox1.Lines
+    }.GetNewClosure()
+    
+    $FuncUpdateActivateScript = {
+        param($WritePipsSection = $true)
+        
+        & $FuncDataTableToEnvVars
+    
+        $lines = Get-Content $interpreterRecord.VenvActivate
+        $newLines = New-Object System.Collections.ArrayList
+        $skipRegion = $false
+        $sectionBegin = "REM PIPS VARS BEGIN"
+        $sectionEnd   = "REM PIPS VARS END"
+        
+        $newLines.Add("@echo off")
+        
+        if ($WritePipsSection) {
+            $newLines.Add($sectionBegin)
+            $interpreterRecord.EnvironmentVariables |
+                Where-Object { $_.Enabled } |
+                ForEach-Object { $newLines.Add("set `"$($_.Variable)=$($_.Value)`"") }
+            foreach ($line in $interpreterRecord.StartupScript) {
+                $newLines.Add($line)
+            }
+            $newLines.Add($sectionEnd)
+        }
+            
+        foreach ($line in $lines) {
+            if ($line -match $sectionBegin) {
+                $skipRegion = $true
+            } elseif ($line -match $sectionEnd) {
+                $skipRegion = $false
+            } elseif (-not $skipRegion -and -not ($line -match '^@echo off')) {
+                $newLines.Add($line)
+            }
+        }
+        
+        $Utf8NoBomEncoding = New-Object System.Text.UTF8Encoding $False
+        [System.IO.File]::WriteAllLines(
+            $interpreterRecord.VenvActivate,
+            $newLines,
+            $Utf8NoBomEncoding)     
     }.GetNewClosure()
     
     $New.Add_Click({
@@ -2065,35 +2135,19 @@ Function Generate-FormEnvironmentVariables($interpreterRecord) {
         }.GetNewClosure())
         
     $ButtonWrite.Add_Click({
-            & $FuncDataTableToEnvVars
-        
-            $lines = Get-Content $interpreterRecord.VenvActivate
-            $newLines = New-Object System.Collections.ArrayList
-            $skipRegion = $false
-            
-            $newLines.Add("@echo off")
-            $newLines.Add("rem pips vars begin")
-            $interpreterRecord.EnvironmentVariables |
-                Where-Object { $_.Enabled } |
-                ForEach-Object { $newLines.Add("set `"$($_.Variable)=$($_.Value)`"") }
-            $newLines.Add("rem pips vars end")
-            
-            foreach ($line in $lines) {
-                if ($line -match 'pips vars begin') {
-                    $skipRegion = $true
-                } elseif ($line -match 'pips vars end') {
-                    $skipRegion = $false
-                } elseif (-not $skipRegion -and -not ($line -match '^@echo off')) {
-                    $newLines.Add($line)
-                }
-            }             
-            
-            $Utf8NoBomEncoding = New-Object System.Text.UTF8Encoding $False
-            [System.IO.File]::WriteAllLines(
-                $interpreterRecord.VenvActivate,
-                $newLines,
-                $Utf8NoBomEncoding)                 
+        & $FuncUpdateActivateScript
         }.GetNewClosure())
+        
+    $ButtonRestore.Add_Click({
+        & $FuncUpdateActivateScript -WritePipsSection $false
+        }.GetNewClosure())
+       
+    # $Form.add_KeyDown({
+    #         if ($_.KeyCode -eq 'Return' -and $TextBox1.Focused) {
+    #             $_.SuppressKeyPress = $true
+    #             $_.Handled = $true
+    #         }
+    #     }.GetNewClosure())
     
     # Convert '$interpreterRecord.EnvironmentVariables' object to DataTable
     $interpreterRecord.EnvironmentVariables |
@@ -2105,6 +2159,8 @@ Function Generate-FormEnvironmentVariables($interpreterRecord) {
             $row.Enabled  = $_.Enabled
             $DataGridView1.DataSource.Rows.Add($row)
         }
+    
+    $TextBox1.Lines = $interpreterRecord.StartupScript
     
     $result = $Form.ShowDialog()
         
