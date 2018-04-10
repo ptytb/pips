@@ -16,7 +16,7 @@ This script helps to keep packages updated.
 
 - Dependency-free
 - Search and install from **pip**, **conda** and **github**
-- Looks up for installed Python distributions
+- Looks up for all installed Python distributions
 - Filter and sort packages
 - Manage environments
 - Adds firewall rules for venv
@@ -53,15 +53,14 @@ This script helps to keep packages updated.
 - [X] Add search with Github API
 - [X] Add editable packages to Install dialog (git, local); pip list --editable; Appropriate checkbox is still needed in the install dialog
 - [X] Mistype verification with Damerau–Levenshtein distance (fuzzy). As PowerShell v3 is JIT-compiled, no need for external DLLs
-- [ ] Dependency tree & pinning with deps
+- [X] Dependency tree & pinning with deps
 - [ ] Virtualenv creation help for user if neither virtualenv nor pipenv packages are installed
-- [ ] Delete user envs on Del Pressed with confirmation
-- [ ] Sort fuzzy candidates by PyPI download count
+- [X] Delete user envs on Del Pressed with confirmation
+- [ ] Sort fuzzy candidates by PyPI *download count*, *rdeps count*
 - [ ] GPG signature verification for packages (with gpg.exe)
 - [ ] Add some integration with VirusTotal (sha-256 of archive + link to VT for a starter)
 - [ ] Fix "isolated" checkbox behavior is somewhat uncertain
 - [ ] Move known package index builder code into the main script
-- [ ] Sort by Popularity, Downloads, ...
 - [ ] Add package name to JobName to prevent repeating requests already being queried
 - [ ] search through PyDoc browser
 - [ ] Verbosity control (-v, -vv, -vvv) for pip, a combobox over the log pane
