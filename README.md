@@ -1,7 +1,7 @@
 # pips
 
 
-**pips** is a GUI for pip and conda - Python package manager, written in PowerShell.
+**pips** is a GUI for pip, github and conda - Python package browser, written in PowerShell.
 
 This script helps to keep packages updated.
 
@@ -18,7 +18,8 @@ This script helps to keep packages updated.
 - Search and install from **pip**, **conda** and **github**
 - Looks up for all installed Python distributions
 - Filter and sort packages
-- Manage environments
+- View package dependecy tree
+- Manage virtual environments
 - Adds firewall rules for venv
 - Manage environment variables for venv
 - Documentation viewer with simple highlighting and browser-like navigation
@@ -49,6 +50,7 @@ This script helps to keep packages updated.
 ## todo
 
 
+- [ ] Typo checking with distance of 1 while typing; with distance of 2 when requested more results by user
 - [X] Save user env list
 - [X] Add search with Github API
 - [X] Add editable packages to Install dialog (git, local); pip list --editable; Appropriate checkbox is still needed in the install dialog
@@ -56,11 +58,11 @@ This script helps to keep packages updated.
 - [X] Dependency tree & pinning with deps
 - [ ] Virtualenv creation help for user if neither virtualenv nor pipenv packages are installed
 - [X] Delete user envs on Del Pressed with confirmation
-- [ ] Sort fuzzy candidates by PyPI *download count*, *rdeps count*
-- [ ] GPG signature verification for packages (with gpg.exe)
-- [ ] Add some integration with VirusTotal (sha-256 of archive + link to VT for a starter)
+- [ ] Sort fuzzy candidates by PyPI *rdeps count*, <s>*download count*</s> moved from Warehouse to [Google](https://mail.python.org/pipermail/distutils-sig/2016-May/028986.html) because of CDN
+- [ ] <s>GPG signature verification for packages (with gpg.exe)</s> deprecated in Warehouse (unclear)
+- [ ] <s>Add some integration with VirusTotal (sha-256 of archive + link to VT for a starter)</s>
 - [ ] Fix "isolated" checkbox behavior is somewhat uncertain
-- [ ] Move known package index builder code into the main script
+- [X] <s>Move known package index builder code into the main script</s> moved to [BK-tree](https://github.com/ptytb/BK-tree)
 - [ ] Add package name to JobName to prevent repeating requests already being queried
 - [ ] search through PyDoc browser
 - [ ] Verbosity control (-v, -vv, -vvv) for pip, a combobox over the log pane
@@ -74,6 +76,31 @@ This script helps to keep packages updated.
 - [ ] *conda* command has a nice options to work with but gives wierd output - suggests older package versions than installed. Needed intervention with channels?
 - [ ] conda activate & conda env creation
 - [ ] Provide conda patcher (conda from PyPI is deliberately broken by devs by means of changing entrypoints to "warning stub"). Conda is under *BSD 3-Clause License* -> sounds legit.
+- [ ] Fix freezing while running background tasks by means of using pipes and threads
+
+
+## typosquatting check
+
+
+**pips** has a feature of protection from [typosquatting](https://en.wikipedia.org/wiki/Typosquatting) of package names.
+It assists to an unprepared user to explore and install packages instantly, without wasting
+time to figure out if a package name is spelled properly, or is it popular, genuine or malicious package.
+
+This is being achieved by using the following algorithms:
+
+1. Search for package name candidates using [Levenshtein distance and BK-tree](https://github.com/ptytb/BK-tree)
+2. Sort and filter these candidates using the index built with following parameters:
+	- Number of connections with other packages using dependency graph
+	- Package's first release date
+	- Number of releases
+	- Average time interval before the next release
+	- Average number of downloads per release
+3. Search through the index
+   
+   - Search for reverse dependencies using *Adjacency matrix*
+
+
+More details about how it works [here]().
 
 
 ## trademarks
@@ -81,3 +108,27 @@ This script helps to keep packages updated.
 
 The Python logo used in this program is a trademark of [The Python Software Foundation](https://www.python.org/psf/trademarks/).
 This program is written in the PowerShell programming language and has a few pieces of inline Python code, and relies on external Python executables.
+
+
+## similar projects and related links
+
+
+[pypi-cli](https://github.com/sloria/pypi-cli) a command-line interface to the Python Package Index.
+[yip](https://github.com/balzss/yip) a frontend for searching PyPI, a feature rich alternative to pip search
+
+[pipreqs](https://github.com/bndr/pipreqs) a tool to generate requirements.txt file based on imports of any project
+[pigar](https://github.com/Damnever/pigar) a tool to generate requirements file for your Python project
+
+
+#### pip security
+
+
+[safety](https://github.com/pyupio/safety) check your installed dependencies for known security vulnerabilities
+[Pytosquatting](https://www.pytosquatting.org/) fixing typosquatting+namesquatting threats in Python Package Index
+[auditwheel](https://github.com/pypa/auditwheel) auditing and relabeling cross-distribution Linux wheels
+
+
+# License
+
+Copyright, 2018, Ilya Pronin.
+This code is released under the MIT license.

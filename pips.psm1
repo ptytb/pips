@@ -119,8 +119,8 @@ AADwDwAA+B8AAA==
 '@
 
 
-Function Set-WebClientWorkaround {
-    Function Set-UseUnsafeHeaderParsing    {
+$FuncSetWebClientWorkaround = {
+    Function Set-UseUnsafeHeaderParsing {
         param(
             [Parameter(Mandatory,ParameterSetName='Enable')]
             [switch]$Enable,
@@ -164,7 +164,7 @@ Function Set-WebClientWorkaround {
     Set-UseUnsafeHeaderParsing -Enable
 }
 
-Set-WebClientWorkaround
+& $FuncSetWebClientWorkaround
 Function Download-String($url) {
     try {
         $wc = New-Object System.Net.WebClient
@@ -812,23 +812,6 @@ Function global:Prepare-PackageAutoCompletion {
         #     break
         # }
         [void] $autoCompleteIndex.Add($item)
-        
-        # $maxLength = [Math]::Max($maxLength, $item.Length)
-    }
-    return
-    
-    # Write-PipLog $maxLength         
-    # Populate the Dictionary<WordLength: int, WordList: List[string]>
-    # for faster selection within Levenshtein distance (+/-) range
-    $Global:TypoErrorTable = New-Object 'System.Collections.Generic.Dictionary[[string],[System.Collections.Generic.List[string]]]'
-    for ($i = 1; $i -le $maxLength; $i++) {
-        $list = New-Object 'System.Collections.Generic.List[string]'
-        [void] $Global:TypoErrorTable.Add($i, $list)             
-    }
-    foreach ($item in $keys) {
-        $itemLength = $item.Length
-        $list = $Global:TypoErrorTable[$itemLength]
-        [void] $list.Add($item.ToLower())
     }
 }
 
@@ -1045,7 +1028,7 @@ Function Generate-FormInstall {
                     return
                 }
             
-                $candidates = Get-TypoErrorCandidates $text
+                $candidates = Get-TypoErrorCandidates $text -threshold 1
                 if ($candidates.Count -le 10) {
                     $candidatesToolTipText = "$($candidates -join "`n")"
                 } else {                     
@@ -1334,6 +1317,8 @@ Function global:Update-PythonPackageDetails {
         param($params)
         [Void][Reflection.Assembly]::LoadWithPartialName("System.Net")
         [Void][Reflection.Assembly]::LoadWithPartialName("System.Net.WebClient")
+        $code = [scriptblock]::Create($params.FuncNetWorkaround)
+        $code.Invoke( @() )
         $packageName = $params.PackageName
         $pypi_json_url = 'https://pypi.python.org/pypi/{0}/json'
         $jsonUrl = [String]::Format($pypi_json_url, $packageName)
@@ -1354,7 +1339,7 @@ Function global:Update-PythonPackageDetails {
         $Global:dataModel.Columns['Status'].ReadOnly = $false
         $row.Status = if ($okay) { 'OK' } else { 'Failed' }
         $Global:dataModel.Columns['Status'].ReadOnly = $true        
-    }) @{PackageName=$packageName; RowIndex=$_.RowIndex}
+    }) @{PackageName=$packageName; RowIndex=$_.RowIndex; FuncNetWorkaround=$FuncSetWebClientWorkaround.ToString();}
 }
 
 Function global:Request-FolderPathFromUser($text = [string]::Empty) {
@@ -3268,29 +3253,8 @@ Function global:Get-TypoErrorCandidates([string] $text, [int] $threshold = 2) {
     $candidates = $Global:bktree.SearchFast($text.ToLower(), $threshold)
     $stopWatch.Stop()
     Write-PipLog "Search finished in $($stopWatch.Elapsed.TotalSeconds.ToString(".00")) sec."
-    return $candidates
-    
-    $candidates = New-Object System.Collections.ArrayList
-    $text = $text.ToLower()
-    $textLength = $text.Length
-    # $dbg_n = 0
-    foreach ($n in ($textLength - $threshold)..($textLength + $threshold)) {
-        $items = $Global:TypoErrorTable[$n]
-        foreach ($item in $items) {
-            # $dbg_n++
-            # if ($dbg_n -gt 1000) {
-            #     break
-            # }
-            [int] $distance = & $Global:FuncCalculateLevenshteinDistance $text $item  # .ToLower()
-            if ($distance -le $threshold) {
-                $null = $candidates.Add(@{Text=$item; Distance=$distance})
-            }
-        }
-    }
-    $stopWatch.Stop()
-    Write-PipLog "Search finished in $($stopWatch.Elapsed.TotalSeconds.ToString(".00")) sec."
-    
-    return ,($candidates | Sort-Object -Property Distance -Descending | ForEach-Object { $_.Text })
+    return $candidates     
+    # return ,($candidates | Sort-Object -Property Distance -Descending | ForEach-Object { $_.Text })
 }
 
 Function Get-PipDistributionInfo {
