@@ -1485,6 +1485,11 @@ Function Add-EnvToolButtonMenu {
                 }
             };
         };
+        @{
+            Persistent = $true;
+            MenuText = 'Open containing directory'
+            Code = { Start-Process -FilePath 'explorer.exe' -ArgumentList "$(Get-CurrentInterpreter 'Path')" };
+        };
     )
     
     $menuclick = {
