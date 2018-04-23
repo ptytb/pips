@@ -1,0 +1,6 @@
+[submodule "PSRunspacedDelegate"]
+	path = PSRunspacedDelegate
+	url = https://github.com/tahir-hassan/PSRunspacedDelegate
+[submodule "BK-tree"]
+	path = BK-tree
+	url = https://github.com/ptytb/BK-tree

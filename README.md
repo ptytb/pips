@@ -29,6 +29,13 @@ This script helps to keep packages updated.
 ![](screenshot.png)
 
 
+## installation
+
+```
+git clone --recurse-submodules https://github.com/ptytb/pips
+pips.cmd
+```
+
 ## shortcuts
 
 
@@ -102,6 +109,19 @@ This is being achieved by using the following algorithms:
 
 More details about how it works [here]().
 
+
+## how to refresh indexes
+The file *known-packages-bktree.bin* contains all the package names from **PyPI** in the form of BK-tree.
+```PowerShell
+git clone https://github.com/ptytb/BK-tree
+Import-Module .BK-tree\bktree
+$bktree = [BKTree]::new()
+$simple = Invoke-WebRequest -Uri 'https://pypi.python.org/simple/'
+foreach ($link in $simple.Links) {
+	$bktree.add($link.innerText)
+}  
+$bktree.SaveArrays('known-packages-bktree.bin')
+```
 
 ## trademarks
 
