@@ -57,17 +57,17 @@ pips.cmd
 ## todo
 
 
-- [ ] Typo checking with distance of 1 while typing; with distance of 2 when requested more results by user
+- [X] Typo checking with distance of 1 while typing; with distance of 2 when requested more results by user
 - [X] Save user env list
 - [X] Add search with Github API
 - [X] Add editable packages to Install dialog (git, local); pip list --editable; Appropriate checkbox is still needed in the install dialog
 - [X] Mistype verification with Damerau–Levenshtein distance (fuzzy). As PowerShell v3 is JIT-compiled, no need for external DLLs
 - [X] Dependency tree & pinning with deps
-- [ ] Virtualenv creation help for user if neither virtualenv nor pipenv packages are installed
+- [X] Virtualenv creation help for user if neither virtualenv nor pipenv packages are installed
 - [X] Delete user envs on Del Pressed with confirmation
 - [ ] Sort fuzzy candidates by PyPI *rdeps count*, <s>*download count*</s> moved from Warehouse to [Google](https://mail.python.org/pipermail/distutils-sig/2016-May/028986.html) because of CDN
-- [ ] <s>GPG signature verification for packages (with gpg.exe)</s> deprecated in Warehouse (unclear)
-- [ ] <s>Add some integration with VirusTotal (sha-256 of archive + link to VT for a starter)</s>
+- [X] <s>GPG signature verification for packages (with gpg.exe)</s> deprecated in Warehouse (unclear)
+- [X] <s>Add some integration with VirusTotal (sha-256 of archive + link to VT for a starter)</s>
 - [ ] Fix "isolated" checkbox behavior is somewhat uncertain
 - [X] <s>Move known package index builder code into the main script</s> moved to [BK-tree](https://github.com/ptytb/BK-tree)
 - [ ] Add package name to JobName to prevent repeating requests already being queried

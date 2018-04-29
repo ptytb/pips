@@ -81,9 +81,9 @@ Function global:Get-Bin($command, $all = $false) {
 
 Function global:Get-CurrentInterpreter($item) {
     if (-not [string]::IsNullOrEmpty($item)) {
-        return $Script:interpretersComboBox.SelectedItem."$item"
+        return $Global:interpretersComboBox.SelectedItem."$item"
     } else {
-        return $Script:interpretersComboBox.SelectedItem
+        return $Global:interpretersComboBox.SelectedItem
     }
 }
 
@@ -133,6 +133,7 @@ $formLoaded = $false
 $outdatedOnly = $true
 $interpreters = $null
 $autoCompleteIndex = $null
+$Global:interpretersComboBox = $null
 
 $iconBase64_DownArrow = @'
 iVBORw0KGgoAAAANSUhEUgAAAAsAAAALCAYAAACprHcmAAAABGdBTUEAALGPC/xhBQAAAAlwSFlz
@@ -275,7 +276,6 @@ Function Add-Button ($name, $handler) {
 
 Function Add-ButtonMenu ($text, $tools, $onclick) {
     $form = $script:form  # to be captured by $handler's closure
-    $interpretersComboBox = $Script:interpretersComboBox  # the same reason
     
     $handler = {
         param($button)
@@ -486,17 +486,16 @@ Function Copy-AsRequirementsTxt($list) {
     Write-PipLog "Copied $($list.Count) items to clipboard."
 }
 
-Function Add-ComboBoxActions {
-    $actionItemCount = 0
-    
-    Function Make-PipActionItem($name, $code, $validator, $takesList = $false) {
-        $action = New-Object psobject -Property @{Name=$name; TakesList=$takesList; Id=(++$Script:actionItemCount);}
-        $action | Add-Member ScriptMethod ToString { "$($this.Name) [F$($this.Id)]" } -Force
-        $action | Add-Member ScriptMethod Execute  $code
-        $action | Add-Member ScriptMethod Validate $validator
-        return $action
-    }
+$actionItemCount = 0
+Function Make-PipActionItem($name, $code, $validator, $takesList = $false) {
+    $action = New-Object psobject -Property @{Name=$name; TakesList=$takesList; Id=(++$Script:actionItemCount);}
+    $action | Add-Member ScriptMethod ToString { "$($this.Name) [F$($this.Id)]" } -Force
+    $action | Add-Member ScriptMethod Execute  $code
+    $action | Add-Member ScriptMethod Validate $validator
+    return $action
+}
 
+Function Add-ComboBoxActions {
     $actionsModel = New-Object System.Collections.ArrayList
     $Add = { param($a) $null = $actionsModel.Add($a) }
 
@@ -645,7 +644,7 @@ Function Get-InterpreterRecord($path, $items, $user = $false) {
     $null = $items.Add($action)
     $null = $trackDuplicateInterpreters.Add($path)
 
-    if ($Script:interpretersComboBox) {
+    if ($Global:interpretersComboBox) {
         $interpretersComboBox.DataSource = $null
         $interpretersComboBox.DataSource = $interpreters
     }
@@ -672,13 +671,13 @@ Function Find-Interpreters {
 
     # search registry as defined here: https://www.python.org/dev/peps/pep-0514/
     if (Test-Path HKCU:Software\Python) {
-        $reg_pythons_u = dir HKCU:Software\Python | foreach { dir HKCU:$_ } | foreach { (Get-ItemProperty -Path HKCU:$_\InstallPath).'(default)' }
+        $reg_pythons_u = Get-ChildItem HKCU:Software\Python | ForEach-Object { Get-ChildItem HKCU:$_ } | ForEach-Object { (Get-ItemProperty -Path HKCU:$_\InstallPath) } | Where-Object { $_ } | ForEach-Object { $_.'(default)'  }
     }
     if (Test-Path HKLM:Software\Python) {
-        $reg_pythons_m = dir HKLM:Software\Python | foreach { dir HKLM:$_ } | foreach { (Get-ItemProperty -Path HKLM:$_\InstallPath).'(default)' }
+        $reg_pythons_m = Get-ChildItem HKLM:Software\Python | ForEach-Object { Get-ChildItem  HKLM:$_ } | ForEach-Object { (Get-ItemProperty -Path HKLM:$_\InstallPath).'(default)' }
     }
     if (Test-Path HKLM:Software\Wow6432Node\Python) {
-        $reg_WoW_pythons = dir HKLM:Software\Wow6432Node\Python | foreach { dir HKLM:$_ } | foreach { (Get-ItemProperty -Path HKLM:$_\InstallPath).'(default)' }
+        $reg_WoW_pythons = Get-ChildItem HKLM:Software\Wow6432Node\Python | ForEach-Object { Get-ChildItem  HKLM:$_ } | ForEach-Object { (Get-ItemProperty -Path HKLM:$_\InstallPath).'(default)' }
     }
     foreach ($d in @($reg_pythons_u; $reg_pythons_m; $reg_WoW_pythons)) {
         Get-InterpreterRecord ($d -replace '\\$','') $items
@@ -704,7 +703,7 @@ Function Add-ComboBoxInterpreters {
     $interpretersComboBox = New-Object System.Windows.Forms.ComboBox
     $interpretersComboBox.DataSource = $interpreters
     $interpretersComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-    $Script:interpretersComboBox = $interpretersComboBox
+    $Global:interpretersComboBox = $interpretersComboBox
     Add-TopWidget $interpretersComboBox 4
     return $interpretersComboBox
 }
@@ -932,17 +931,18 @@ Function Generate-FormInstall {
         }
     }.GetNewClosure()
     
+    # TODO: Move popup to to FuncRPCSpellCheck 
     $hint = $null
     $FuncShowToolTip = {
         param($title, $text)
         $hint = New-Object System.Windows.Forms.ToolTip
         $hint.IsBalloon = $true
         $hint.ToolTipTitle = $title
-        $hint.ToolTipIcon = [System.Windows.Forms.ToolTipIcon]::Error
+        $hint.ToolTipIcon = [System.Windows.Forms.ToolTipIcon]::Info
         $hint.Show([string]::Empty, $cb, 0);
         $hint.Show($text, $cb, 0, $cb.Height);
         $Script:hint = $hint
-    }
+    }.GetNewClosure()
 
     $FuncCleanupToolTip = {
         if ($Script:hint) {
@@ -951,7 +951,7 @@ Function Generate-FormInstall {
             return $true
         }
         return $false
-    }
+    }.GetNewClosure()
     
     $FuncAddInstallSource = {
         param($package)
@@ -1069,7 +1069,7 @@ Function Generate-FormInstall {
     $form.Controls.Add($cb)
 
     $form.add_KeyDown({
-        $null = & $FuncCleanupToolTip
+        [void] (& $FuncCleanupToolTip)
 
         if ($_.KeyCode -eq 'Escape') {
             if (($cb.Text.Length -gt 0) -or (& $FuncCleanupToolTip)) {
@@ -1414,7 +1414,7 @@ Function global:Request-FolderPathFromUser($text = [string]::Empty) {
 Function global:Set-ActiveInterpreterWithPath($path) {
     for ($i = 0; $i -lt $Script:interpreters.Count; $i++) {
         if ($Script:interpreters[$i].Path -eq $path) {
-            $Script:interpretersComboBox.SelectedIndex = $i
+            $Global:interpretersComboBox.SelectedIndex = $i
             Write-PipLog "Switching to env '$path'"
             break
         }
@@ -1451,6 +1451,16 @@ Function Add-CreateEnvButtonMenu {
                 return $output
             };
             IsAccessible = { [bool] (Get-CurrentInterpreter 'PipenvExe') };
+        };
+        @{
+            NoTargetPath = $true;
+            MenuText = 'Install virtualenv';
+            Code = {
+                param($path)
+                $output = & (Get-CurrentInterpreter 'PythonExe') -m pip install virtualenv 2>&1                 
+                return $output
+            };
+            IsAccessible = { -not [bool] (Get-CurrentInterpreter 'VirtualenvExe') };
         };
         @{
             Persistent = $true;
@@ -1496,9 +1506,11 @@ Function Add-CreateEnvButtonMenu {
     $menuclick = {
         param($tool)
 
-        $path = Request-FolderPathFromUser `
-            "New python environment with active version $($FuncGetPythonInfo.Invoke()) will be created"
-        if ($path -eq $null) { return }
+        if (-not $tool.NoTargetPath) {
+            $path = Request-FolderPathFromUser `
+                "New python environment with active version $($FuncGetPythonInfo.Invoke()) will be created"
+            if ($path -eq $null) { return }
+        }
         Write-PipLog "Create $($tool.MenuText), please wait..."        
         $output = $tool.Code.Invoke( @($path) )
         Write-PipLog ($output -join "`n")
@@ -1782,6 +1794,7 @@ Function Generate-Form {
     $toolTipInterp.SetToolTip($labelInterp, "Ctrl+C to copy selected path")
 
     $interpretersComboBox = Add-ComboBoxInterpreters
+    $Global:interpretersComboBox = $interpretersComboBox
     $null = Add-Button "env: Open..." {
         $path = Request-FolderPathFromUser ("Choose a folder with python environment, created by either Virtualenv or pipenv`n`n" +
             "Typically it contains dirs: Include, Lib, Scripts")
@@ -1805,7 +1818,7 @@ Function Generate-Form {
     $interpreters = $Script:interpreters
     $trackDuplicateInterpreters = $Script:trackDuplicateInterpreters
     $form.add_KeyDown({
-        if ($Script:interpretersComboBox.Focused) {
+        if ($Global:interpretersComboBox.Focused) {
             if (($_.KeyCode -eq 'C') -and $_.Control) {
                 $python_exe = Get-CurrentInterpreter 'PythonExe'
                 Set-Clipboard $python_exe
