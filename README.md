@@ -26,7 +26,11 @@ This script helps to keep packages updated.
 - Completion for packages, versions, paths, git tags, PyDoc topics
 - Package name typosquatting check
 
-![](screenshot.png)
+![Overview](screenshot.png)
+
+Install packages dialog:
+
+![Fuzzy suggestions](scr-fuzzy-suggestions.gif)
 
 
 ## installation
@@ -57,6 +61,11 @@ pips.cmd
 ## todo
 
 
+- [ ] Add package name to JobName to prevent repeating requests already being queried
+- [ ] search through PyDoc browser
+- [ ] Verbosity control (-v, -vv, -vvv) for pip, a combobox over the log pane
+- [ ] Sort fuzzy candidates by PyPI *rdeps count*, <s>*download count*</s> moved from Warehouse to [Google](https://mail.python.org/pipermail/distutils-sig/2016-May/028986.html) because of CDN
+- [ ] Fix freezing while running background tasks by means of pipes and threads
 - [X] Typo checking with distance of 1 while typing; with distance of 2 when requested more results by user
 - [X] Save user env list
 - [X] Add search with Github API
@@ -65,14 +74,10 @@ pips.cmd
 - [X] Dependency tree & pinning with deps
 - [X] Virtualenv creation help for user if neither virtualenv nor pipenv packages are installed
 - [X] Delete user envs on Del Pressed with confirmation
-- [ ] Sort fuzzy candidates by PyPI *rdeps count*, <s>*download count*</s> moved from Warehouse to [Google](https://mail.python.org/pipermail/distutils-sig/2016-May/028986.html) because of CDN
 - [X] <s>GPG signature verification for packages (with gpg.exe)</s> deprecated in Warehouse (unclear)
 - [X] <s>Add some integration with VirusTotal (sha-256 of archive + link to VT for a starter)</s>
 - [ ] Fix "isolated" checkbox behavior is somewhat uncertain
 - [X] <s>Move known package index builder code into the main script</s> moved to [BK-tree](https://github.com/ptytb/BK-tree)
-- [ ] Add package name to JobName to prevent repeating requests already being queried
-- [ ] search through PyDoc browser
-- [ ] Verbosity control (-v, -vv, -vvv) for pip, a combobox over the log pane
 - [X] Filter modes: Whole, And, Or, Regexp (RegExp seems feasible with Linq, but a little quirky)
 - [X] Fix peps url 0000 numbering
 - [X] Install packages dialog like in R Studio (with package name completion)
@@ -83,10 +88,9 @@ pips.cmd
 - [ ] *conda* command has a nice options to work with but gives wierd output - suggests older package versions than installed. Needed intervention with channels?
 - [ ] conda activate & conda env creation
 - [ ] Provide conda patcher (conda from PyPI is deliberately broken by devs by means of changing entrypoints to "warning stub"). Conda is under *BSD 3-Clause License* -> sounds legit.
-- [ ] Fix freezing while running background tasks by means of using pipes and threads
 
 
-## typosquatting check
+## typosquatting check (still work in progress)
 
 
 **pips** has a feature of protection from [typosquatting](https://en.wikipedia.org/wiki/Typosquatting) of package names.
@@ -107,7 +111,7 @@ This is being achieved by using the following algorithms:
    - Search for reverse dependencies using *Adjacency matrix*
 
 
-More details about how it works [here]().
+<s>More details about how it works [here]().</s> (TODO)
 
 
 ## how to refresh indexes

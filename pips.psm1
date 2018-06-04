@@ -1049,7 +1049,7 @@ Function Generate-FormInstall {
         } else {                     
             $candidatesToolTipText = "$(($candidates | Select-Object -First 10) -join "`n")`n...`n`nfull list in the log"
         }
-        & $FuncShowToolTip "$text" "Packages with similar names found in the index.`n`nDid you mean:`n`n$candidatesToolTipText"
+        # & $FuncShowToolTip "$text" "Packages with similar names found in the index.`n`nDid you mean:`n`n$candidatesToolTipText"
         Write-PipLog -UpdateLastLine "Suggestions for '$($result.Request)': $($result.Candidates)"
         if ($cb.Text -ne $result.Request) {
             & $FuncRPCSpellCheck $cb.Text 1
