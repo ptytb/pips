@@ -563,7 +563,7 @@ x = Package doesn't exist in index
 "
     
     & $Add (Make-PipActionItem 'Dependency tree' `
-        { param($list); $Script:PIPTREE_LEGEND; Get-DependencyAsciiGraph $list }.GetNewClosure() `
+        { param($list); $Script:PIPTREE_LEGEND; Get-DependencyAsciiGraph $list; Write-PipLog "`n" }.GetNewClosure() `
         { param($pkg,$out); $out -match '.*' } )
 
     $Script:actionsModel = $actionsModel
