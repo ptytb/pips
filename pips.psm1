@@ -688,7 +688,8 @@ Function Find-Interpreters {
 
 
 Function Add-ComboBoxInterpreters {
-    $interpreters = Find-Interpreters
+    $interpreters = Find-Interpreters     
+    [System.Collections.ArrayList] $interpreters = $interpreters | Sort-Object -Property @{Expression="Version"; Descending=$True}
 
     foreach ($interpreter in $Global:settings.envs) {
         if ($interpreter.User) {
