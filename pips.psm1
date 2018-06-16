@@ -1655,6 +1655,24 @@ Some packages may generate garbage or show windows, don't panic.
                 }
             };
         };
+        @{
+            Persistent=$true;
+            MenuText = 'Set as default Python';
+            Code = {
+                $version = Get-CurrentInterpreter 'Version'
+                $arch = Get-CurrentInterpreter 'Arch'
+                $bits = @{"x64"="64"; "x86"="32";}[$arch]
+                $fileLines = New-Object System.Collections.ArrayList
+                $fileLines.Add("[defaults]")
+                $fileLines.Add("python=$version -$bits")
+                $Utf8NoBomEncoding = New-Object System.Text.UTF8Encoding $False
+                [System.IO.File]::WriteAllLines(
+                    "$($env:LOCALAPPDATA)\py.ini",
+                    $fileLines,
+                    $Utf8NoBomEncoding)     
+                Write-PipLog "$bits bit Python $version - is now default, use py.exe to launch"
+            };
+        };
     )
     
     $menuclick = {
