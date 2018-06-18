@@ -29,7 +29,7 @@ $pipe.Connect();
 $Global:sw = new-object System.IO.StreamWriter($pipe);
 $Global:sr = new-object System.IO.StreamReader($pipe);
 $Global:sw.AutoFlush = $false
-$Global:SuggestionsWorking = $false
+[bool] $Global:SuggestionsWorking = $false
 
 $Global:bktree = [BKTree]::new()
 
@@ -53,9 +53,11 @@ $Global:FuncRPCSpellCheck = {
         	$tr = $Global:sr.ReadLineAsync()
         	$continuation3 = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task[string]]] { 
                 param($t)
-                $result = $t.Result | ConvertFrom-Json                 
-                $Global:SuggestionsWorking = $false
-                & $Global:FuncRPCSpellCheck_Callback $result
+                if (-not [string]::IsNullOrEmpty($t.Result)) {
+                    $result = $t.Result | ConvertFrom-Json                 
+                    $Global:SuggestionsWorking = $false
+                    & $Global:FuncRPCSpellCheck_Callback $result
+                }
         	});
             [void]$tr.ContinueWith($continuation3);
     	});
@@ -1044,15 +1046,17 @@ Function Generate-FormInstall {
     
     $Global:FuncRPCSpellCheck_Callback = {
         param($result)         
-        $candidates = $result.Candidates 
-        if ($candidates.Count -le 10) {
-            $candidatesToolTipText = "$($candidates -join "`n")"
-        } else {                     
-            $candidatesToolTipText = "$(($candidates | Select-Object -First 10) -join "`n")`n...`n`nfull list in the log"
-        }
+        
+        # $candidates = $result.Candidates       
+        # if ($candidates.Count -le 10) {
+        #     $candidatesToolTipText = "$($candidates -join "`n")"
+        # } else {                     
+        #     $candidatesToolTipText = "$(($candidates | Select-Object -First 10) -join "`n")`n...`n`nfull list in the log"
+        # }
+        
         # & $FuncShowToolTip "$text" "Packages with similar names found in the index.`n`nDid you mean:`n`n$candidatesToolTipText"
         Write-PipLog -UpdateLastLine "Suggestions for '$($result.Request)': $($result.Candidates)"
-        if ($cb.Text -ne $result.Request) {
+        if (($cb.Text -ne $result.Request) -and (-not [string]::IsNullOrEmpty($cb.Text))) {
             & $FuncRPCSpellCheck $cb.Text 1
         }
     }
