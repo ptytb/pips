@@ -2569,8 +2569,10 @@ Function Get-CondaSearchResults($request) {
     }
     $arch = Get-CurrentInterpreter 'Arch'
 
+    # channels [-c]:
+    #   anaconda = main, free, pro, msys2[windows]
     # --info should give better details but not supported on every conda
-    $items = & $conda_exe search --json $request | ConvertFrom-Json
+    $items = & $conda_exe search -c anaconda --json $request | ConvertFrom-Json
 
     $count = 0
     $items.PSObject.Properties | ForEach-Object {

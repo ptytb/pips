@@ -61,6 +61,9 @@ pips.cmd
 ## todo
 
 
+- [ ] Create runtime.txt for Heroku
+- [ ] Offline package dependency index
+- [ ] Allow to add package with its name off pips' index, provided appropriate JSON from PyPi has been acquired.
 - [ ] Add package name to JobName to prevent repeating requests already being queried
 - [ ] search through PyDoc browser
 - [ ] Verbosity control (-v, -vv, -vvv) for pip, a combobox over the log pane
