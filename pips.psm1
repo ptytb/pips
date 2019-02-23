@@ -467,7 +467,7 @@ $actionCommands = @{
     };
     conda=@{
         info          = { return (& (Get-CurrentInterpreter 'CondaExe') list      -v --json                     $args 2>&1) };        
-        documentation = { return ''                                                                    };
+        documentation = { $null = (Show-DocView $pkg).Show(); return ''    };
         files         = {
             $path = "$(Get-CurrentInterpreter 'Path')\conda-meta"
             $query = "$args*.json"
@@ -478,7 +478,7 @@ $actionCommands = @{
         update        = { return (& (Get-CurrentInterpreter 'CondaExe') update  --yes                           $args 2>&1) };
         install       = { return (& (Get-CurrentInterpreter 'CondaExe') install --yes --no-shortcuts            $args 2>&1) };
         install_dry   = { return (& (Get-CurrentInterpreter 'CondaExe') install --dry-run                       $args 2>&1) };
-        install_nodep = { return (& (Get-CurrentInterpreter 'CondaExe') install --yes --no-shortcuts --no-deps  $args 2>&1) };
+        install_nodep = { return (& (Get-CurrentInterpreter 'CondaExe') install --yes --no-shortcuts --no-deps --no-update-dependencies   $args 2>&1) };
         download      = { return ''                                                                    };
         uninstall     = { return (& (Get-CurrentInterpreter 'CondaExe') uninstall --yes                         $args 2>&1) };
     };
