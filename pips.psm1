@@ -431,11 +431,13 @@ Function Get-CondaPackages() {
     $conda_exe = Get-CurrentInterpreter 'CondaExe'
 
     if ($conda_exe) {
-        $arguments =New-Object System.Collections.ArrayList
+        $arguments = New-Object System.Collections.ArrayList
         $null = $arguments.Add('list')
         $null = $arguments.Add('--json')
         $null = $arguments.Add('--no-pip')
         $null = $arguments.Add('--show-channel-urls')
+        $null = $arguments.Add('--prefix')
+        $null = $arguments.Add((Get-CurrentInterpreter 'Path'))
 
         # This one sounds nice but could give versions older than installed
         # conda update --dry-run --json --all
@@ -608,7 +610,7 @@ Function Get-InterpreterRecord($path, $items, $user = $false) {
         return
     }
 
-    Function Guess-EnvPath ($fileName, [switch] $directory) {
+    Function Guess-EnvPath ($fileName, [switch] $directory, [switch] $Executable) {
         $subdirs = @('\'; '\Scripts\'; '\.venv\Scripts\'; '\.venv\'; '\env\Scripts\'; '\env\'; '\bin\')
         foreach ($tryPath in $subdirs) {
             $target = "${path}${tryPath}${fileName}"
@@ -617,15 +619,25 @@ Function Get-InterpreterRecord($path, $items, $user = $false) {
                     return $target
                 }
             } else {
-                if (Exists-File $target) {
-                    return $target
+                if ($Executable) {
+                    $executableExtensions = @('exe'; 'bat'; 'cmd'; 'ps1')
+                    foreach ($tryExtension in $executableExtensions) {
+                        $target = "${path}${tryPath}${fileName}.${tryExtension}"
+                        if (Exists-File $target) {
+                            return $target
+                        }
+                    }
+                } else {
+                    if (Exists-File $target) {
+                        return $target
+                    }
                 }
             }
         }
         return $null
     }
 
-    $python = Guess-EnvPath 'python.exe'
+    $python = Guess-EnvPath 'python' -Executable
     if (-not $python) {
         return
     }
@@ -637,11 +649,11 @@ Function Get-InterpreterRecord($path, $items, $user = $false) {
         Version              = "$version";
         Arch                 = (Test-is64Bit $python).FileType;
         PythonExe            = $python;
-        PipExe               = Guess-EnvPath 'pip.exe';
-        CondaExe             = Guess-EnvPath 'conda.exe';
-        VirtualenvExe        = Guess-EnvPath 'virtualenv.exe';
-        VenvActivate         = Guess-EnvPath 'activate.bat';
-        PipenvExe            = Guess-EnvPath 'pipenv.exe';
+        PipExe               = Guess-EnvPath 'pip' -Executable;
+        CondaExe             = Guess-EnvPath 'conda' -Executable;
+        VirtualenvExe        = Guess-EnvPath 'virtualenv' -Executable;
+        VenvActivate         = Guess-EnvPath 'activate' -Executable;
+        PipenvExe            = Guess-EnvPath 'pipenv' -Executable;
         RequirementsTxt      = Guess-EnvPath 'requirements.txt';
         Pipfile              = Guess-EnvPath 'Pipfile';
         PipfileLock          = Guess-EnvPath 'Pipfile.lock';
@@ -1468,6 +1480,16 @@ Function Add-CreateEnvButtonMenu {
             IsAccessible = { [bool] (Get-CurrentInterpreter 'PipenvExe') };
         };
         @{
+            MenuText = 'with conda';
+            Code = {
+                param($path)
+                $version = Get-CurrentInterpreter 'Version'
+                $output = & (Get-CurrentInterpreter 'CondaExe') create -y -q --prefix $path python=$version 2>&1
+                return $output
+            };
+            IsAccessible = { [bool] (Get-CurrentInterpreter 'CondaExe') };
+        };
+        @{
             NoTargetPath = $true;
             MenuText = 'Install virtualenv';
             Code = {
@@ -1486,6 +1508,16 @@ Function Add-CreateEnvButtonMenu {
                 return $output
             };
             IsAccessible = { -not [bool] (Get-CurrentInterpreter 'PipenvExe') };
+        };
+        @{
+            NoTargetPath = $true;
+            MenuText = 'Install conda';
+            Code = {
+                param($path)
+                $output = & (Get-CurrentInterpreter 'CondaExe') -m pip install conda 2>&1                 
+                return $output
+            };
+            IsAccessible = { -not [bool] (Get-CurrentInterpreter 'CondaExe') };
         };
         @{
             Persistent = $true;
