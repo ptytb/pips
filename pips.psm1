@@ -468,7 +468,13 @@ $actionCommands = @{
     conda=@{
         info          = { return (& (Get-CurrentInterpreter 'CondaExe') list      -v --json                     $args 2>&1) };        
         documentation = { return ''                                                                    };
-        files         = { return Get- ''                                                                    };
+        files         = {
+            $path = "$(Get-CurrentInterpreter 'Path')\conda-meta"
+            $query = "$args*.json"
+            $file = Get-ChildItem -Path $path $query
+            $json = Get-Content "$path\$($file.Name)" | ConvertFrom-Json
+            return $json.files
+        };
         update        = { return (& (Get-CurrentInterpreter 'CondaExe') update  --yes                           $args 2>&1) };
         install       = { return (& (Get-CurrentInterpreter 'CondaExe') install --yes --no-shortcuts            $args 2>&1) };
         install_dry   = { return (& (Get-CurrentInterpreter 'CondaExe') install --dry-run                       $args 2>&1) };
