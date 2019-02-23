@@ -18,18 +18,38 @@
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Net.WebClient")
 
 
-Start-Process -WindowStyle Normal -FilePath powershell -ArgumentList "-ExecutionPolicy Bypass $PSScriptRoot\pips-spelling-server.ps1"
-
-
 Import-Module -Global .\PSRunspacedDelegate\PSRunspacedDelegate
 Import-Module -Global .\BK-tree\bktree
 
-$pipe = new-object System.IO.Pipes.NamedPipeClientStream("\\.\pipe\pips_spelling_server");
-$pipe.Connect(); 
-$Global:sw = new-object System.IO.StreamWriter($pipe);
-$Global:sr = new-object System.IO.StreamReader($pipe);
-$Global:sw.AutoFlush = $false
-[bool] $Global:SuggestionsWorking = $false
+
+$startServer = New-RunspacedDelegate ( [Func[Object]] { 
+    Write-Host Start server
+    Start-Process -WindowStyle Normal -FilePath powershell -ArgumentList "-ExecutionPolicy Bypass $PSScriptRoot\pips-spelling-server.ps1"
+    Write-Host Server started.
+});
+$task = [System.Threading.Tasks.Task[Object]]::new($startServer);
+$continuation = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task[Object]]] {
+    Write-Host Connecting.
+    
+    while (-not $pipe) {
+        $pipe = new-object System.IO.Pipes.NamedPipeClientStream("\\.\pipe\pips_spelling_server");
+        if ($pipe) {
+            $pipe.Connect(); 
+        } else {
+            Write-Host reconnecting
+        }
+    }
+    Write-Host connected!
+    $Global:sw = new-object System.IO.StreamWriter($pipe);
+    $Global:sr = new-object System.IO.StreamReader($pipe);
+    $Global:sw.AutoFlush = $false
+    [bool] $Global:SuggestionsWorking = $false
+});
+Write-Host $task
+Write-Host $continuation
+$task.ContinueWith($continuation);
+$task.Start()
+
 
 $Global:bktree = [BKTree]::new()
 
