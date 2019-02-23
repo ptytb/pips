@@ -650,7 +650,7 @@ x = Package doesn't exist in index
     $actionListComboBox.DataSource = $actionsModel
     $actionListComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
     $Script:actionListComboBox = $actionListComboBox
-    Add-TopWidget($actionListComboBox)    
+    Add-TopWidget $actionListComboBox 1.25
     
     return $actionListComboBox
 }
@@ -801,7 +801,7 @@ Function Add-CheckBox($text, $code) {
     $checkBox = New-Object System.Windows.Forms.CheckBox
     $checkBox.Text = $text
     $checkBox.Add_Click($code)
-    Add-TopWidget($checkBox)
+    Add-TopWidget $checkBox 0.75
     return ($checkBox)
 }
 
@@ -1852,7 +1852,7 @@ Function Generate-Form {
 
     $group = New-Object System.Windows.Forms.Panel
     $group.Location = New-Object System.Drawing.Point 502,2
-    $group.Size = New-Object System.Drawing.Size 202,28
+    $group.Size = New-Object System.Drawing.Size 226,28
     $group.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
     $form.Controls.Add($group)
     
