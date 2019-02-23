@@ -3300,7 +3300,7 @@ Function Load-PipsSettings {
     }
 }
 
-Function Start-Main([switch] $HideConsole, [switch] $Debug) {
+Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
     $env:PYTHONIOENCODING="utf-8"
     $env:LC_CTYPE="utf-8"
     
