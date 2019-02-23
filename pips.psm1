@@ -89,6 +89,45 @@ Function global:Get-CurrentInterpreter($item) {
     }
 }
 
+Function global:Delete-CurrentInterpreter() {
+    if (-not (Get-CurrentInterpreter 'User')) {
+        Write-PipLog 'Can only delete venv which was added manually with env:Open or env:Create.'
+        return
+    }
+    
+    $path = Get-CurrentInterpreter 'Path'
+    $failedToRemove = $false
+    
+    $response = ([System.Windows.Forms.MessageBox]::Show(
+        "Remove venv path completely?`n`n${path}`n`n" +
+        "Yes = Remove directory`nNo = Keep directory, forget entry`nCancel = Do nothing",
+        "Removing venv", [System.Windows.Forms.MessageBoxButtons]::YesNoCancel))
+        
+    if ($response -eq 'Yes') {
+        $stats = Get-ChildItem -Recurse -Path $path | Measure-Object
+        try {
+            Remove-Item -Path $path -Recurse -Force 
+        } catch { }
+        if (Exists-Directory $path) {
+            Write-PipLog "Cannot delete '$path'"
+            $failedToRemove = $true
+        } else {
+            Write-PipLog "Removed $($stats.Count) items."
+        }
+    }
+    
+    if ((($response -eq 'No') -or ($response -eq 'Yes')) -and -not $failedToRemove) {
+        $interpreters.Remove($interpretersComboBox.SelectedItem)                    
+        $Script:trackDuplicateInterpreters.Remove($path)
+        $interpretersComboBox.DataSource = $null
+        $interpretersComboBox.DataSource = $interpreters                     
+        Write-PipLog "Removed venv '${path}' from list."
+        
+        $interpretersComboBox.SelectedIndex = 0
+        Write-PipLog "Switching to '$(Get-CurrentInterpreter 'Path')'"
+    }
+}
+
 Function Exists-File($path) {
     return [System.IO.File]::Exists($path)
 }
@@ -1619,6 +1658,14 @@ Function Add-EnvToolButtonMenu {
             MenuText = 'Open containing directory'
             Code = { Start-Process -FilePath 'explorer.exe' -ArgumentList "$(Get-CurrentInterpreter 'Path')" };
         };
+        @{
+            Persistent = $false;
+            MenuText = 'Remove environment...'
+            Code = {
+                Delete-CurrentInterpreter
+            };
+            IsAccessible = { [bool] (Get-CurrentInterpreter 'User') };
+        };
     )
     
     $menuclick = {
@@ -1907,42 +1954,7 @@ Function Generate-Form {
                 Write-PipLog "Copied to clipboard: $python_exe"
             }
             if ($_.KeyCode -eq 'Delete') {
-                if (-not (Get-CurrentInterpreter 'User')) {
-                    Write-PipLog 'Can only delete venv which was added manually with env:Open or env:Create.'
-                    return
-                }
-                
-                $path = Get-CurrentInterpreter 'Path'
-                $failedToRemove = $false
-                
-                $response = ([System.Windows.Forms.MessageBox]::Show(
-                    "Remove venv path completely?`n`n${path}`n`n" +
-                    "Yes = Remove directory`nNo = Keep directory, forget entry`nCancel = Do nothing",
-                    "Removing venv", [System.Windows.Forms.MessageBoxButtons]::YesNoCancel))
-                    
-                if ($response -eq 'Yes') {
-                    $stats = Get-ChildItem -Recurse -Path $path | Measure-Object
-                    try {
-                        Remove-Item -Path $path -Recurse -Force 
-                    } catch { }
-                    if (Exists-Directory $path) {
-                        Write-PipLog "Cannot delete '$path'"
-                        $failedToRemove = $true
-                    } else {
-                        Write-PipLog "Removed $($stats.Count) items."
-                    }
-                }
-                
-                if ((($response -eq 'No') -or ($response -eq 'Yes')) -and -not $failedToRemove) {
-                    $interpreters.Remove($interpretersComboBox.SelectedItem)                    
-                    $Script:trackDuplicateInterpreters.Remove($path)
-                    $interpretersComboBox.DataSource = $null
-                    $interpretersComboBox.DataSource = $interpreters                     
-                    Write-PipLog "Removed venv '${path}' from list."
-                    
-                    $interpretersComboBox.SelectedIndex = 0
-                    Write-PipLog "Switching to '$(Get-CurrentInterpreter 'Path')'"
-                }
+                Delete-CurrentInterpreter
             }
         }
     }.GetNewClosure())
