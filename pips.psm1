@@ -963,9 +963,12 @@ Function Generate-FormInstall {
     $form.KeyPreview = $true
     
     $label = New-Object System.Windows.Forms.Label
-    $label.Text = "Type package names, git urls, local paths and hit Enter after each."
+    $label.Text = "Type package names, git urls, local paths and hit Enter after each.
+    
+name, name==version, github_user/project@tag, c:\path\to\git@tag
+"
     $label.Location = New-Object Drawing.Point 7,7
-    $label.Size = New-Object Drawing.Point 340,24
+    $label.Size = New-Object Drawing.Point 360,40
     $form.Controls.Add($label)
 
     $cb = New-Object System.Windows.Forms.TextBox
@@ -1148,14 +1151,17 @@ Function Generate-FormInstall {
     }
 
     $cb.add_TextChanged({
-        & $FuncGuessAutoCompleteMode
+        param($cb)
+        $text = $cb.Text
         
-        if ($cb.Text.Length -gt 0) {
-            & $FuncRPCSpellCheck $cb.Text 1
+        & $FuncGuessAutoCompleteMode         
+        
+        if ($text.Length -gt 0 -and ($text.IndexOfAny('=@\/:')) -eq -1) {
+            & $FuncRPCSpellCheck $text 1
         }
     });
     
-    $cb.Location = New-Object Drawing.Point 7,35
+    $cb.Location = New-Object Drawing.Point 7,60
     $cb.Size = New-Object Drawing.Point 330,32
     $form.Controls.Add($cb)
 
@@ -1193,7 +1199,7 @@ Function Generate-FormInstall {
 
     $install = New-Object System.Windows.Forms.Button
     $install.Text = "Install"
-    $install.Location = New-Object Drawing.Point 140,65
+    $install.Location = New-Object Drawing.Point 140,90
     $install.Size = New-Object Drawing.Point 70,24
     $install.add_Click({
         $okay = & $FuncAddInstallSource $cb.Text
@@ -1209,7 +1215,7 @@ Function Generate-FormInstall {
     }.GetNewClosure())
     $form.Controls.Add($install)
 
-    $form.Size = New-Object Drawing.Point 360,140
+    $form.Size = New-Object Drawing.Point 365,160
     $form.SizeGripStyle = [System.Windows.Forms.SizeGripStyle]::Hide
     $form.FormBorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
     $form.Text = 'Install packages | [Shift+Enter] fuzzy name search'
