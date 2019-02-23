@@ -532,7 +532,7 @@ $actionCommands = @{
         uninstall     = { return (& (Get-CurrentInterpreter 'PythonExe') -m pip  uninstall --yes   $args 2>&1) };
     };
     conda=@{
-        info          = { return (& (Get-CurrentInterpreter 'CondaExe') list      -v --json                     $args 2>&1) };        
+        info          = { return (& (Get-CurrentInterpreter 'CondaExe') list --prefix (Get-CurrentInterpreter 'Path') -v --json $args 2>&1) };        
         documentation = { $null = (Show-DocView $pkg).Show(); return ''    };
         files         = {
             $path = "$(Get-CurrentInterpreter 'Path')\conda-meta"
@@ -541,12 +541,12 @@ $actionCommands = @{
             $json = Get-Content "$path\$($file.Name)" | ConvertFrom-Json
             return $json.files
         };
-        update        = { return (& (Get-CurrentInterpreter 'CondaExe') update  --yes                           $args 2>&1) };
-        install       = { return (& (Get-CurrentInterpreter 'CondaExe') install --yes --no-shortcuts            $args 2>&1) };
-        install_dry   = { return (& (Get-CurrentInterpreter 'CondaExe') install --dry-run                       $args 2>&1) };
-        install_nodep = { return (& (Get-CurrentInterpreter 'CondaExe') install --yes --no-shortcuts --no-deps --no-update-dependencies   $args 2>&1) };
-        download      = { return ''                                                                    };
-        uninstall     = { return (& (Get-CurrentInterpreter 'CondaExe') uninstall --yes                         $args 2>&1) };
+        update        = { return (& (Get-CurrentInterpreter 'CondaExe') update --prefix (Get-CurrentInterpreter 'Path') --yes -q $args 2>&1) };
+        install       = { return (& (Get-CurrentInterpreter 'CondaExe') install --prefix (Get-CurrentInterpreter 'Path') --yes -q --no-shortcuts $args 2>&1) };
+        install_dry   = { return (& (Get-CurrentInterpreter 'CondaExe') install --prefix (Get-CurrentInterpreter 'Path') --dry-run $args 2>&1) };
+        install_nodep = { return (& (Get-CurrentInterpreter 'CondaExe') install --prefix (Get-CurrentInterpreter 'Path') --yes -q --no-shortcuts --no-deps --no-update-dependencies   $args 2>&1) };
+        download      = { return 'Not supported on conda' };
+        uninstall     = { return (& (Get-CurrentInterpreter 'CondaExe') uninstall --prefix (Get-CurrentInterpreter 'Path') --yes $args 2>&1) };
     };
 }
 $actionCommands.wheel   = $actionCommands.pip
