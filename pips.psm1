@@ -1478,6 +1478,16 @@ Function Add-CreateEnvButtonMenu {
             IsAccessible = { -not [bool] (Get-CurrentInterpreter 'VirtualenvExe') };
         };
         @{
+            NoTargetPath = $true;
+            MenuText = 'Install pipenv';
+            Code = {
+                param($path)
+                $output = & (Get-CurrentInterpreter 'PythonExe') -m pip install pipenv 2>&1                 
+                return $output
+            };
+            IsAccessible = { -not [bool] (Get-CurrentInterpreter 'PipenvExe') };
+        };
+        @{
             Persistent = $true;
             MenuText = 'Custom... (TODO)';
             Code = {  };
