@@ -2831,16 +2831,16 @@ Function Get-SearchResults($request) {
     if ($pip_exe) {
         Add-PackagesToTable $pipPackages 'pip'
     }
+    if ($conda_exe) {
+        $condaPackages = Get-CondaPackages
+        Add-PackagesToTable $condaPackages 'conda'
+    }
     if (! $outdatedOnly) {
         $builtinPackages = Get-PythonBuiltinPackages
         Add-PackagesToTable $builtinPackages 'builtin'
 
         $otherPackages = Get-PythonOtherPackages
         Add-PackagesToTable $otherPackages 'other'
-    }
-    if ($conda_exe) {
-        $condaPackages = Get-CondaPackages
-        Add-PackagesToTable $condaPackages 'conda'
     }
     $dataModel.EndLoadData()
 
