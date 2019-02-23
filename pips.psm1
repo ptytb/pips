@@ -157,7 +157,7 @@ Function global:Delete-CurrentInterpreter() {
     }
 }
 
-Function Exists-File($path) {
+Function global:Exists-File($path) {
     return [System.IO.File]::Exists($path)
 }
 
