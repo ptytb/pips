@@ -24,7 +24,7 @@ Import-Module -Global .\BK-tree\bktree
 
 $startServer = New-RunspacedDelegate ( [Func[Object]] { 
     Write-Host Start server
-    Start-Process -WindowStyle Normal -FilePath powershell -ArgumentList "-ExecutionPolicy Bypass $PSScriptRoot\pips-spelling-server.ps1"
+    Start-Process -WindowStyle Hidden -FilePath powershell -ArgumentList "-ExecutionPolicy Bypass $PSScriptRoot\pips-spelling-server.ps1"
     Write-Host Server started.
 });
 $task = [System.Threading.Tasks.Task[Object]]::new($startServer);
@@ -61,6 +61,10 @@ $Global:bktree = [BKTree]::new()
 
 $Global:FuncRPCSpellCheck = {
     param([string] $text, [int] $distance)
+    
+    if ([String]::IsNullOrEmpty($text) -or ($text.IndexOfAny('=@\/:') -ne -1)) {
+        return
+    }
     
     if ($Global:SuggestionsWorking) {
         return
@@ -1145,7 +1149,7 @@ name, name==version, github_user/project@tag, c:\path\to\git@tag
         
         # & $FuncShowToolTip "$text" "Packages with similar names found in the index.`n`nDid you mean:`n`n$candidatesToolTipText"
         Write-PipLog -UpdateLastLine "Suggestions for '$($result.Request)': $($result.Candidates)"
-        if (($cb.Text -ne $result.Request) -and (-not [string]::IsNullOrEmpty($cb.Text))) {
+        if ($cb.Text -ne $result.Request) {
             & $FuncRPCSpellCheck $cb.Text 1
         }
     }
@@ -1155,10 +1159,7 @@ name, name==version, github_user/project@tag, c:\path\to\git@tag
         $text = $cb.Text
         
         & $FuncGuessAutoCompleteMode         
-        
-        if ($text.Length -gt 0 -and ($text.IndexOfAny('=@\/:')) -eq -1) {
-            & $FuncRPCSpellCheck $text 1
-        }
+        & $FuncRPCSpellCheck $text 1
     });
     
     $cb.Location = New-Object Drawing.Point 7,60
