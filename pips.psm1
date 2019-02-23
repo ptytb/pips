@@ -252,6 +252,10 @@ Function global:Write-PipLog([switch] $UpdateLastLine) {
     $logView.ScrollToCaret()
 }
 
+Function global:Clear-PipLog() {
+    $logView.Clear()
+}
+
 Function Add-TopWidget($widget, $span=1) {
     $widget.Location = New-Object Drawing.Point $lastWidgetLeft,$lastWidgetTop
     $widget.size = New-Object Drawing.Point ($span*100-5),$widgetLineHeight
@@ -464,7 +468,7 @@ $actionCommands = @{
     conda=@{
         info          = { return (& (Get-CurrentInterpreter 'CondaExe') list      -v --json                     $args 2>&1) };        
         documentation = { return ''                                                                    };
-        files         = { return ''                                                                    };
+        files         = { return Get- ''                                                                    };
         update        = { return (& (Get-CurrentInterpreter 'CondaExe') update  --yes                           $args 2>&1) };
         install       = { return (& (Get-CurrentInterpreter 'CondaExe') install --yes --no-shortcuts            $args 2>&1) };
         install_dry   = { return (& (Get-CurrentInterpreter 'CondaExe') install --dry-run                       $args 2>&1) };
@@ -1675,6 +1679,13 @@ Some packages may generate garbage or show windows, don't panic.
                     $fileLines,
                     $Utf8NoBomEncoding)     
                 Write-PipLog "$bits bit Python $version - is now default, use py.exe to launch"
+            };
+        };
+        @{
+            Persistent=$true;
+            MenuText = 'Clear log';
+            Code = {
+                Clear-PipLog
             };
         };
     )
