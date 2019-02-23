@@ -31,10 +31,15 @@ $task = [System.Threading.Tasks.Task[Object]]::new($startServer);
 $continuation = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task[Object]]] {
     Write-Host Connecting.
     
-    while (-not $pipe) {
+    $pipe = $null
+    while (-not $pipe -or -not $pipe.IsConnected) {
         $pipe = new-object System.IO.Pipes.NamedPipeClientStream("\\.\pipe\pips_spelling_server");
         if ($pipe) {
-            $pipe.Connect(); 
+            $milliseconds = 250
+            try {
+                $pipe.Connect($milliseconds); 
+            } catch {
+            }
         } else {
             Write-Host reconnecting
         }
