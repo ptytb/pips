@@ -989,9 +989,9 @@ Function Generate-FormInstall {
     $form.KeyPreview = $true
     
     $label = New-Object System.Windows.Forms.Label
-    $label.Text = "Type package names, git urls, local paths and hit Enter after each.
+    $label.Text = "Type package names and hit Enter after each. Ctrl-Enter to force.
     
-name, name==version, github_user/project@tag, c:\path\to\git@tag
+source:name==version | github_user/project@tag | C:\git\repo@tag
 "
     $label.Location = New-Object Drawing.Point 7,7
     $label.Size = New-Object Drawing.Point 360,40
@@ -1072,7 +1072,7 @@ name, name==version, github_user/project@tag, c:\path\to\git@tag
     }.GetNewClosure()
     
     $FuncAddInstallSource = {
-        param($package)
+        param($package, [bool] $force)
         
         if ($dataModel.Rows.Count -eq 0) {
             Init-PackageSearchColumns $dataModel
@@ -1080,7 +1080,7 @@ name, name==version, github_user/project@tag, c:\path\to\git@tag
         
         $link = Validate-GitLink $package
         if ($link) {
-            if ((Test-PackageInList $link) -ne -1) {
+            if (-not $force -and (Test-PackageInList $link) -ne -1) {
                 & $FuncShowToolTip "$package" "Repository '$link' is already in the list"
                 return $false
             }
@@ -1094,14 +1094,15 @@ name, name==version, github_user/project@tag, c:\path\to\git@tag
         }
         
         $version = [string]::Empty
-        $package_with_version = [regex] '^(?<Name>[^=]+)==(?<Version>[^=]+)$'
+        $type = [string]::Empty
+        $package_with_version = [regex] '^(?:(?<Type>[a-z]+):)?(?<Name>[^=]+)(?:==(?<Version>[^=]+))?$'
         $pv_match = $package_with_version.Match($package)
         $pv_group = $pv_match.Groups
         if ($pv_group.Count -gt 1) {
-            ($package, $version) = ($pv_group['Name'].Value, $pv_group['Version'].Value)
+            ($type, $package, $version) = ($pv_group['Type'].Value, $pv_group['Name'].Value, $pv_group['Version'].Value)
         }
 
-        if (-not ($autoCompleteIndex.Contains($package))) {
+        if (-not $force -and -not ($autoCompleteIndex.Contains($package))) {
             return $false
         }
         
@@ -1122,9 +1123,10 @@ name, name==version, github_user/project@tag, c:\path\to\git@tag
             #Write-Host "old='$oldVersion', new='$version'"
             
             $IsDifferentVersion = $version -ne $oldVersion
+            $IsDifferentVersion = $IsDifferentVersion -or $type -and ($type -ne $oldRow.Type)
         } else {
             $IsDifferentVersion = $true
-        }
+        }         
 
         if ($nAlreadyInList -ne -1) {
             if (-not $IsDifferentVersion) {            
@@ -1140,14 +1142,25 @@ name, name==version, github_user/project@tag, c:\path\to\git@tag
         
         $row.Select = $true
         $row.Package = $package
-
-        if ($dataModel.Columns.Contains('Version')) {
-            $row.Version = $version
-        } else {
-            $row.Latest = $version
+        
+        # opinionated behavior but seems to be conspicuously right
+        if (-not [string]::IsNullOrWhiteSpace($version) -or [string]::IsNullOrWhiteSpace($type)) {
+            if ($dataModel.Columns.Contains('Version')) {
+                $row.Version = $version
+            } else {
+                $row.Latest = $version
+            }
         }
 
-        $row.Type = 'pip'
+        if (-not [string]::IsNullOrWhiteSpace($type)) {
+            if (-not ($type -in @('pip', 'conda', 'git'))) {
+                & $FuncShowToolTip "${type}:$package" "Wrong source type'$type'.`n`nSupported types: pip, conda, git"
+                return $false
+            }
+            $row.Type = $type
+        } elseif ([string]::IsNullOrWhiteSpace($row.Type)) {
+            $row.Type = 'pip'
+        }
         $row.Status = 'Pending'
         
         if ($nAlreadyInList -eq -1) {
@@ -1202,12 +1215,13 @@ name, name==version, github_user/project@tag, c:\path\to\git@tag
         if ($_.KeyCode -eq 'Enter') { 
             $text = $cb.Text.Trim()
             
-            if ([string]::IsNullOrEmpty($text)) {
+            if ([string]::IsNullOrWhiteSpace($text)) {
                 return
             }
             
             if (-not (Test-KeyPress -Keys ShiftKey)) {
-                $okay = & $FuncAddInstallSource $text.ToLower()
+                $force = Test-KeyPress -Keys ControlKey
+                $okay = & $FuncAddInstallSource $text.ToLower() $force
                 if ($okay) {
                    $cb.Text = [string]::Empty
                    return
