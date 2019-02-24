@@ -188,6 +188,24 @@ Function global:Delete-CurrentInterpreter() {
     }
 }
 
+Function global:Get-PipsSetting($name, [switch] $AsArgs) {
+    switch ($name)
+    {
+        "CondaChannels" {             
+            $channels = $global:settings.condaChannels
+            if (-not $channels -or $channels.Length -eq 0) {
+                $channels = @('anaconda'; 'defaults'; 'conda-forge')
+            }
+            if ($AsArgs) {
+                $channels = "-c $($channels -join ' -c ')"
+            }
+            return $channels
+        }
+        
+        Default { throw "No such setting: $name" }
+    }
+}
+
 Function global:Exists-File($path) {
     return [System.IO.File]::Exists($path)
 }
@@ -577,9 +595,9 @@ $actionCommands = @{
             return $json.files
         };
         update        = { return (& (Get-CurrentInterpreter 'CondaExe') update --prefix (Get-CurrentInterpreter 'Path') --yes -q $args 2>&1) };
-        install       = { return (& (Get-CurrentInterpreter 'CondaExe') install --prefix (Get-CurrentInterpreter 'Path') --yes -q --no-shortcuts $args 2>&1) };
-        install_dry   = { return (& (Get-CurrentInterpreter 'CondaExe') install --prefix (Get-CurrentInterpreter 'Path') --dry-run $args 2>&1) };
-        install_nodep = { return (& (Get-CurrentInterpreter 'CondaExe') install --prefix (Get-CurrentInterpreter 'Path') --yes -q --no-shortcuts --no-deps --no-update-dependencies   $args 2>&1) };
+        install       = { return (& (Get-CurrentInterpreter 'CondaExe') install (Get-PipsSetting 'CondaChannels' -AsArgs) --prefix (Get-CurrentInterpreter 'Path') --yes -q --no-shortcuts $args 2>&1) };
+        install_dry   = { return (& (Get-CurrentInterpreter 'CondaExe') install (Get-PipsSetting 'CondaChannels' -AsArgs) --prefix (Get-CurrentInterpreter 'Path') --dry-run $args 2>&1) };
+        install_nodep = { return (& (Get-CurrentInterpreter 'CondaExe') install (Get-PipsSetting 'CondaChannels' -AsArgs) --prefix (Get-CurrentInterpreter 'Path') --yes -q --no-shortcuts --no-deps --no-update-dependencies   $args 2>&1) };
         download      = { return 'Not supported on conda' };
         uninstall     = { return (& (Get-CurrentInterpreter 'CondaExe') uninstall --prefix (Get-CurrentInterpreter 'Path') --yes $args 2>&1) };
     };
@@ -1829,6 +1847,22 @@ Some packages may generate garbage or show windows, don't panic.
         };
         @{
             Persistent=$true;
+            MenuText = 'Edit conda channels';
+            Code = {
+                $channels = $global:settings.condaChannels -join ' '
+                $list = Request-UserString "Enter conda channels, separated with space.`n`nLeave empty to use defaults." 'Edit conda channels' $channels
+                if ($list -eq $null) {
+                    return
+                }
+                if (-not [string]::IsNullOrWhiteSpace($list)) {
+                    $global:settings."condaChannels" = $list -split '\s+'
+                } else {
+                    $global:settings."condaChannels" = $null
+                }
+            };
+        };
+        @{
+            Persistent=$true;
             MenuText = 'Clear log';
             Code = {
                 Clear-PipLog
@@ -2694,8 +2728,10 @@ Function Get-CondaSearchResults($request) {
     # channels [-c]:
     #   anaconda = main, free, pro, msys2[windows]
     # --info should give better details but not supported on every conda
-    $channels = @('anaconda'; 'defaults'; 'conda-forge')
-    $chanArgs = "-c $($channels -join ' -c ')"
+    $channels = Get-PipsSetting 'CondaChannels'
+    Write-PipLog "Searching on channels: $($channels -join ', ')"
+    
+    $chanArgs = Get-PipsSetting 'CondaChannels' -AsArgs     
     $items = & $conda_exe search $chanArgs --json $request | ConvertFrom-Json
 
     $count = 0
@@ -3302,9 +3338,7 @@ Function Save-PipsSettings {
     $settingsPath = "$($env:LOCALAPPDATA)\pips"
     $null = New-Item -Force -ItemType Directory -Path $settingsPath
     $userInterpreterRecords = $interpreters | Where-Object { $_.User }
-    $settings = @{
-        "envs"=@($userInterpreterRecords);
-    }
+    $settings."envs" = @($userInterpreterRecords)
     try {
         $settings | ConvertTo-Json -Depth 10 | Out-File "$settingsPath\settings.json"
     } catch {
@@ -3313,9 +3347,12 @@ Function Save-PipsSettings {
 
 Function Load-PipsSettings {
     $settingsFile = "$($env:LOCALAPPDATA)\pips\settings.json"
+    $global:settings = @{} 
     if (Exists-File $settingsFile) {
         try {
-            $Global:settings = Get-Content $settingsFile | ConvertFrom-Json
+            $settings = (Get-Content $settingsFile | ConvertFrom-Json)
+            $global:settings."envs" = $settings.envs
+            $global:settings."condaChannels" = $settings.condaChannels
         } catch {
         }
     }
