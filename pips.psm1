@@ -109,10 +109,41 @@ Function global:Get-Bin($command, $all = $false) {
     }
     return $found
 }
+    
+Function global:Guess-EnvPath ($path, $fileName, [switch] $directory, [switch] $Executable) {
+    $subdirs = @('\'; '\Scripts\'; '\.venv\Scripts\'; '\.venv\'; '\env\Scripts\'; '\env\'; '\bin\')
+    foreach ($tryPath in $subdirs) {
+        $target = "${path}${tryPath}${fileName}"
+        if ($directory) {
+            if (Exists-Directory $target) {
+                return $target
+            }
+        } else {
+            if ($Executable) {
+                $executableExtensions = @('exe'; 'bat'; 'cmd'; 'ps1')
+                foreach ($tryExtension in $executableExtensions) {
+                    $target = "${path}${tryPath}${fileName}.${tryExtension}"
+                    if (Exists-File $target) {
+                        return $target
+                    }
+                }
+            } else {
+                if (Exists-File $target) {
+                    return $target
+                }
+            }
+        }
+    }
+    return $null
+}
 
-Function global:Get-CurrentInterpreter($item) {
+Function global:Get-CurrentInterpreter($item, [switch] $Executable) {
     if (-not [string]::IsNullOrEmpty($item)) {
-        return $Global:interpretersComboBox.SelectedItem."$item"
+        $item = $Global:interpretersComboBox.SelectedItem."$item"
+        if ($Executable) {
+            $item = Get-ExistingFilePathOrNull $item
+        }
+        return $item
     } else {
         return $Global:interpretersComboBox.SelectedItem
     }
@@ -496,7 +527,7 @@ Function Get-PythonOtherPackages {
 
 Function Get-CondaPackages() {
     $condaPackages = New-Object System.Collections.ArrayList
-    $conda_exe = Get-CurrentInterpreter 'CondaExe'
+    $conda_exe = Get-CurrentInterpreter 'CondaExe' -Executable
 
     if ($conda_exe) {
         $arguments = New-Object System.Collections.ArrayList
@@ -678,34 +709,7 @@ Function Get-InterpreterRecord($path, $items, $user = $false) {
         return
     }
 
-    Function Guess-EnvPath ($fileName, [switch] $directory, [switch] $Executable) {
-        $subdirs = @('\'; '\Scripts\'; '\.venv\Scripts\'; '\.venv\'; '\env\Scripts\'; '\env\'; '\bin\')
-        foreach ($tryPath in $subdirs) {
-            $target = "${path}${tryPath}${fileName}"
-            if ($directory) {
-                if (Exists-Directory $target) {
-                    return $target
-                }
-            } else {
-                if ($Executable) {
-                    $executableExtensions = @('exe'; 'bat'; 'cmd'; 'ps1')
-                    foreach ($tryExtension in $executableExtensions) {
-                        $target = "${path}${tryPath}${fileName}.${tryExtension}"
-                        if (Exists-File $target) {
-                            return $target
-                        }
-                    }
-                } else {
-                    if (Exists-File $target) {
-                        return $target
-                    }
-                }
-            }
-        }
-        return $null
-    }
-
-    $python = Guess-EnvPath 'python' -Executable
+    $python = Guess-EnvPath $path 'python' -Executable
     if (-not $python) {
         return
     }
@@ -717,15 +721,15 @@ Function Get-InterpreterRecord($path, $items, $user = $false) {
         Version              = "$version";
         Arch                 = (Test-is64Bit $python).FileType;
         PythonExe            = $python;
-        PipExe               = Guess-EnvPath 'pip' -Executable;
-        CondaExe             = Guess-EnvPath 'conda' -Executable;
-        VirtualenvExe        = Guess-EnvPath 'virtualenv' -Executable;
-        VenvActivate         = Guess-EnvPath 'activate' -Executable;
-        PipenvExe            = Guess-EnvPath 'pipenv' -Executable;
-        RequirementsTxt      = Guess-EnvPath 'requirements.txt';
-        Pipfile              = Guess-EnvPath 'Pipfile';
-        PipfileLock          = Guess-EnvPath 'Pipfile.lock';
-        SitePackagesDir      = Guess-EnvPath 'Lib\site-packages' -directory;
+        PipExe               = Guess-EnvPath $path 'pip' -Executable;
+        CondaExe             = Guess-EnvPath $path 'conda' -Executable;
+        VirtualenvExe        = Guess-EnvPath $path 'virtualenv' -Executable;
+        VenvActivate         = Guess-EnvPath $path 'activate' -Executable;
+        PipenvExe            = Guess-EnvPath $path 'pipenv' -Executable;
+        RequirementsTxt      = Guess-EnvPath $path 'requirements.txt';
+        Pipfile              = Guess-EnvPath $path 'Pipfile';
+        PipfileLock          = Guess-EnvPath $path 'Pipfile.lock';
+        SitePackagesDir      = Guess-EnvPath $path 'Lib\site-packages' -directory;
         User                 = $user;
         EnvironmentVariables = $null; 
     }
@@ -1537,7 +1541,7 @@ Function Add-CreateEnvButtonMenu {
                 $output = & (Get-CurrentInterpreter 'VirtualenvExe') --python="$(Get-CurrentInterpreter 'PythonExe')" $path 2>&1                
                 return $output
             };
-            IsAccessible = { [bool] (Get-CurrentInterpreter 'VirtualenvExe') };
+            IsAccessible = { [bool] (Get-CurrentInterpreter 'VirtualenvExe' -Executable) };
         };
         @{
             MenuText = 'with pipenv';
@@ -1548,7 +1552,7 @@ Function Add-CreateEnvButtonMenu {
                 $output = & (Get-CurrentInterpreter 'PipenvExe') --python "$(Get-CurrentInterpreter 'Version')" install 2>&1
                 return $output
             };
-            IsAccessible = { [bool] (Get-CurrentInterpreter 'PipenvExe') };
+            IsAccessible = { [bool] (Get-CurrentInterpreter 'PipenvExe' -Executable) };
         };
         @{
             MenuText = 'with conda';
@@ -1558,7 +1562,7 @@ Function Add-CreateEnvButtonMenu {
                 $output = & (Get-CurrentInterpreter 'CondaExe') create -y -q --prefix $path python=$version 2>&1
                 return $output
             };
-            IsAccessible = { [bool] (Get-CurrentInterpreter 'CondaExe') };
+            IsAccessible = { [bool] (Get-CurrentInterpreter 'CondaExe' -Executable) };
         };
         @{
             NoTargetPath = $true;
@@ -1585,10 +1589,15 @@ Function Add-CreateEnvButtonMenu {
             MenuText = 'Install conda';
             Code = {
                 param($path)
-                $output = & (Get-CurrentInterpreter 'CondaExe') -m pip install conda 2>&1                 
-                return $output
+                $menuinst = Validate-GitLink "https://github.com/ContinuumIO/menuinst@1.4.8"  # required by conda
+                $output_0 = & (Get-CurrentInterpreter 'PythonExe') -m pip install $menuinst 2>&1                 
+                $output_1 = & (Get-CurrentInterpreter 'PythonExe') -m pip install conda 2>&1                 
+                $CondaExe = Guess-EnvPath (Get-CurrentInterpreter 'Path') 'conda' -Executable
+                $record = Get-CurrentInterpreter
+                $record.CondaExe = $CondaExe
+                return "$output_0`n$output_1"
             };
-            IsAccessible = { -not [bool] (Get-CurrentInterpreter 'CondaExe') };
+            IsAccessible = { -not [bool] (Get-CurrentInterpreter 'CondaExe' -Executable) };
         };
         @{
             Persistent = $true;
@@ -2631,7 +2640,7 @@ Function Store-CheckedPipSearchResults() {
 }
 
 Function Get-PipSearchResults($request) {
-    $pip_exe = Get-CurrentInterpreter 'PipExe'
+    $pip_exe = Get-CurrentInterpreter 'PipExe' -Executable
     if (!$pip_exe) {
         Write-PipLog 'pip is not found!'
         return 0
@@ -2665,8 +2674,8 @@ Function Get-PipSearchResults($request) {
 }
 
 Function Get-CondaSearchResults($request) {
-    $conda_exe = Get-CurrentInterpreter 'CondaExe'
-    if (! $conda_exe) {
+    $conda_exe = Get-CurrentInterpreter 'CondaExe' -Executable
+    if (-not $conda_exe) {
         Write-PipLog 'conda is not found!'
         return 0
     }
@@ -2772,9 +2781,9 @@ Function Get-SearchResults($request) {
     Write-PipLog
     Write-PipLog 'Updating package list... '
     
-    $python_exe = Get-CurrentInterpreter 'PythonExe'
-    $pip_exe = Get-CurrentInterpreter 'PipExe'
-    $conda_exe = Get-CurrentInterpreter 'CondaExe'
+    $python_exe = Get-CurrentInterpreter 'PythonExe' -Executable
+    $pip_exe = Get-CurrentInterpreter 'PipExe' -Executable
+    $conda_exe = Get-CurrentInterpreter 'CondaExe' -Executable
     
     if ($python_exe) {
         Write-PipLog (& $python_exe --version 2>&1)
@@ -2946,7 +2955,7 @@ Function Set-SelectedRow($selectedRow) {
 Function Check-PipDependencies {
     Write-PipLog 'Checking dependencies...'
 
-    $pip_exe = Get-CurrentInterpreter 'PipExe'
+    $pip_exe = Get-CurrentInterpreter 'PipExe' -Executable
     if (!$pip_exe) {
         Write-PipLog 'pip is not found!'
         return
