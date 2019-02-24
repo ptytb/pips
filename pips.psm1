@@ -1877,6 +1877,28 @@ Some packages may generate garbage or show windows, don't panic.
         };
         @{
             Persistent=$true;
+            MenuText = 'Show pip cache info';
+            Code = {
+                foreach ($type in @('pip', 'wheel')) {
+                    $getCacheFolderScript_b10 = "from pip.utils.appdirs import user_cache_dir; print(user_cache_dir('$type'))"
+                    $getCacheFolderScript_a10 = "from pip._internal.utils.appdirs import user_cache_dir; print(user_cache_dir('$type'))"
+                    
+                    $cacheFolder = & (Get-CurrentInterpreter 'PythonExe') -c $getCacheFolderScript_b10
+                    if ([string]::IsNullOrWhiteSpace($cacheFolder)) {
+                        $cacheFolder = & (Get-CurrentInterpreter 'PythonExe') -c $getCacheFolderScript_a10
+                    }
+                    if ([string]::IsNullOrWhiteSpace($cacheFolder)) {
+                        Write-PipLog "Could not determine $type cache location."
+                        continue
+                    }
+                    
+                    $stats = Get-ChildItem -Recurse $cacheFolder | Measure-Object -Property Length -Sum
+                    Write-PipLog ("`n$type cache at {0}`nFiles: {1}`nSize: {2} MB" -f $cacheFolder,$stats.Count,[math]::Round($stats.Sum / 1048576, 2))
+                }
+            };
+        };
+        @{
+            Persistent=$true;
             MenuText = 'Clear log';
             Code = {
                 Clear-PipLog
