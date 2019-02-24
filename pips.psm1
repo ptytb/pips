@@ -1589,13 +1589,23 @@ Function Add-CreateEnvButtonMenu {
             MenuText = 'Install conda';
             Code = {
                 param($path)
-                $menuinst = Validate-GitLink "https://github.com/ContinuumIO/menuinst@1.4.8"  # required by conda
+                # menuinst, cytoolz are required by conda to run
+                $menuinst = Validate-GitLink "https://github.com/ContinuumIO/menuinst@1.4.8"
                 $output_0 = & (Get-CurrentInterpreter 'PythonExe') -m pip install $menuinst 2>&1                 
-                $output_1 = & (Get-CurrentInterpreter 'PythonExe') -m pip install conda 2>&1                 
+                $output_1 = & (Get-CurrentInterpreter 'PythonExe') -m pip install cytoolz conda 2>&1                 
                 $CondaExe = Guess-EnvPath (Get-CurrentInterpreter 'Path') 'conda' -Executable
+                
+                # conda needs a little caress to run together with pip
+                $path = (Get-CurrentInterpreter 'Path')
+                $stub = "$path\Lib\site-packages\conda\cli\pip_warning.py"
+                $main = "$path\Lib\site-packages\conda\cli\main.py"
+                Move-Item $stub "${stub}_"
+                Copy-Item $main $stub
+                # New-Item -Path $stub -ItemType SymbolicLink -Value $main
+                
                 $record = Get-CurrentInterpreter
                 $record.CondaExe = $CondaExe
-                return "$output_0`n$output_1"
+                return [String]::Concat($output_0, "`n", $output_1)
             };
             IsAccessible = { -not [bool] (Get-CurrentInterpreter 'CondaExe' -Executable) };
         };
