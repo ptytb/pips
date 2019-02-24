@@ -2694,7 +2694,9 @@ Function Get-CondaSearchResults($request) {
     # channels [-c]:
     #   anaconda = main, free, pro, msys2[windows]
     # --info should give better details but not supported on every conda
-    $items = & $conda_exe search -c anaconda --json $request | ConvertFrom-Json
+    $channels = @('anaconda'; 'defaults'; 'conda-forge')
+    $chanArgs = "-c $($channels -join ' -c ')"
+    $items = & $conda_exe search $chanArgs --json $request | ConvertFrom-Json
 
     $count = 0
     $items.PSObject.Properties | ForEach-Object {
