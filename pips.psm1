@@ -217,7 +217,14 @@ Function global:Exists-File($path, [string] $Mask) {
     return [System.IO.File]::Exists($path)
 }
 
+$invalidPathCharacters = [System.IO.Path]::GetInvalidPathChars()
 Function global:Exists-Directory($path) {
+    if ([string]::IsNullOrWhiteSpace($path)) {
+        return $false
+    }
+    if ($path.IndexOfAny($invalidPathCharacters) -ne -1) {
+        return $false
+    }
     return [System.IO.Directory]::Exists($path)
 }
 
@@ -260,7 +267,21 @@ $outdatedOnly = $true
 $interpreters = $null
 $autoCompleteIndex = $null
 $Global:interpretersComboBox = $null
-$global:installAutoCompleteMode = $null  # name, version, directory, tag_remote, tag_local, wheel
+
+Add-Type -TypeDefinition @"
+   public enum InstallAutoCompleteMode
+   {
+      Name,
+      Version,
+      Directory,
+      GitTag,
+      WheelFile,
+      None
+   }
+"@
+
+[InstallAutoCompleteMode] $global:currentInstallAutoCompleteMode = [InstallAutoCompleteMode]::None
+
 
 $iconBase64_DownArrow = @'
 iVBORw0KGgoAAAANSUhEUgAAAAsAAAALCAYAAACprHcmAAAABGdBTUEAALGPC/xhBQAAAAlwSFlz
@@ -1014,62 +1035,92 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         $text = $cb.Text
         $n = $text.LastIndexOfAny('\/')
         $possibleDirectoryPath = $text.Substring(0, $n + 1)
+        $pathExists = (Exists-Directory $possibleDirectoryPath)
         
-        if ($text.Contains('==') -or $text.Contains('@')) {  # in cases when file path contains these, won't work; need state tracking
-            if (($cb.AutoCompleteSource -eq [System.Windows.Forms.AutoCompleteSource]::FileSystemDirectories) `
-                -or $cb.AutoCompleteCustomSource.Equals($Script:autoCompleteIndex) `
-                -or ($cb.AutoCompleteCustomSource.Equals($null))) {
-                $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
-                $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource                
-                
-                if ($text.Contains('==')) {  # completion for pip package version
-                    $packageName = $text -replace '==.*',''
-                    
-                    if (-not $Global:PyPiPackageJsonCache.ContainsKey($packageName)) {
-                        Download-PythonPackageDetails $packageName
-                    }
-                    
-                    $releases = $Global:PyPiPackageJsonCache[$packageName].'releases' | Get-Member -Type Properties | ForEach-Object { $_.Name }
-                    $completions_format = "{0}=={1}"
-                }
-                else {  # completion for git repo tags
-                    $packageName = $text -replace '@.*',''
-                    $gitLinkInfo = Validate-GitLink $packageName -AsObject $true
-                    $releases = Get-GithubRepoTags $gitLinkInfo
-                    $completions_format = "{0}@{1}"
-                }
-                
-                $autoCompletePackageVersion = New-Object System.Windows.Forms.AutoCompleteStringCollection                
-                foreach ($release in $releases) {
-                    $autoCompletePackageVersion.Add($completions_format -f @($packageName,$release))
-                }
-                $cb.AutoCompleteCustomSource = $autoCompletePackageVersion
-            }
-        } elseif (($n -gt -1) -and (Exists-Directory $possibleDirectoryPath)) {
+        if ($text.Contains('==') -and -not $pathExists) {
+            return [InstallAutoCompleteMode]::Version
+        } elseif ($text.Contains('@') -and ($pathExists -or (Validate-GitLink ($text -replace '@.*$','')))) {
+            return [InstallAutoCompleteMode]::GitTag         
+        } elseif ($pathExists) {
             if (Exists-File $possibleDirectoryPath -Mask '*.whl') {
-                Write-Host 'PP='$possibleDirectoryPath
+                return [InstallAutoCompleteMode]::WheelFile
+            } else {
+                return [InstallAutoCompleteMode]::Directory
+            }
+        } else {
+            return [InstallAutoCompleteMode]::Name
+        }
+    }.GetNewClosure()
+    
+    $FuncSetAutoCompleteMode = {
+        param([InstallAutoCompleteMode] $mode)
+        
+        # Write-Host "ACTIVATING MODE !!! $mode"
+        
+        $text = $cb.Text
+        $n = $text.LastIndexOfAny('\/')
+        $possibleDirectoryPath = $text.Substring(0, $n + 1)
+        
+        switch ($mode)
+        {
+            ([InstallAutoCompleteMode]::Name) {                 
+                $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::Suggest
+                $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
+                $cb.AutoCompleteCustomSource = $Script:autoCompleteIndex
+            }
+            
+            ([InstallAutoCompleteMode]::Directory) {                 
+                $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
+                $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::FileSystemDirectories
+                $cb.AutoCompleteCustomSource = $null
+            }
+            
+            ([InstallAutoCompleteMode]::Version) {                 
+                $packageName = $text -replace '==.*',''
+                
+                if (-not $Global:PyPiPackageJsonCache.ContainsKey($packageName)) {
+                    Download-PythonPackageDetails $packageName
+                }
+                
+                $releases = $Global:PyPiPackageJsonCache[$packageName].'releases' | Get-Member -Type Properties | ForEach-Object { $_.Name }
+                $completions_format = "{0}=={1}"
+            }
+            
+            ([InstallAutoCompleteMode]::GitTag) {                 
+                $packageName = $text -replace '@.*',''
+                $gitLinkInfo = Validate-GitLink $packageName -AsObject $true
+                $releases = Get-GithubRepoTags $gitLinkInfo
+                $completions_format = "{0}@{1}"
+            }
+            
+            ([InstallAutoCompleteMode]::WheelFile) {                 
+                # Write-Host 'PP='$possibleDirectoryPath
                 $autoCompleteWheels = New-Object System.Windows.Forms.AutoCompleteStringCollection
                 $wheelFiles = Get-ChildItem -Path $possibleDirectoryPath -Filter '*.whl' -File -Depth 0
                 foreach ($wheel in $wheelFiles) {
-                    Write-Host 'WHEEL=' $($wheel.Name)
+                    # Write-Host 'WHEEL=' $($wheel.Name)
                     [void]$autoCompleteWheels.Add("$possibleDirectoryPath$($wheel.Name)")
                 }
                 
                 $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
                 $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
                 $cb.AutoCompleteCustomSource = $autoCompleteWheels
-            } elseif ($cb.AutoCompleteSource -ne [System.Windows.Forms.AutoCompleteSource]::FileSystemDirectories) {
-                $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
-                $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::FileSystemDirectories
-                $cb.AutoCompleteCustomSource = $null
             }
-        } else {
-            if (-not ($cb.AutoCompleteCustomSource.Equals($Script:autoCompleteIndex))) {
-                $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::Suggest
-                $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
-                $cb.AutoCompleteCustomSource = $Script:autoCompleteIndex
+            
+            Default { throw "Wrong completion mode: $mode $($mode.GetType())" }
+        }        
+            
+        if ($mode -in @([InstallAutoCompleteMode]::Version, [InstallAutoCompleteMode]::GitTag)) {
+            $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
+            $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource                
+            $autoCompletePackageVersion = New-Object System.Windows.Forms.AutoCompleteStringCollection                
+            foreach ($release in $releases) {
+                $autoCompletePackageVersion.Add($completions_format -f @($packageName,$release))
             }
+            $cb.AutoCompleteCustomSource = $autoCompletePackageVersion
         }
+        
+        $global:currentInstallAutoCompleteMode = $mode
     }.GetNewClosure()
     
     # TODO: Move popup to to FuncRPCSpellCheck 
@@ -1208,7 +1259,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         # & $FuncShowToolTip "$text" "Packages with similar names found in the index.`n`nDid you mean:`n`n$candidatesToolTipText"
         Write-PipLog -UpdateLastLine "Suggestions for '$($result.Request)': $($result.Candidates)"
         if ($cb.Text -ne $result.Request) {
-            & $FuncRPCSpellCheck $cb.Text 1
+            $null = & $FuncRPCSpellCheck $cb.Text 1
         }
     }
 
@@ -1216,8 +1267,16 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         param($cb)
         $text = $cb.Text
         
-        & $FuncGuessAutoCompleteMode         
-        & $FuncRPCSpellCheck $text 1
+        $guessedCompletionMode = & $FuncGuessAutoCompleteMode         
+        # Write-Host 'MODE GUESS=' $guessedCompletionMode
+        if ($guessedCompletionMode -ne $global:currentInstallAutoCompleteMode) {
+            # Write-Host 'MODE WAS=' $global:currentInstallAutoCompleteMode 'CHANGE TO=' $guessedCompletionMode
+            $null = & $FuncSetAutoCompleteMode $guessedCompletionMode
+        }
+        
+        if ($guessedCompletionMode -eq [InstallAutoCompleteMode]::Name) {
+            $null = & $FuncRPCSpellCheck $text 1
+        }
     });
     
     $cb.Location = New-Object Drawing.Point 7,60
@@ -1252,7 +1311,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
             } else {
                 Write-PipLog -UpdateLastLine `
                     "Searching for similar package names. Wait for ~5 sec..."             
-                & $FuncRPCSpellCheck $cb.Text 2
+                $null = & $FuncRPCSpellCheck $cb.Text 2
             }
         }        
     }.GetNewClosure())
