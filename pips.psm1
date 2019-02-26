@@ -1603,7 +1603,7 @@ Function Add-CreateEnvButtonMenu {
         };
         @{
             NoTargetPath = $true;
-            MenuText = 'Install virtualenv';
+            MenuText = '(tool required) Install virtualenv';
             Code = {
                 param($path)
                 $output = & (Get-CurrentInterpreter 'PythonExe') -m pip install virtualenv 2>&1                 
@@ -1613,7 +1613,7 @@ Function Add-CreateEnvButtonMenu {
         };
         @{
             NoTargetPath = $true;
-            MenuText = 'Install pipenv';
+            MenuText = '(tool required) Install pipenv';
             Code = {
                 param($path)
                 $output = & (Get-CurrentInterpreter 'PythonExe') -m pip install pipenv 2>&1                 
@@ -1623,7 +1623,7 @@ Function Add-CreateEnvButtonMenu {
         };
         @{
             NoTargetPath = $true;
-            MenuText = 'Install conda';
+            MenuText = '(tool required) Install conda';
             Code = {
                 param($path)
                 # menuinst, cytoolz are required by conda to run
