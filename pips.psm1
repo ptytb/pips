@@ -209,7 +209,11 @@ Function global:Get-PipsSetting($name, [switch] $AsArgs, [switch] $First) {
     }
 }
 
-Function global:Exists-File($path) {
+Function global:Exists-File($path, [string] $Mask) {
+    if ($Mask) {
+        $candidates = Get-ChildItem -Path $path -Filter $Mask -Depth 0 -File | Select-Object -First 1
+        return ($candidates -ne $null)
+    }
     return [System.IO.File]::Exists($path)
 }
 
@@ -256,6 +260,7 @@ $outdatedOnly = $true
 $interpreters = $null
 $autoCompleteIndex = $null
 $Global:interpretersComboBox = $null
+$global:installAutoCompleteMode = $null  # name, version, directory, tag_remote, tag_local, wheel
 
 $iconBase64_DownArrow = @'
 iVBORw0KGgoAAAANSUhEUgAAAAsAAAALCAYAAACprHcmAAAABGdBTUEAALGPC/xhBQAAAAlwSFlz
@@ -1008,6 +1013,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
     $FuncGuessAutoCompleteMode = {
         $text = $cb.Text
         $n = $text.LastIndexOfAny('\/')
+        $possibleDirectoryPath = $text.Substring(0, $n + 1)
         
         if ($text.Contains('==') -or $text.Contains('@')) {  # in cases when file path contains these, won't work; need state tracking
             if (($cb.AutoCompleteSource -eq [System.Windows.Forms.AutoCompleteSource]::FileSystemDirectories) `
@@ -1039,8 +1045,20 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
                 }
                 $cb.AutoCompleteCustomSource = $autoCompletePackageVersion
             }
-        } elseif (($n -gt -1) -and (Exists-Directory $text.Substring(0, $n + 1))) {
-            if ($cb.AutoCompleteSource -ne [System.Windows.Forms.AutoCompleteSource]::FileSystemDirectories) {
+        } elseif (($n -gt -1) -and (Exists-Directory $possibleDirectoryPath)) {
+            if (Exists-File $possibleDirectoryPath -Mask '*.whl') {
+                Write-Host 'PP='$possibleDirectoryPath
+                $autoCompleteWheels = New-Object System.Windows.Forms.AutoCompleteStringCollection
+                $wheelFiles = Get-ChildItem -Path $possibleDirectoryPath -Filter '*.whl' -File -Depth 0
+                foreach ($wheel in $wheelFiles) {
+                    Write-Host 'WHEEL=' $($wheel.Name)
+                    [void]$autoCompleteWheels.Add("$possibleDirectoryPath$($wheel.Name)")
+                }
+                
+                $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
+                $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
+                $cb.AutoCompleteCustomSource = $autoCompleteWheels
+            } elseif ($cb.AutoCompleteSource -ne [System.Windows.Forms.AutoCompleteSource]::FileSystemDirectories) {
                 $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
                 $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::FileSystemDirectories
                 $cb.AutoCompleteCustomSource = $null
