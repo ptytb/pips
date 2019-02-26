@@ -2782,22 +2782,17 @@ Function Get-CondaSearchResults($request) {
             $name = $_.Name
             $item = $_.Value
             
-            $row = $dataModel.NewRow()
-            $row.Select = $false
-            $row.Package = $name
-            
-            if ($item.GetType().BaseType -eq [System.Array]) {
-                # If we've a list of versions, take only the first for now
-                $item = $item[0]
-            }
-            
-            $row.Version = $item.version
-            $row.Description = "[channel: $channel] $($item.license_family)"
-            $row.Type = 'conda'
-            $row.Status = ''
-            $dataModel.Rows.Add($row)
-            
-            $count += 1
+            foreach ($package in $item) {
+                $row = $dataModel.NewRow()
+                $row.Select = $false
+                $row.Package = $name                 
+                $row.Version = $package.version
+                $row.Description = "channel: $channel, arch: $($package.arch), build: $($package.build), date: $($package.date), license: $($package.license_family)"
+                $row.Type = 'conda'
+                $row.Status = ''
+                $dataModel.Rows.Add($row)
+                $count += 1
+            }             
         }
         
         Write-PipLog "$count packages."
