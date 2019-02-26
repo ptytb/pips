@@ -188,7 +188,7 @@ Function global:Delete-CurrentInterpreter() {
     }
 }
 
-Function global:Get-PipsSetting($name, [switch] $AsArgs) {
+Function global:Get-PipsSetting($name, [switch] $AsArgs, [switch] $First) {
     switch ($name)
     {
         "CondaChannels" {             
@@ -196,9 +196,12 @@ Function global:Get-PipsSetting($name, [switch] $AsArgs) {
             if (-not $channels -or $channels.Length -eq 0) {
                 $channels = @('anaconda'; 'defaults'; 'conda-forge')
             }
+            if ($First) {
+                $channels = @($channels[0])
+            }
             if ($AsArgs) {
                 $channels = "-c $($channels -join ' -c ')"
-            }
+            }             
             return $channels
         }
         
@@ -355,7 +358,7 @@ Function Convert-Base64ToICO($base64Text) {
     return $icon
 }
 
-Function global:Write-PipLog([switch] $UpdateLastLine) {
+Function global:Write-PipLog([switch] $UpdateLastLine, [switch] $NoNewline) {
     if ($UpdateLastLine) {
         $text = $args -join ' '
         $logView.Select($logView.GetFirstCharIndexFromLine($logView.Lines.Count - 1), $logView.Text.Length);
@@ -365,7 +368,9 @@ Function global:Write-PipLog([switch] $UpdateLastLine) {
     foreach ($obj in $args) {
         $logView.AppendText("$obj")
     }
-    $logView.AppendText("`n")
+    if (-not $NoNewline) {
+        $logView.AppendText("`n")
+    }     
     $logView.ScrollToCaret()
 }
 
@@ -595,9 +600,9 @@ $actionCommands = @{
             return $json.files
         };
         update        = { return (& (Get-CurrentInterpreter 'CondaExe') update --prefix (Get-CurrentInterpreter 'Path') --yes -q $args 2>&1) };
-        install       = { return (& (Get-CurrentInterpreter 'CondaExe') install (Get-PipsSetting 'CondaChannels' -AsArgs) --prefix (Get-CurrentInterpreter 'Path') --yes -q --no-shortcuts $args 2>&1) };
-        install_dry   = { return (& (Get-CurrentInterpreter 'CondaExe') install (Get-PipsSetting 'CondaChannels' -AsArgs) --prefix (Get-CurrentInterpreter 'Path') --dry-run $args 2>&1) };
-        install_nodep = { return (& (Get-CurrentInterpreter 'CondaExe') install (Get-PipsSetting 'CondaChannels' -AsArgs) --prefix (Get-CurrentInterpreter 'Path') --yes -q --no-shortcuts --no-deps --no-update-dependencies   $args 2>&1) };
+        install       = { return (& (Get-CurrentInterpreter 'CondaExe') install (Get-PipsSetting 'CondaChannels' -AsArgs -First) --prefix (Get-CurrentInterpreter 'Path') --yes -q --no-shortcuts $args 2>&1) };
+        install_dry   = { return (& (Get-CurrentInterpreter 'CondaExe') install (Get-PipsSetting 'CondaChannels' -AsArgs -First) --prefix (Get-CurrentInterpreter 'Path') --dry-run $args 2>&1) };
+        install_nodep = { return (& (Get-CurrentInterpreter 'CondaExe') install (Get-PipsSetting 'CondaChannels' -AsArgs -First) --prefix (Get-CurrentInterpreter 'Path') --yes -q --no-shortcuts --no-deps --no-update-dependencies   $args 2>&1) };
         download      = { return 'Not supported on conda' };
         uninstall     = { return (& (Get-CurrentInterpreter 'CondaExe') uninstall --prefix (Get-CurrentInterpreter 'Path') --yes $args 2>&1) };
     };
@@ -1864,7 +1869,7 @@ Some packages may generate garbage or show windows, don't panic.
             MenuText = 'Edit conda channels';
             Code = {
                 $channels = $global:settings.condaChannels -join ' '
-                $list = Request-UserString "Enter conda channels, separated with space.`n`nLeave empty to use defaults." 'Edit conda channels' $channels
+                $list = Request-UserString "Enter conda channels, separated with space.`n`nLeave empty to use defaults.`n`nPopular channels: conda-forge anaconda defaults bioconda`n`nThe first channel is for installing, the others are for searching only." 'Edit conda channels' $channels
                 if ($list -eq $null) {
                     return
                 }
@@ -2764,36 +2769,42 @@ Function Get-CondaSearchResults($request) {
     # channels [-c]:
     #   anaconda = main, free, pro, msys2[windows]
     # --info should give better details but not supported on every conda
-    $channels = Get-PipsSetting 'CondaChannels'
-    Write-PipLog "Searching on channels: $($channels -join ', ')"
+    $totalCount = 0
+    $channels = Get-PipsSetting 'CondaChannels'     
     
-    $chanArgs = Get-PipsSetting 'CondaChannels' -AsArgs     
-    $items = & $conda_exe search $chanArgs --json $request | ConvertFrom-Json
-
-    $count = 0
-    $items.PSObject.Properties | ForEach-Object {
-        $name = $_.Name
-        $item = $_.Value
-
-        $row = $dataModel.NewRow()
-        $row.Select = $false
-        $row.Package = $name
-
-        if ($item.GetType().BaseType -eq [System.Array]) {
-            # If we've a list of versions, take only the first for now
-            $item = $item[0]
+    foreach ($channel in $channels) {
+        Write-PipLog "Searching on channel: $channel ... " -NoNewline
+        
+        $items = & $conda_exe search -c $channel --json $request | ConvertFrom-Json
+        
+        $count = 0
+        $items.PSObject.Properties | ForEach-Object {
+            $name = $_.Name
+            $item = $_.Value
+            
+            $row = $dataModel.NewRow()
+            $row.Select = $false
+            $row.Package = $name
+            
+            if ($item.GetType().BaseType -eq [System.Array]) {
+                # If we've a list of versions, take only the first for now
+                $item = $item[0]
+            }
+            
+            $row.Version = $item.version
+            $row.Description = "[channel: $channel] $($item.license_family)"
+            $row.Type = 'conda'
+            $row.Status = ''
+            $dataModel.Rows.Add($row)
+            
+            $count += 1
         }
-
-        $row.Version = $item.version
-        $row.Description = $item.license_family
-        $row.Type = 'conda'
-        $row.Status = ''
-        $dataModel.Rows.Add($row)
-
-        $count += 1
+        
+        Write-PipLog "$count packages."
+        $totalCount += $count
     }
 
-    return $count
+    return $totalCount
 }
 
 Function Get-GithubSearchResults ($request) {
