@@ -1446,7 +1446,7 @@ Function Generate-FormSearch {
     Write-PipLog "Searching for $input"
     Write-PipLog 'Double click or [Ctrl+Enter] a table row to open a package home page in browser'
     $stats = Get-SearchResults $input
-    Write-PipLog "Found $($stats.Total) packages: $($stats.PipCount) pip, $($stats.CondaCount) conda, $($stats.GithubCount) github, $($stat.PluginCount) from plugins. Total $($dataModel.Rows.Count) packages in list."
+    Write-PipLog "Found $($stats.Total) packages: $($stats.PipCount) pip, $($stats.CondaCount) conda, $($stats.GithubCount) github, $($stats.PluginCount) from plugins. Total $($dataModel.Rows.Count) packages in list."
     Write-PipLog
 }
 
