@@ -282,6 +282,9 @@ Add-Type -TypeDefinition @"
 
 [InstallAutoCompleteMode] $global:currentInstallAutoCompleteMode = [InstallAutoCompleteMode]::None
 
+$global:packageTypes = [System.Collections.ArrayList]::new()
+$global:packageTypes.AddRange(@('pip', 'conda', 'git', 'wheel'))
+
 
 $iconBase64_DownArrow = @'
 iVBORw0KGgoAAAANSUhEUgAAAAsAAAALCAYAAACprHcmAAAABGdBTUEAALGPC/xhBQAAAAlwSFlz
@@ -385,6 +388,9 @@ Function Convert-Base64ToICO($base64Text) {
 }
 
 Function global:Write-PipLog([switch] $UpdateLastLine, [switch] $NoNewline) {
+    if (-not $logView) {
+        return
+    }
     if ($UpdateLastLine) {
         $text = $args -join ' '
         $logView.Select($logView.GetFirstCharIndexFromLine($logView.Lines.Count - 1), $logView.Text.Length);
@@ -423,7 +429,7 @@ Function NewLine-TopLayout() {
 Function Add-Button ($name, $handler) {
     $button = New-Object Windows.Forms.Button
     $button.Text = $name
-    $button.Add_Click({ $handler.Invoke( @($Script:button) ) }.GetNewClosure())
+    $button.Add_Click({ [void] $handler.Invoke( @($Script:button) ) }.GetNewClosure())
     Add-TopWidget $button
     return $button
 }
@@ -434,8 +440,10 @@ Function Add-ButtonMenu ($text, $tools, $onclick) {
     $handler = {
         param($button)
         $menuStrip = New-Object System.Windows.Forms.ContextMenuStrip
+        
+        # Firstly, list non-persistent (more context-related) menu items
         foreach ($tool in $tools) {
-            if ($tool.Persistent) {
+            if ($tool.Persistent -or $tool.IsSeparator) {
                 continue
             }            
             if ($tool.Contains('IsAccessible') -and -not $tool.IsAccessible.Invoke()) {
@@ -443,11 +451,15 @@ Function Add-ButtonMenu ($text, $tools, $onclick) {
             }
             $menuStrip.Items.Add($tool.MenuText)
         }
+        
         if ($menuStrip.Items.Count -gt 0) {
             $menuStrip.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
         }
+        
         foreach ($tool in $tools) {
-            if ($tool.Persistent) {
+            if ($tool.IsSeparator) {
+                $menuStrip.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+            } elseif ($tool.Persistent) {
                 $menuStrip.Items.Add($tool.MenuText)
             }
         }
@@ -458,7 +470,7 @@ Function Add-ButtonMenu ($text, $tools, $onclick) {
             foreach ($tool in $tools) {
                 if ($tool.MenuText -eq $_.ClickedItem) {
                     $Script:menuStrip.Hide()
-                    $Script:onclick.Invoke( @($tool) )
+                    [void] $Script:onclick.Invoke( @($tool) )
                 }
             }
         }.GetNewClosure())
@@ -482,7 +494,7 @@ Function Add-Label ($name) {
 
 Function Add-Input ($handler) {
     $input = New-Object Windows.Forms.TextBox
-    $input.Add_TextChanged({ $handler.Invoke( @($Script:input) ) }.GetNewClosure())
+    $input.Add_TextChanged({ [void] $handler.Invoke( @($Script:input) ) }.GetNewClosure())
     Add-TopWidget $input
     return $input
 }
@@ -764,11 +776,13 @@ Function Get-InterpreterRecord($path, $items, $user = $false) {
     }
     $versionString = & $python --version 2>&1
     $version = [regex]::Match($versionString, '\s+(\d+\.\d+)').Groups[1]
+    $arch = (Test-is64Bit $python).FileType
     
     $action = New-Object psobject -Property @{
         Path                 = $path;
         Version              = "$version";
-        Arch                 = (Test-is64Bit $python).FileType;
+        Arch                 = $arch;
+        Bits                 = @{"x64"="64"; "x86"="32";}[$arch];
         PythonExe            = $python;
         PipExe               = Guess-EnvPath $path 'pip' -Executable;
         CondaExe             = Guess-EnvPath $path 'conda' -Executable;
@@ -1002,14 +1016,13 @@ Function global:Prepare-PackageAutoCompletion {
 
     $Script:autoCompleteIndex = New-Object System.Windows.Forms.AutoCompleteStringCollection
     
-    # $dbg_n = 0
     [int] $maxLength = 0
     foreach ($item in $Global:bktree.index_id_to_name.Values) {
-        # $dbg_n++
-        # if ($dbg_n -gt 1000) {
-        #     break
-        # }
         [void] $autoCompleteIndex.Add($item)
+    }
+    
+    foreach ($plugin in $global:plugins) {         
+        [void] $autoCompleteIndex.AddRange($plugin.GetAllPackageNames())
     }
 }
 
@@ -1167,9 +1180,19 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
             return $true
         }
         
+        if (Exists-File $package -and $package.EndsWith('.whl')) {
+            $row = $dataModel.NewRow()
+            $row.Package = $package
+            $row.Type = 'wheel'
+            $row.Status = 'Pending'
+            $row.Select = $true
+            $dataModel.Rows.InsertAt($row, 0)
+            return $true
+        }
+        
         $version = [string]::Empty
         $type = [string]::Empty
-        $package_with_version = [regex] '^(?:(?<Type>[a-z]+):)?(?<Name>[^=]+)(?:==(?<Version>[^=]+))?$'
+        $package_with_version = [regex] '^(?:(?<Type>[a-z_]+):)?(?<Name>[^=]+)(?:==(?<Version>[^=]+))?$'
         $pv_match = $package_with_version.Match($package)
         $pv_group = $pv_match.Groups
         if ($pv_group.Count -gt 1) {
@@ -1197,7 +1220,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
             #Write-Host "old='$oldVersion', new='$version'"
             
             $IsDifferentVersion = $version -ne $oldVersion
-            $IsDifferentVersion = $IsDifferentVersion -or $type -and ($type -ne $oldRow.Type)
+            $IsDifferentVersion = $IsDifferentVersion -or ($type -and ($type -ne $oldRow.Type)) -or ([string]::IsNullOrEmpty($oldRow.Type) -xor [string]::IsNullOrEmpty($type))
         } else {
             $IsDifferentVersion = $true
         }         
@@ -1227,8 +1250,8 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         }
 
         if (-not [string]::IsNullOrWhiteSpace($type)) {
-            if (-not ($type -in @('pip', 'conda', 'git'))) {
-                & $FuncShowToolTip "${type}:$package" "Wrong source type'$type'.`n`nSupported types: pip, conda, git"
+            if (-not ($type -in $global:packageTypes)) {
+                & $FuncShowToolTip "${type}:$package" "Wrong source type '$type'.`n`nSupported types: $($global:packageTypes -join ', ')"
                 return $false
             }
             $row.Type = $type
@@ -1407,7 +1430,8 @@ Function Request-UserString($message, $title, $default, $completionItems = $null
 }
 
 Function Generate-FormSearch {
-    $message = "Enter keywords to search PyPi, Conda, Github`n`nChecked items will be kept in the search list"
+    $pluginNames = ($global:plugins | ForEach-Object { $_.GetPluginName() }) -join ', '
+    $message = "Enter keywords to search with PyPi, Conda, Github and plugins: $pluginNames`n`nChecked items will be kept in the search list"
     $title = "pip, conda, github search"
     $default = ""
     $input = Request-UserString $message $title $default    
@@ -1416,9 +1440,9 @@ Function Generate-FormSearch {
     }
 
     Write-PipLog "Searching for $input"
-    Write-PipLog 'Double click or [Ctrl+Enter] a table row to open PyPi, Anaconda.com or github.com in browser'
+    Write-PipLog 'Double click or [Ctrl+Enter] a table row to open a package home page in browser'
     $stats = Get-SearchResults $input
-    Write-PipLog "Found $($stats.Total) packages: $($stats.PipCount) pip, $($stats.CondaCount) conda, $($stats.GithubCount) github. Total $($dataModel.Rows.Count) packages in list."
+    Write-PipLog "Found $($stats.Total) packages: $($stats.PipCount) pip, $($stats.CondaCount) conda, $($stats.GithubCount) github, $($stat.PluginCount) from plugins. Total $($dataModel.Rows.Count) packages in list."
     Write-PipLog
 }
 
@@ -1594,7 +1618,7 @@ Function global:Update-PythonPackageDetails {
         [Void][Reflection.Assembly]::LoadWithPartialName("System.Net")
         [Void][Reflection.Assembly]::LoadWithPartialName("System.Net.WebClient")
         $code = [scriptblock]::Create($params.FuncNetWorkaround)
-        $code.Invoke( @() )
+        [void] $code.Invoke( @() )
         $packageName = $params.PackageName
         $pypi_json_url = 'https://pypi.python.org/pypi/{0}/json'
         $jsonUrl = [String]::Format($pypi_json_url, $packageName)
@@ -1719,7 +1743,7 @@ Function Add-CreateEnvButtonMenu {
                 
                 $record = Get-CurrentInterpreter
                 $record.CondaExe = $CondaExe
-                return [String]::Concat($output_0, "`n", $output_1)
+                return @($output_0, $output_1) | ForEach-Object { $_ }
             };
             IsAccessible = { -not [bool] (Get-CurrentInterpreter 'CondaExe' -Executable) };
         };
@@ -1772,11 +1796,11 @@ Function Add-CreateEnvButtonMenu {
                 "New python environment with active version $($FuncGetPythonInfo.Invoke()) will be created"
             if ($path -eq $null) { return }
         }
-        Write-PipLog "Create $($tool.MenuText), please wait..."        
+        Write-PipLog "$($tool.MenuText), please wait..."        
         $output = $tool.Code.Invoke( @($path) )
         Write-PipLog ($output -join "`n")
 
-        $FuncUpdateInterpreters.Invoke($path)
+        [void] $FuncUpdateInterpreters.Invoke($path)
     }.GetNewClosure()
     
     $createEnvButton = Add-ButtonMenu 'env: Create' $tools $menuclick
@@ -1929,7 +1953,7 @@ Some packages may generate garbage or show windows, don't panic.
             Code = {
                 $version = Get-CurrentInterpreter 'Version'
                 $arch = Get-CurrentInterpreter 'Arch'
-                $bits = @{"x64"="64"; "x86"="32";}[$arch]
+                $bits = Get-CurrentInterpreter 'Bits'
                 $fileLines = New-Object System.Collections.ArrayList
                 $fileLines.Add("[defaults]")
                 $fileLines.Add("python=$version -$bits")
@@ -1985,8 +2009,18 @@ Some packages may generate garbage or show windows, don't panic.
             Code = {
                 Clear-PipLog
             };
-        };
+        };         
     )
+    
+    $menuArray = [System.Collections.ArrayList]::new()
+    [void] $menuArray.AddRange($menu)     
+    if ($global:plugins.Count -gt 0) {
+        [void] $menuArray.Add(@{ 'IsSeparator'=$true; })
+    }
+    foreach ($plugin in $global:plugins) {
+        [void] $menuArray.AddRange($plugin.GetToolMenuCommands())
+    }
+    $menu = $menuArray
     
     $menuclick = {
         param($item)
@@ -2002,7 +2036,17 @@ Function global:Show-CurrentPackageInBrowser() {
         $row = $view_row.DataBoundItem.Row
         $packageName = $row.Package
         $urlName = [System.Web.HttpUtility]::UrlEncode($packageName)
-        if ($row.Type -eq 'conda') {
+        
+        foreach ($plugin in $global:plugins) {
+            $packageHomepageFromPlugin = $plugin.GetPackageHomepage($packageName, $row.Type)
+            if ($packageHomepageFromPlugin) {
+                break
+            }
+        }
+        
+        if ($packageHomepageFromPlugin) {
+            Open-LinkInBrowser "$packageHomepageFromPlugin"
+        } elseif ($row.Type -eq 'conda') {
             $url = $anaconda_url
         } elseif ($row.Type -eq 'git') {
             $gitLinkInfo = Validate-GitLink $packageName -AsObject $true
@@ -2627,7 +2671,7 @@ class DocView {
                 }
                 if ($_.KeyCode -eq 'Enter') {
                     $charIndex = $self.docView.SelectionStart
-                    $jumpToWord.Invoke($charIndex)
+                    [void] $jumpToWord.Invoke($charIndex)
                 }
                 if ($_.KeyCode -eq 'Space') {
                     [System.Windows.Forms.SendKeys]::Send('{PGDN}')
@@ -2648,7 +2692,7 @@ class DocView {
 
         $this.docView.Add_MouseClick({
                 $clickedIndex = $self.docView.GetCharIndexFromPosition($_.Location)
-                $jumpToWord.Invoke($clickedIndex)
+                [void] $jumpToWord.Invoke($clickedIndex)
             }.GetNewClosure())
 
         $this.Resize()
@@ -2697,8 +2741,8 @@ class DocView {
             if ($match.Name -eq 0) {
                 continue
             }
-            $this.docView.Select($match.Index + $this.modifiedTextLengthDelta, $match.Length)
-            $selectionAlteringCode.Invoke($match.Index + $this.modifiedTextLengthDelta, $match.Length, $match.Value)
+            [void] $this.docView.Select($match.Index + $this.modifiedTextLengthDelta, $match.Length)
+            [void] $selectionAlteringCode.Invoke($match.Index + $this.modifiedTextLengthDelta, $match.Length, $match.Value)
         }
     }
 
@@ -2898,6 +2942,29 @@ Function Get-GithubSearchResults ($request) {
     return $count
 }
 
+Function global:Get-PluginSearchResults($request) {
+    $count = 0
+    foreach ($plugin in $global:plugins) {
+        $packages = $plugin.GetSearchResults(
+            $request,
+            (Get-CurrentInterpreter 'Version'),
+            (Get-CurrentInterpreter 'Bits'))
+        
+        foreach ($package in $packages) {
+            $row = $dataModel.NewRow()
+            $row.Select = $false
+            $row.Package = $package.Name
+            $row.Version = $package.Version
+            $row.Description = $package.Description
+            $row.Type = $package.Type
+            $row.Status = ''
+            $dataModel.Rows.Add($row)
+            $count++
+        }
+    }
+    return $count
+}
+
 Function global:Get-GithubRepoTags($gitLinkInfo) {
     if (-not $gitLinkInfo) {
         return $null
@@ -2934,14 +3001,15 @@ Function Get-SearchResults($request) {
         $dataModel.ImportRow($row)
     }
     
-    $pipCount = Get-PipSearchResults $request
-    $condaCount = Get-CondaSearchResults $request
-    $githubCount = Get-GithubSearchResults $request
+    # $pipCount = Get-PipSearchResults $request
+    # $condaCount = Get-CondaSearchResults $request
+    # $githubCount = Get-GithubSearchResults $request
+    $pluginCount = Get-PluginSearchResults $request
 
     $dataModel.EndLoadData()
     $dataGridView.EndInit()
 
-    return @{PipCount=$pipCount; CondaCount=$condaCount; GithubCount=$githubCount; Total=($pipCount + $condaCount + $githubCount)}
+    return @{PipCount=$pipCount; CondaCount=$condaCount; GithubCount=$githubCount; PluginCount=$pluginCount; Total=($pipCount + $condaCount + $githubCount + $pluginCount)}
 }
 
  Function Get-PythonPackages($outdatedOnly = $true) {
@@ -3170,19 +3238,46 @@ Function global:Execute-PipAction {
                 [System.Windows.Forms.Application]::DoEvents()
             
                 Write-PipLog ""
+                $logFrom = $Script:logView.TextLength 
+                $dataModel.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $logFrom
                 Write-PipLog $action.Name ' ' $package.Package
                 
+                $name = $package.Package
                 $version = if ($package.Version) { $package.Version } else { $package.Latest }
-                $result = $action.Execute($package.Package, $package.Type, $version) -join "`n"
+                $type = $package.Type
                 
-                $logFrom = $Script:logView.TextLength 
+                $pluginHookError = $false
+                foreach ($plugin in $global:plugins) {
+                    $info = $plugin.PackageActionHook($name, $version, $type,
+                                                      (Get-CurrentInterpreter 'Version'),
+                                                      (Get-CurrentInterpreter 'Bits'),
+                                                      ([ref] $pluginHookError))
+                                                      
+                    if ($pluginHookError) {
+                        Write-PipLog "Interrupted because of an error produced by plugin $($plugin.GetPluginName())"
+                        break
+                    }
+                    
+                    if ($info) {
+                        $name = $info.Name
+                        $version = $info.Version
+                        $type = $info.Type
+                        break
+                    }                     
+                }
+                
+                if (-not $pluginHookError) {
+                    $result = $action.Execute($name, $type, $version) -join "`n"
+                } else {
+                    $result = ''
+                }
+                
                 Write-PipLog $result
                 $logTo = $Script:logView.TextLength - $logFrom
-                $dataModel.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $logFrom
                 $dataModel.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
 
                 $dataModel.Columns['Status'].ReadOnly = $false
-                if ($action.Validate($package.Package, $result)) {
+                if ($action.Validate([regex]::Escape($package.Package), $result)) {
                     $dataModel.Rows[$i].Status = "OK"
                     Set-Unchecked $i
                     $tasksOkay++
@@ -3477,6 +3572,116 @@ Function Load-PipsSettings {
     }
 }
 
+$global:plugins = [System.Collections.ArrayList]::new()
+
+Function global:Serialize([object] $Object, [string] $FileName) {
+    $fs = New-Object System.IO.FileStream "$FileName", ([System.IO.FileMode]::Create)
+    $bf = New-Object System.Runtime.Serialization.Formatters.Binary.BinaryFormatter
+    $bf.Serialize($fs, $Object)
+    $fs.Close()
+}
+
+Function global:Deserialize([string] $FileName) {
+    $fs = New-Object System.IO.FileStream "$FileName", ([System.IO.FileMode]::Open)
+    $bf = New-Object System.Runtime.Serialization.Formatters.Binary.BinaryFormatter
+    $result = $bf.Deserialize($fs)
+    $fs.Close()
+    return $result
+}
+
+Function global:Get-PackageInfoFromWheelName($name) {
+    # Related documentation:
+    # https://www.python.org/dev/peps/pep-0425/
+    
+    $parser = [regex] '(?<Distribution>[^-]+)-(?<VersionCanonical>[0-9]+(?:\.[0-9]+)*)(?<VersionExtra>[^-]+)?(:?-(?<BuildTag>\d[^-.]*))?(:?-(?<PythonTag>(:?py|cp|ip|pp|jy)[^-]+))?(:?-(?<AbiTag>none|(:?(:?abi|py|cp|ip|pp|jy)[^-.]+)))?(?:-(?<PlatformTag>(:?any|linux|mac|win)[^.]*))?(?<ArchiveExtension>(:?\.[a-z0-9]+)+)'
+    
+    $groups = $parser.Match($name).Groups
+    
+    if ($groups.Count -lt 2) {
+        return $null
+    }
+    
+    Function Get-GroupValueOrNull($group) {
+        if (-not $group.Success -or [string]::IsNullOrWhiteSpace($group.Value)) {
+            return $null
+        } else {
+            return $group.Value.Trim()
+        }
+    }
+    
+    $versionCanonical = (Get-GroupValueOrNull $groups['VersionCanonical'])
+    $versionExtra = (Get-GroupValueOrNull $groups['VersionExtra'])
+    
+    return @{
+        'Distribution'=(Get-GroupValueOrNull $groups['Distribution']);
+        'VersionCanonical'=$versionCanonical;
+        'VersionExtra'=$versionExtra;
+        'Version'="${versionCanonical}${versionExtra}";
+        'Build'=(Get-GroupValueOrNull $groups['BuildTag']);
+        'Python'=(Get-GroupValueOrNull $groups['PythonTag']);
+        'ABI'=(Get-GroupValueOrNull $groups['AbiTag']);
+        'Platform'=(Get-GroupValueOrNull $groups['PlatformTag']);
+        'ArchiveExtension'=(Get-GroupValueOrNull $groups['ArchiveExtension']);
+    }
+}
+
+Function global:Test-CanInstallPackageTo([string] $pythonVersion, [string] $pythonArch) {
+    $pythonVersion = $pythonVersion -replace '\.',''
+    $pyMajor = $pythonVersion[0]
+    $testVersion = [regex] "cp$pythonVersion|py$pyMajor"
+    $testAbi = [regex] "none|$testVersion"
+    
+    return {         
+        param([hashtable] $wheelInfo)
+        
+        if (($wheelInfo.Python -and
+            ($wheelInfo.Python -notmatch $testVersion)) `
+            -or
+            ($wheelInfo.ABI -and
+            ($wheelInfo.ABI -notmatch $testAbi)) `
+            -or
+            ($wheelInfo.Platform -and
+            ($wheelInfo.Platform -ne 'any') -and
+            -not ($wheelInfo.Platform.Contains($pythonArch)))) {
+                return $false
+        } else {
+            return $true
+        }
+    }.GetNewClosure()
+}
+
+Function Load-Plugins() {
+    $PipsRoot = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('.\')
+    $plugins = Get-ChildItem "$PipsRoot\external-repository-providers" -Directory -Depth 0
+    foreach ($plugin in $plugins) {
+        Write-Host "Plugin $($plugin.FullName)"
+        Import-Module "$($plugin.FullName)"         
+        $instance = & (Get-Module $plugin.Name).ExportedFunctions.NewPluginInstance
+        $pluginConfigPath = "$($env:LOCALAPPDATA)\pips\plugins\$($instance.GetPluginName())"
+        [void] $instance.Init(
+            $pluginConfigPath,
+            {
+                param($url, $destination)
+                $output = & (Get-CurrentInterpreter 'PythonExe') -m pip download --no-deps --no-index --progress-bar off --dest $destination $url
+                return @{
+                    'output'=$output;
+                }
+            }.GetNewClosure(),
+            {
+                Write-PipLog "$($instance.GetPluginName()) : $args"
+                Write-Host "$($instance.GetPluginName()) : $args"
+            }.GetNewClosure(),
+            ${function:Exists-File},
+            ${function:Serialize},
+            ${function:Deserialize},
+            ${function:Get-PackageInfoFromWheelName},
+            ${function:Test-CanInstallPackageTo})
+        [void] $global:plugins.Add($instance)
+        [void] $global:packageTypes.AddRange($instance.GetSupportedPackageTypes())
+        Write-Host $instance.GetDescription()
+    }
+}
+
 Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
     $env:PYTHONIOENCODING="utf-8"
     $env:LC_CTYPE="utf-8"
@@ -3494,6 +3699,7 @@ Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
     }
     
     Load-PipsSettings
+    Load-Plugins
     
     [System.Windows.Forms.Application]::EnableVisualStyles()
     $form = Generate-Form
