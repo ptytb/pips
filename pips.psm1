@@ -2029,7 +2029,15 @@ Some packages may generate garbage or show windows, don't panic.
                 Clear-Rows
             };
         };         
-    )
+        @{
+            Persistent=$true;
+            MenuText = "Report a bug";
+            Code = {                 
+                $title = [System.Web.HttpUtility]::UrlEncode("Something went wrong") 
+                Open-LinkInBrowser "https://github.com/ptytb/pips/issues/new?title=$title"
+            };
+        };         
+    )     
     
     $menuArray = [System.Collections.ArrayList]::new()
     [void] $menuArray.AddRange($menu)     
