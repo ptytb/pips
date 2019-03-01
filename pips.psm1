@@ -19,7 +19,6 @@
 
 
 Import-Module -Global .\PSRunspacedDelegate\PSRunspacedDelegate
-Import-Module -Global .\BK-tree\bktree
 
 
 $startServer = New-RunspacedDelegate ( [Func[Object]] { 
@@ -50,13 +49,10 @@ $continuation = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task[Obje
     $Global:sw.AutoFlush = $false
     [bool] $Global:SuggestionsWorking = $false
 });
-Write-Host $task
-Write-Host $continuation
+# Write-Host $task
+# Write-Host $continuation
 $task.ContinueWith($continuation);
 $task.Start()
-
-
-$Global:bktree = [BKTree]::new()
 
 
 $Global:FuncRPCSpellCheck = {
@@ -387,8 +383,10 @@ Function Convert-Base64ToICO($base64Text) {
     return $icon
 }
 
+$global:_WritePipLogBacklog = [System.Collections.Generic.List[string]]::new()
 Function global:Write-PipLog([switch] $UpdateLastLine, [switch] $NoNewline) {
     if (-not $logView) {
+        [void] $global:_WritePipLogBacklog.Add($args -join ' ')
         return
     }
     if ($UpdateLastLine) {
@@ -935,10 +933,6 @@ Function Toggle-VirtualEnv ($state) {
     #Write-PipLog "PATH=" $env:PATH
 }
 
-Function Load-KnownPackageIndex {
-    $Global:bktree.LoadArrays('known-packages-bktree.bin')
-}
-
 Function ConvertFrom-RegexGroupsToObject($groups) {
     $gitLinkInfo = New-Object PSCustomObject
         
@@ -1008,18 +1002,24 @@ Function global:Set-PackageListEditable ($enable) {
 }
     
 Function global:Prepare-PackageAutoCompletion {
-    if ($Global:bktree.index_id_to_name -ne $null) {
+    
+    if ($Script:autoCompleteIndex -ne $null) {
         return
     }
-
-    Load-KnownPackageIndex
+    
+    Import-Module .\BK-tree\bktree
+    $bktree = [BKTree]::new()
+    $bktree.LoadArrays('known-packages-bktree.bin')
 
     $Script:autoCompleteIndex = New-Object System.Windows.Forms.AutoCompleteStringCollection
     
     [int] $maxLength = 0
-    foreach ($item in $Global:bktree.index_id_to_name.Values) {
+    foreach ($item in $bktree.index_id_to_name.Values) {
         [void] $autoCompleteIndex.Add($item)
     }
+    # only needed bktree here to load package names
+    Remove-Variable bktree
+    Remove-Module bktree
     
     foreach ($plugin in $global:plugins) {         
         [void] $autoCompleteIndex.AddRange($plugin.GetAllPackageNames())
@@ -2287,6 +2287,11 @@ Function Generate-Form {
     $logView.Font = New-Object System.Drawing.Font("Consolas", 11)
     $Script:logView = $logView
     $form.Controls.Add($logView)
+    foreach ($line in $global:_WritePipLogBacklog) {
+        [void] $logView.AppendText($line)
+        [void] $logView.AppendText("`n")
+    }
+    Remove-Variable -Scope Global _WritePipLogBacklog
 
     $FuncHighlightLogFragment = {
         if ($Script:dataModel.Rows.Count -eq 0) {
@@ -2327,10 +2332,10 @@ Function Generate-Form {
         $logView.Height = $form.ClientSize.Height - $dataGridView.Bottom - $lastWidgetTop
     }
 
-    & $FuncResizeForm
+    $null = & $FuncResizeForm
     $form.Add_Resize({ & $FuncResizeForm }.GetNewClosure())
     $form.Add_Shown({
-        Write-PipLog 'Hold Shift and hover the rows to fetch the detailed info'
+        Write-PipLog "`n" 'Hold Shift and hover the rows to fetch the detailed package info form PyPi'
         $form.BringToFront()
         })
         
@@ -3666,7 +3671,7 @@ Function Load-Plugins() {
     $PipsRoot = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('.\')
     $plugins = Get-ChildItem "$PipsRoot\external-repository-providers" -Directory -Depth 0
     foreach ($plugin in $plugins) {
-        Write-Host "Plugin $($plugin.FullName)"
+        Write-PipLog "Loading plugin $($plugin.Name)"
         Import-Module "$($plugin.FullName)"         
         $instance = & (Get-Module $plugin.Name).ExportedFunctions.NewPluginInstance
         $pluginConfigPath = "$($env:LOCALAPPDATA)\pips\plugins\$($instance.GetPluginName())"
@@ -3681,7 +3686,6 @@ Function Load-Plugins() {
             }.GetNewClosure(),
             {
                 Write-PipLog "$($instance.GetPluginName()) : $args"
-                Write-Host "$($instance.GetPluginName()) : $args"
             }.GetNewClosure(),
             ${function:Exists-File},
             ${function:Serialize},
@@ -3690,7 +3694,7 @@ Function Load-Plugins() {
             ${function:Test-CanInstallPackageTo})
         [void] $global:plugins.Add($instance)
         [void] $global:packageTypes.AddRange($instance.GetSupportedPackageTypes())
-        Write-Host $instance.GetDescription()
+        Write-PipLog $instance.GetDescription()
     }
 }
 
