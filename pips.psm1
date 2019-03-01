@@ -1220,13 +1220,14 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
             #Write-Host "old='$oldVersion', new='$version'"
             
             $IsDifferentVersion = $version -ne $oldVersion
-            $IsDifferentVersion = $IsDifferentVersion -or ($type -and ($type -ne $oldRow.Type)) -or ([string]::IsNullOrEmpty($oldRow.Type) -xor [string]::IsNullOrEmpty($type))
+            $IsDifferentType = ((-not [string]::IsNullOrEmpty($type)) -and ($type -ne $oldRow.Type)) -or ((-not [string]::IsNullOrEmpty($oldRow.Type)) -and [string]::IsNullOrEmpty($type))
         } else {
             $IsDifferentVersion = $true
+            $IsDifferentType = $true
         }         
 
         if ($nAlreadyInList -ne -1) {
-            if (-not $IsDifferentVersion) {            
+            if ((-not $IsDifferentVersion) -and (-not $IsDifferentType)) {            
                 & $FuncShowToolTip "$package" "Package '$package' is already in the list"
                 return $false
             } else {
@@ -1240,24 +1241,27 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         $row.Select = $true
         $row.Package = $package
         
-        # opinionated behavior but seems to be conspicuously right
-        if (-not [string]::IsNullOrWhiteSpace($version) -or [string]::IsNullOrWhiteSpace($type)) {
+        # opinionated behavior but seems to be conspicuously right         
+        if ((-not [string]::IsNullOrWhiteSpace($version)) -or [string]::IsNullOrWhiteSpace($type)) {
             if ($dataModel.Columns.Contains('Version')) {
                 $row.Version = $version
             } else {
                 $row.Latest = $version
             }
         }
-
-        if (-not [string]::IsNullOrWhiteSpace($type)) {
-            if (-not ($type -in $global:packageTypes)) {
-                & $FuncShowToolTip "${type}:$package" "Wrong source type '$type'.`n`nSupported types: $($global:packageTypes -join ', ')"
-                return $false
+        
+        if ($IsDifferentType) {
+            if (-not [string]::IsNullOrWhiteSpace($type)) {
+                if (-not ($type -in $global:packageTypes)) {
+                    & $FuncShowToolTip "${type}:$package" "Wrong source type '$type'.`n`nSupported types: $($global:packageTypes -join ', ')"
+                    return $false
+                }
+                $row.Type = $type
+            } elseif ([string]::IsNullOrWhiteSpace($row.Type)) {
+                $row.Type = 'pip'
             }
-            $row.Type = $type
-        } elseif ([string]::IsNullOrWhiteSpace($row.Type)) {
-            $row.Type = 'pip'
         }
+
         $row.Status = 'Pending'
         
         if ($nAlreadyInList -eq -1) {
