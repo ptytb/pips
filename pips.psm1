@@ -2022,6 +2022,13 @@ Some packages may generate garbage or show windows, don't panic.
                 Clear-PipLog
             };
         };         
+        @{
+            Persistent=$true;
+            MenuText = 'Clear package list';
+            Code = {
+                Clear-Rows
+            };
+        };         
     )
     
     $menuArray = [System.Collections.ArrayList]::new()
