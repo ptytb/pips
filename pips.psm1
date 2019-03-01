@@ -710,7 +710,7 @@ Function Add-ComboBoxActions {
             if ($git_url) {
                 $pkg = $git_url
             }
-            if (-not [string]::IsNullOrEmpty($version) -and ($type -ne 'git')) {  # as git version is a timestamp
+            if ((-not [string]::IsNullOrEmpty($version)) -and ($type -notin @('git', 'wheel'))) {  # as git version is a timestamp; wheel version is in the file name
                 $pkg = "$pkg==$version"
             }
             $actionCommands[$type].install.Invoke($pkg) } `
@@ -1989,10 +1989,11 @@ Some packages may generate garbage or show windows, don't panic.
             Persistent=$true;
             MenuText = 'Show pip cache info';
             Code = {
+                $paths = [System.Collections.Generic.List[string]]::new()
+                
                 foreach ($type in @('pip', 'wheel')) {
                     $getCacheFolderScript_b10 = "from pip.utils.appdirs import user_cache_dir; print(user_cache_dir('$type'))"
                     $getCacheFolderScript_a10 = "from pip._internal.utils.appdirs import user_cache_dir; print(user_cache_dir('$type'))"
-                    
                     $cacheFolder = & (Get-CurrentInterpreter 'PythonExe') -c $getCacheFolderScript_b10
                     if ([string]::IsNullOrWhiteSpace($cacheFolder)) {
                         $cacheFolder = & (Get-CurrentInterpreter 'PythonExe') -c $getCacheFolderScript_a10
@@ -2001,9 +2002,16 @@ Some packages may generate garbage or show windows, don't panic.
                         Write-PipLog "Could not determine $type cache location."
                         continue
                     }
-                    
+                    [void] $paths.Add($cacheFolder)
+                }
+                
+                foreach ($plugin in $global:plugins) {
+                    [void] $paths.Add($plugin.GetCachePath())
+                }
+                
+                foreach ($cacheFolder in $paths) {                     
                     $stats = Get-ChildItem -Recurse $cacheFolder | Measure-Object -Property Length -Sum
-                    Write-PipLog ("`n$type cache at {0}`nFiles: {1}`nSize: {2} MB" -f $cacheFolder,$stats.Count,[math]::Round($stats.Sum / 1048576, 2))
+                    Write-PipLog ("`nCache at {0}`nFiles: {1}`nSize: {2} MB" -f $cacheFolder,$stats.Count,[math]::Round($stats.Sum / 1048576, 2))
                 }
             };
         };
@@ -3666,9 +3674,9 @@ Function Load-Plugins() {
             $pluginConfigPath,
             {
                 param($url, $destination)
-                $output = & (Get-CurrentInterpreter 'PythonExe') -m pip download --no-deps --no-index --progress-bar off --dest $destination $url
+                [string[]] $output = & (Get-CurrentInterpreter 'PythonExe') -m pip download --no-deps --no-index --progress-bar off --dest $destination $url
                 return @{
-                    'output'=$output;
+                    'output'=($output -join "`n");
                 }
             }.GetNewClosure(),
             {

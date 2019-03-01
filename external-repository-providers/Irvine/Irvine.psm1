@@ -104,9 +104,11 @@ Provides search, install and local caching for packages published at Christoph G
         $location = $this.GetArchiveFilenameFromLocalCache($archive.filename)
         
         if (-not $this.FileExists.Invoke($location)) {
-            $result = $this.WriteLog.Invoke("Downloading $($archive.url)")
-            # $result = $this.DownloadArchive.Invoke($archive.url, $location)
+            $null = $this.WriteLog.Invoke("Downloading $($archive.url)")
+            $result = $this.DownloadArchive.Invoke($archive.url, $this.GetCachePath())
             $this.WriteLog.Invoke($result.output)
+        } else {
+            $null = $this.WriteLog.Invoke("Found in cache: $($archive.url)")
         }
         
         if ($this.FileExists.Invoke($location)) {
@@ -161,7 +163,7 @@ Provides search, install and local caching for packages published at Christoph G
                 $wheelInfo = $this.GetPackageInfoFromWheelName.Invoke($wheel.filename)
                 
                 # For debugging
-                # $meta = "py=$($wheelInfo.Python) abi=$($wheelInfo.ABI) plat=$($wheelInfo.Platform)"
+                $meta = "py=$($wheelInfo.Python) abi=$($wheelInfo.ABI) plat=$($wheelInfo.Platform) file=$($wheel.filename) |"
                 
                 if (-not $FuncCanInstall.Invoke($wheelInfo)) {
                     continue
@@ -170,7 +172,7 @@ Provides search, install and local caching for packages published at Christoph G
                 [void] $results.Add(@{
                     'Name'=$name;
                     'Version'=$wheelInfo.version;
-                    'Description'=$($info.description);
+                    'Description'="$meta $($info.description)";
                     'Type'=[Irvine]::PackageType;
                     })                 
                     
