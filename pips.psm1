@@ -1,4 +1,6 @@
-﻿[Void][Reflection.Assembly]::LoadWithPartialName("System")
+﻿$PSDefaultParameterValues['*:Encoding'] = 'UTF8'
+
+[Void][Reflection.Assembly]::LoadWithPartialName("System")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Drawing")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Drawing.Size")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Drawing.Point")
@@ -21,7 +23,7 @@
 Import-Module -Global .\PSRunspacedDelegate\PSRunspacedDelegate
 
 
-$startServer = New-RunspacedDelegate ( [Func[Object]] { 
+$startServer = New-RunspacedDelegate ( [Func[Object]] {
     Write-Host Start server
     Start-Process -WindowStyle Hidden -FilePath powershell -ArgumentList "-ExecutionPolicy Bypass $PSScriptRoot\pips-spelling-server.ps1"
     Write-Host Server started.
@@ -29,14 +31,14 @@ $startServer = New-RunspacedDelegate ( [Func[Object]] {
 $task = [System.Threading.Tasks.Task[Object]]::new($startServer);
 $continuation = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task[Object]]] {
     Write-Host Connecting.
-    
+
     $pipe = $null
     while (-not $pipe -or -not $pipe.IsConnected) {
         $pipe = new-object System.IO.Pipes.NamedPipeClientStream("\\.\pipe\pips_spelling_server");
         if ($pipe) {
             $milliseconds = 250
             try {
-                $pipe.Connect($milliseconds); 
+                $pipe.Connect($milliseconds);
             } catch {
             }
         } else {
@@ -57,29 +59,29 @@ $task.Start()
 
 $Global:FuncRPCSpellCheck = {
     param([string] $text, [int] $distance)
-    
+
     if ([String]::IsNullOrEmpty($text) -or ($text.IndexOfAny('=@\/:') -ne -1)) {
         return
     }
-    
+
     if ($Global:SuggestionsWorking) {
         return
     } else {
         $Global:SuggestionsWorking = $true
     }
-    
+
     $text = $text.ToLower()
     $request = @{ 'Request'=$text; 'Distance'=$distance; } | ConvertTo-Json -Depth 5 -Compress
-    
+
 	$tw = $Global:sw.WriteLineAsync($request);
-	$continuation1 = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task]] { 
-    	$tf = $Global:sw.FlushAsync();     
-    	$continuation2 = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task]] { 
+	$continuation1 = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task]] {
+    	$tf = $Global:sw.FlushAsync();
+    	$continuation2 = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task]] {
         	$tr = $Global:sr.ReadLineAsync()
-        	$continuation3 = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task[string]]] { 
+        	$continuation3 = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task[string]]] {
                 param($t)
                 if (-not [string]::IsNullOrEmpty($t.Result)) {
-                    $result = $t.Result | ConvertFrom-Json                 
+                    $result = $t.Result | ConvertFrom-Json
                     $Global:SuggestionsWorking = $false
                     & $Global:FuncRPCSpellCheck_Callback $result
                 }
@@ -105,7 +107,7 @@ Function global:Get-Bin($command, $all = $false) {
     }
     return $found
 }
-    
+
 Function global:Guess-EnvPath ($path, $fileName, [switch] $directory, [switch] $Executable) {
     $subdirs = @('\'; '\Scripts\'; '\.venv\Scripts\'; '\.venv\'; '\env\Scripts\'; '\env\'; '\bin\')
     foreach ($tryPath in $subdirs) {
@@ -150,19 +152,19 @@ Function global:Delete-CurrentInterpreter() {
         Write-PipLog 'Can only delete venv which was added manually with env:Open or env:Create.'
         return
     }
-    
+
     $path = Get-CurrentInterpreter 'Path'
     $failedToRemove = $false
-    
+
     $response = ([System.Windows.Forms.MessageBox]::Show(
         "Remove venv path completely?`n`n${path}`n`n" +
         "Yes = Remove directory`nNo = Keep directory, forget entry`nCancel = Do nothing",
         "Removing venv", [System.Windows.Forms.MessageBoxButtons]::YesNoCancel))
-        
+
     if ($response -eq 'Yes') {
         $stats = Get-ChildItem -Recurse -Path $path | Measure-Object
         try {
-            Remove-Item -Path $path -Recurse -Force 
+            Remove-Item -Path $path -Recurse -Force
         } catch { }
         if (Exists-Directory $path) {
             Write-PipLog "Cannot delete '$path'"
@@ -171,14 +173,14 @@ Function global:Delete-CurrentInterpreter() {
             Write-PipLog "Removed $($stats.Count) items."
         }
     }
-    
+
     if ((($response -eq 'No') -or ($response -eq 'Yes')) -and -not $failedToRemove) {
-        $interpreters.Remove($interpretersComboBox.SelectedItem)                    
+        $interpreters.Remove($interpretersComboBox.SelectedItem)
         $Script:trackDuplicateInterpreters.Remove($path)
         $interpretersComboBox.DataSource = $null
-        $interpretersComboBox.DataSource = $interpreters                     
+        $interpretersComboBox.DataSource = $interpreters
         Write-PipLog "Removed venv '${path}' from list."
-        
+
         $interpretersComboBox.SelectedIndex = 0
         Write-PipLog "Switching to '$(Get-CurrentInterpreter 'Path')'"
     }
@@ -187,7 +189,7 @@ Function global:Delete-CurrentInterpreter() {
 Function global:Get-PipsSetting($name, [switch] $AsArgs, [switch] $First) {
     switch ($name)
     {
-        "CondaChannels" {             
+        "CondaChannels" {
             $channels = $global:settings.condaChannels
             if (-not $channels -or $channels.Length -eq 0) {
                 $channels = @('anaconda'; 'defaults'; 'conda-forge')
@@ -197,10 +199,10 @@ Function global:Get-PipsSetting($name, [switch] $AsArgs, [switch] $First) {
             }
             if ($AsArgs) {
                 $channels = "-c $($channels -join ' -c ')"
-            }             
+            }
             return $channels
         }
-        
+
         Default { throw "No such setting: $name" }
     }
 }
@@ -261,7 +263,7 @@ $search_columns = ("Select", "Package", "Version", "Description", "Type", "Statu
 $formLoaded = $false
 $outdatedOnly = $true
 $interpreters = $null
-$autoCompleteIndex = $null
+$global:autoCompleteIndex = $null
 $Global:interpretersComboBox = $null
 
 Add-Type -TypeDefinition @"
@@ -355,7 +357,7 @@ $FuncSetWebClientWorkaround = {
         [Net.SecurityProtocolType]::Ssl3)
 
     [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-    
+
     Set-UseUnsafeHeaderParsing -Enable
 }
 
@@ -364,8 +366,23 @@ Function Download-String($url) {
     try {
         $wc = New-Object System.Net.WebClient
         $wc.Headers["User-Agent"] = "Mozilla/5.0 (compatible; MSIE 6.0;)"
+        $wc.Encoding = [System.Text.Encoding]::UTF8
         $result = $wc.DownloadString($url)
     } catch {
+        Write-Error "$url`n$_`n"
+        $result = $null
+    }
+    return $result
+}
+
+Function Download-Data($url) {
+    try {
+        $wc = New-Object System.Net.WebClient
+        $wc.Headers["User-Agent"] = "Mozilla/5.0 (compatible; MSIE 6.0;)"
+        $wc.Encoding = [System.Text.Encoding]::UTF8
+        $result = $wc.DownloadData($url)
+    } catch {
+        Write-Error "$url`n$_`n"
         $result = $null
     }
     return $result
@@ -400,7 +417,7 @@ Function global:Write-PipLog([switch] $UpdateLastLine, [switch] $NoNewline) {
     }
     if (-not $NoNewline) {
         $logView.AppendText("`n")
-    }     
+    }
     $logView.ScrollToCaret()
 }
 
@@ -434,26 +451,26 @@ Function Add-Button ($name, $handler) {
 
 Function Add-ButtonMenu ($text, $tools, $onclick) {
     $form = $script:form  # to be captured by $handler's closure
-    
+
     $handler = {
         param($button)
         $menuStrip = New-Object System.Windows.Forms.ContextMenuStrip
-        
+
         # Firstly, list non-persistent (more context-related) menu items
         foreach ($tool in $tools) {
             if ($tool.Persistent -or $tool.IsSeparator) {
                 continue
-            }            
+            }
             if ($tool.Contains('IsAccessible') -and -not $tool.IsAccessible.Invoke()) {
                 continue
             }
             $menuStrip.Items.Add($tool.MenuText)
         }
-        
+
         if ($menuStrip.Items.Count -gt 0) {
             $menuStrip.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
         }
-        
+
         foreach ($tool in $tools) {
             if ($tool.IsSeparator) {
                 $menuStrip.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
@@ -461,7 +478,7 @@ Function Add-ButtonMenu ($text, $tools, $onclick) {
                 $menuStrip.Items.Add($tool.MenuText)
             }
         }
-        
+
         $tools = $Script:tools
         $onclick = $Script:onclick
         $menuStrip.add_ItemClicked({
@@ -472,7 +489,7 @@ Function Add-ButtonMenu ($text, $tools, $onclick) {
                 }
             }
         }.GetNewClosure())
-        
+
         $point = New-Object System.Drawing.Point ($button.Location.X, $button.Bottom)
         $menuStrip.Show($Script:form.PointToScreen($point))
     }.GetNewClosure()
@@ -599,11 +616,11 @@ Function Get-CondaPackages() {
 
         # This one sounds nice but could give versions older than installed
         # conda update --dry-run --json --all
-        
+
         # This one sounds nice but could give versions older than installed
         # conda search --outdated
 
-        $items = & $conda_exe $arguments | ConvertFrom-Json 
+        $items = & $conda_exe $arguments | ConvertFrom-Json
 
         foreach ($item in $items) {
             $null = $condaPackages.Add(@{Type='conda'; Package=$item.name; Version=$item.version})
@@ -626,7 +643,7 @@ $actionCommands = @{
         uninstall     = { return (& (Get-CurrentInterpreter 'PythonExe') -m pip  uninstall --yes   $args 2>&1) };
     };
     conda=@{
-        info          = { return (& (Get-CurrentInterpreter 'CondaExe') list --prefix (Get-CurrentInterpreter 'Path') -v --json $args 2>&1) };        
+        info          = { return (& (Get-CurrentInterpreter 'CondaExe') list --prefix (Get-CurrentInterpreter 'Path') -v --json $args 2>&1) };
         documentation = { $null = (Show-DocView $pkg).Show(); return ''    };
         files         = {
             $path = "$(Get-CurrentInterpreter 'Path')\conda-meta"
@@ -674,7 +691,7 @@ Function Add-ComboBoxActions {
     & $Add (Make-PipActionItem 'Show Info' `
         { param($pkg,$type); $actionCommands[$type].info.Invoke($pkg) } `
         { param($pkg,$out); $out -match $pkg } )
-    
+
     & $Add (Make-PipActionItem 'Documentation' `
         { param($pkg,$type); $actionCommands[$type].documentation.Invoke($pkg) } `
         { param($pkg,$out); $out -match '.*' } )
@@ -689,7 +706,7 @@ Function Add-ComboBoxActions {
             }
         } `
         { param($pkg,$out); $out -match $pkg } )
-    
+
     & $Add (Make-PipActionItem 'Update' `
         { param($pkg,$type); $actionCommands[$type].update.Invoke($pkg) } `
         { param($pkg,$out); $out -match "Successfully installed (?:[^\s]+\s+)*$pkg" } )
@@ -701,7 +718,7 @@ Function Add-ComboBoxActions {
     & $Add (Make-PipActionItem 'Install (No Deps)' `
         { param($pkg,$type); $actionCommands[$type].install_nodep.Invoke($pkg) } `
         { param($pkg,$out); $out -match "Successfully installed (?:[^\s]+\s+)*$pkg" } )
-        
+
     & $Add (Make-PipActionItem 'Install' {
             param($pkg,$type,$version)
             $git_url = Validate-GitLink $pkg
@@ -726,14 +743,14 @@ Function Add-ComboBoxActions {
         { param($list); Copy-AsRequirementsTxt($list) } `
         { param($pkg,$out); $out -match '.*' } `
         $true )  # Yes, take a whole list of packages
-        
+
     $PIPTREE_LEGEND = "
 Tree legend:
 * = Extra package
 x = Package doesn't exist in index
 ∞ = Dependency loop found
 "
-    
+
     & $Add (Make-PipActionItem 'Dependency tree' `
         { param($list); $Script:PIPTREE_LEGEND; Get-DependencyAsciiGraph $list; Write-PipLog "`n" }.GetNewClosure() `
         { param($pkg,$out); $out -match '.*' } )
@@ -745,7 +762,7 @@ x = Package doesn't exist in index
     $actionListComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
     $Script:actionListComboBox = $actionListComboBox
     Add-TopWidget $actionListComboBox 1.25
-    
+
     return $actionListComboBox
 }
 
@@ -775,7 +792,7 @@ Function Get-InterpreterRecord($path, $items, $user = $false) {
     $versionString = & $python --version 2>&1
     $version = [regex]::Match($versionString, '\s+(\d+\.\d+)').Groups[1]
     $arch = (Test-is64Bit $python).FileType
-    
+
     $action = New-Object psobject -Property @{
         Path                 = $path;
         Version              = "$version";
@@ -792,7 +809,7 @@ Function Get-InterpreterRecord($path, $items, $user = $false) {
         PipfileLock          = Guess-EnvPath $path 'Pipfile.lock';
         SitePackagesDir      = Guess-EnvPath $path 'Lib\site-packages' -directory;
         User                 = $user;
-        EnvironmentVariables = $null; 
+        EnvironmentVariables = $null;
     }
     $action | Add-Member ScriptMethod ToString {
         "{2} [{0}] {1}" -f $this.Arch, $this.PythonExe, $this.Version
@@ -845,18 +862,18 @@ Function Find-Interpreters {
 
 
 Function Add-ComboBoxInterpreters {
-    $interpreters = Find-Interpreters     
+    $interpreters = Find-Interpreters
     [System.Collections.ArrayList] $interpreters = $interpreters | Sort-Object -Property @{Expression="Version"; Descending=$True}
 
     foreach ($interpreter in $Global:settings.envs) {
         if ($interpreter.User) {
             $interpreter | Add-Member ScriptMethod ToString {
                 "{2} [{0}] {1}" -f $this.Arch, $this.PythonExe, $this.Version
-            } -Force             
+            } -Force
             [void]$interpreters.Add($interpreter)
         }
     }
-    
+
     $Script:interpreters = $interpreters
     $interpretersComboBox = New-Object System.Windows.Forms.ComboBox
     $interpretersComboBox.DataSource = $interpreters
@@ -907,11 +924,11 @@ Function Toggle-VirtualEnv ($state) {
     }
     else {
         Write-PipLog ('Deactivating: "' + $pipEnvDeactivate + '" and unsetting environment')
-        
+
         &$pipEnvDeactivate
 
         $env:VIRTUAL_ENV = ''
-        
+
         if ($env:_OLD_VIRTUAL_PROMPT) {
             $env:PROMPT = "$env:_OLD_VIRTUAL_PROMPT"
             $env:_OLD_VIRTUAL_PROMPT = ''
@@ -935,13 +952,13 @@ Function Toggle-VirtualEnv ($state) {
 
 Function ConvertFrom-RegexGroupsToObject($groups) {
     $gitLinkInfo = New-Object PSCustomObject
-        
+
     foreach ($group in $groups) {
         if (-not [string]::IsNullOrEmpty($group.Value) -and $group.Name -ne "0") {
             $gitLinkInfo | Add-Member NoteProperty "$($group.Name)" "$($group.Value)"
         }
     }
-    
+
     return $gitLinkInfo
 }
 
@@ -949,7 +966,7 @@ Function global:Validate-GitLink ($url, $AsObject = $false) {
     $r = [regex] '^(?<Prefix>\w+\+)?(?<Protocol>\w+)://(?<Host>[^/]+)/(?<User>[^/]+)/(?<Repo>[^/@#]+)(?:@(?<Hash>[^#]+))?(?:#.*)?$'
     $s = [regex] '^(?<Name>[^/]+)/(?<Repo>[^/]+)$'
     $f = [regex] '^(?<Prefix>\w+\+)?file:///(?<Path>.+)$'
-    
+
     $m_file = $f.Match($url)
     $g_file = $m_file.Groups
     if ($g_file.Count -gt 1) {
@@ -970,26 +987,26 @@ Function global:Validate-GitLink ($url, $AsObject = $false) {
             return "git+file:///$($url -replace '\\','/')"
         }
     }
-    
+
     $m_short = $s.Match($url)
     $g_short = $m_short.Groups
     if ($g_short.Count -gt 1) {
         $url = "$github_url/$($g_short['Name'])/$($g_short['Repo'])"
     }
-    
+
     $m = $r.Match($url)
     $g = $m.Groups
-    
+
     if (($g['Prefix'].Value -ne 'git+') -and -not ($g['Protocol'].Value -in @('git', 'ssh', 'https'))) {
         return $null
     }
 
     $hash = if ($g['Hash'].Value) { "@$($g['Hash'].Value)" } else { [string]::Empty }
-    
+
     if ($AsObject) {
         return ConvertFrom-RegexGroupsToObject $g
     }
-    
+
     return "git+$($g['Protocol'])://$($g['Host'])/$($g['User'])/$($g['Repo'])$Hash#egg=$($g['Repo'])"
 }
 
@@ -1000,19 +1017,19 @@ Function global:Set-PackageListEditable ($enable) {
         }
     }
 }
-    
+
 Function global:Prepare-PackageAutoCompletion {
-    
-    if ($Script:autoCompleteIndex -ne $null) {
+
+    if ($global:autoCompleteIndex -ne $null) {
         return
     }
-    
+
     Import-Module .\BK-tree\bktree
     $bktree = [BKTree]::new()
     $bktree.LoadArrays('known-packages-bktree.bin')
 
-    $Script:autoCompleteIndex = New-Object System.Windows.Forms.AutoCompleteStringCollection
-    
+    $global:autoCompleteIndex = New-Object System.Windows.Forms.AutoCompleteStringCollection
+
     [int] $maxLength = 0
     foreach ($item in $bktree.index_id_to_name.Values) {
         [void] $autoCompleteIndex.Add($item)
@@ -1020,21 +1037,21 @@ Function global:Prepare-PackageAutoCompletion {
     # only needed bktree here to load package names
     Remove-Variable bktree
     Remove-Module bktree
-    
-    foreach ($plugin in $global:plugins) {         
+
+    foreach ($plugin in $global:plugins) {
         [void] $autoCompleteIndex.AddRange($plugin.GetAllPackageNames())
     }
 }
 
 Function Generate-FormInstall {
     Prepare-PackageAutoCompletion
-    
+
     $form = New-Object System.Windows.Forms.Form
     $form.KeyPreview = $true
-    
+
     $label = New-Object System.Windows.Forms.Label
     $label.Text = "Type package names and hit Enter after each. Ctrl-Enter to force.
-    
+
 source:name==version | github_user/project@tag | C:\git\repo@tag
 "
     $label.Location = New-Object Drawing.Point 7,7
@@ -1042,18 +1059,18 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
     $form.Controls.Add($label)
 
     $cb = New-Object System.Windows.Forms.TextBox
-    
-    $autoCompleteIndex = $Script:autoCompleteIndex
+
+    $autoCompleteIndex = $global:autoCompleteIndex
     $FuncGuessAutoCompleteMode = {
         $text = $cb.Text
         $n = $text.LastIndexOfAny('\/')
         $possibleDirectoryPath = $text.Substring(0, $n + 1)
         $pathExists = (Exists-Directory $possibleDirectoryPath)
-        
+
         if ($text.Contains('==') -and -not $pathExists) {
             return [InstallAutoCompleteMode]::Version
         } elseif ($text.Contains('@') -and ($pathExists -or (Validate-GitLink ($text -replace '@.*$','')))) {
-            return [InstallAutoCompleteMode]::GitTag         
+            return [InstallAutoCompleteMode]::GitTag
         } elseif ($pathExists) {
             if (Exists-File $possibleDirectoryPath -Mask '*.whl') {
                 return [InstallAutoCompleteMode]::WheelFile
@@ -1064,49 +1081,49 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
             return [InstallAutoCompleteMode]::Name
         }
     }.GetNewClosure()
-    
+
     $FuncSetAutoCompleteMode = {
         param([InstallAutoCompleteMode] $mode)
-        
+
         # Write-Host "ACTIVATING MODE !!! $mode"
-        
+
         $text = $cb.Text
         $n = $text.LastIndexOfAny('\/')
         $possibleDirectoryPath = $text.Substring(0, $n + 1)
-        
+
         switch ($mode)
         {
-            ([InstallAutoCompleteMode]::Name) {                 
+            ([InstallAutoCompleteMode]::Name) {
                 $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::Suggest
                 $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
-                $cb.AutoCompleteCustomSource = $Script:autoCompleteIndex
+                $cb.AutoCompleteCustomSource = $global:autoCompleteIndex
             }
-            
-            ([InstallAutoCompleteMode]::Directory) {                 
+
+            ([InstallAutoCompleteMode]::Directory) {
                 $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
                 $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::FileSystemDirectories
                 $cb.AutoCompleteCustomSource = $null
             }
-            
-            ([InstallAutoCompleteMode]::Version) {                 
+
+            ([InstallAutoCompleteMode]::Version) {
                 $packageName = $text -replace '==.*',''
-                
+
                 if (-not $Global:PyPiPackageJsonCache.ContainsKey($packageName)) {
                     Download-PythonPackageDetails $packageName
                 }
-                
+
                 $releases = $Global:PyPiPackageJsonCache[$packageName].'releases' | Get-Member -Type Properties | ForEach-Object { $_.Name }
                 $completions_format = "{0}=={1}"
             }
-            
-            ([InstallAutoCompleteMode]::GitTag) {                 
+
+            ([InstallAutoCompleteMode]::GitTag) {
                 $packageName = $text -replace '@.*',''
                 $gitLinkInfo = Validate-GitLink $packageName -AsObject $true
                 $releases = Get-GithubRepoTags $gitLinkInfo
                 $completions_format = "{0}@{1}"
             }
-            
-            ([InstallAutoCompleteMode]::WheelFile) {                 
+
+            ([InstallAutoCompleteMode]::WheelFile) {
                 # Write-Host 'PP='$possibleDirectoryPath
                 $autoCompleteWheels = New-Object System.Windows.Forms.AutoCompleteStringCollection
                 $wheelFiles = Get-ChildItem -Path $possibleDirectoryPath -Filter '*.whl' -File -Depth 0
@@ -1114,29 +1131,29 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
                     # Write-Host 'WHEEL=' $($wheel.Name)
                     [void]$autoCompleteWheels.Add("$possibleDirectoryPath$($wheel.Name)")
                 }
-                
+
                 $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
                 $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
                 $cb.AutoCompleteCustomSource = $autoCompleteWheels
             }
-            
+
             Default { throw "Wrong completion mode: $mode $($mode.GetType())" }
-        }        
-            
+        }
+
         if ($mode -in @([InstallAutoCompleteMode]::Version, [InstallAutoCompleteMode]::GitTag)) {
             $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
-            $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource                
-            $autoCompletePackageVersion = New-Object System.Windows.Forms.AutoCompleteStringCollection                
+            $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
+            $autoCompletePackageVersion = New-Object System.Windows.Forms.AutoCompleteStringCollection
             foreach ($release in $releases) {
                 $autoCompletePackageVersion.Add($completions_format -f @($packageName,$release))
             }
             $cb.AutoCompleteCustomSource = $autoCompletePackageVersion
         }
-        
+
         $global:currentInstallAutoCompleteMode = $mode
     }.GetNewClosure()
-    
-    # TODO: Move popup to to FuncRPCSpellCheck 
+
+    # TODO: Move popup to to FuncRPCSpellCheck
     $hint = $null
     $FuncShowToolTip = {
         param($title, $text)
@@ -1157,14 +1174,14 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         }
         return $false
     }.GetNewClosure()
-    
+
     $FuncAddInstallSource = {
         param($package, [bool] $force)
-        
+
         if ($dataModel.Rows.Count -eq 0) {
             Init-PackageSearchColumns $dataModel
         }
-        
+
         $link = Validate-GitLink $package
         if ($link) {
             if (-not $force -and (Test-PackageInList $link) -ne -1) {
@@ -1179,7 +1196,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
             $dataModel.Rows.InsertAt($row, 0)
             return $true
         }
-        
+
         if (Exists-File $package -and $package.EndsWith('.whl')) {
             $row = $dataModel.NewRow()
             $row.Package = $package
@@ -1189,7 +1206,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
             $dataModel.Rows.InsertAt($row, 0)
             return $true
         }
-        
+
         $version = [string]::Empty
         $type = [string]::Empty
         $package_with_version = [regex] '^(?:(?<Type>[a-z_]+):)?(?<Name>[^=]+)(?:==(?<Version>[^=]+))?$'
@@ -1202,11 +1219,11 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         if (-not $force -and -not ($autoCompleteIndex.Contains($package))) {
             return $false
         }
-        
-        $nAlreadyInList = Test-PackageInList $package        
+
+        $nAlreadyInList = Test-PackageInList $package
         if ($nAlreadyInList -ne -1) {
             $oldRow = $dataModel.Rows[$nAlreadyInList]
-            
+
             if (      -not [string]::IsNullOrEmpty($oldRow.Version)) {
                 $oldVersion = $oldRow.Version
             } elseif (-not ($oldRow.Latest -eq $null)) {
@@ -1216,18 +1233,18 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
             } else {
                 $oldVersion = [string]::Empty
             }
-            
+
             #Write-Host "old='$oldVersion', new='$version'"
-            
+
             $IsDifferentVersion = $version -ne $oldVersion
             $IsDifferentType = ((-not [string]::IsNullOrEmpty($type)) -and ($type -ne $oldRow.Type)) -or ((-not [string]::IsNullOrEmpty($oldRow.Type)) -and [string]::IsNullOrEmpty($type))
         } else {
             $IsDifferentVersion = $true
             $IsDifferentType = $true
-        }         
+        }
 
         if ($nAlreadyInList -ne -1) {
-            if ((-not $IsDifferentVersion) -and (-not $IsDifferentType)) {            
+            if ((-not $IsDifferentVersion) -and (-not $IsDifferentType)) {
                 & $FuncShowToolTip "$package" "Package '$package' is already in the list"
                 return $false
             } else {
@@ -1237,11 +1254,11 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         } else {
             $row = $dataModel.NewRow()
         }
-        
+
         $row.Select = $true
         $row.Package = $package
-        
-        # opinionated behavior but seems to be conspicuously right         
+
+        # opinionated behavior but seems to be conspicuously right
         if ((-not [string]::IsNullOrWhiteSpace($version)) -or [string]::IsNullOrWhiteSpace($type)) {
             if ($dataModel.Columns.Contains('Version')) {
                 $row.Version = $version
@@ -1249,7 +1266,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
                 $row.Latest = $version
             }
         }
-        
+
         if ($IsDifferentType) {
             if (-not [string]::IsNullOrWhiteSpace($type)) {
                 if (-not ($type -in $global:packageTypes)) {
@@ -1263,26 +1280,26 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         }
 
         $row.Status = 'Pending'
-        
+
         if ($nAlreadyInList -eq -1) {
             $dataModel.Rows.InsertAt($row, 0)
         } else {
             Set-PackageListEditable $false
         }
-        
+
         return $true
     }
-    
+
     $Global:FuncRPCSpellCheck_Callback = {
-        param($result)         
-        
-        # $candidates = $result.Candidates       
+        param($result)
+
+        # $candidates = $result.Candidates
         # if ($candidates.Count -le 10) {
         #     $candidatesToolTipText = "$($candidates -join "`n")"
-        # } else {                     
+        # } else {
         #     $candidatesToolTipText = "$(($candidates | Select-Object -First 10) -join "`n")`n...`n`nfull list in the log"
         # }
-        
+
         # & $FuncShowToolTip "$text" "Packages with similar names found in the index.`n`nDid you mean:`n`n$candidatesToolTipText"
         Write-PipLog -UpdateLastLine "Suggestions for '$($result.Request)': $($result.Candidates)"
         if ($cb.Text -ne $result.Request) {
@@ -1293,19 +1310,19 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
     $cb.add_TextChanged({
         param($cb)
         $text = $cb.Text
-        
-        $guessedCompletionMode = & $FuncGuessAutoCompleteMode         
+
+        $guessedCompletionMode = & $FuncGuessAutoCompleteMode
         # Write-Host 'MODE GUESS=' $guessedCompletionMode
         if ($guessedCompletionMode -ne $global:currentInstallAutoCompleteMode) {
             # Write-Host 'MODE WAS=' $global:currentInstallAutoCompleteMode 'CHANGE TO=' $guessedCompletionMode
             $null = & $FuncSetAutoCompleteMode $guessedCompletionMode
         }
-        
+
         if ($guessedCompletionMode -eq [InstallAutoCompleteMode]::Name) {
             $null = & $FuncRPCSpellCheck $text 1
         }
     });
-    
+
     $cb.Location = New-Object Drawing.Point 7,60
     $cb.Size = New-Object Drawing.Point 330,32
     $form.Controls.Add($cb)
@@ -1320,14 +1337,14 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
                 $form.Close()
             }
         }
-        
-        if ($_.KeyCode -eq 'Enter') { 
+
+        if ($_.KeyCode -eq 'Enter') {
             $text = $cb.Text.Trim()
-            
+
             if ([string]::IsNullOrWhiteSpace($text)) {
                 return
             }
-            
+
             if (-not (Test-KeyPress -Keys ShiftKey)) {
                 $force = Test-KeyPress -Keys ControlKey
                 $okay = & $FuncAddInstallSource $text.ToLower() $force
@@ -1337,10 +1354,10 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
                 }
             } else {
                 Write-PipLog -UpdateLastLine `
-                    "Searching for similar package names. Wait for ~5 sec..."             
+                    "Searching for similar package names. Wait for ~5 sec..."
                 $null = & $FuncRPCSpellCheck $cb.Text 2
             }
-        }        
+        }
     }.GetNewClosure())
 
     $install = New-Object System.Windows.Forms.Button
@@ -1383,7 +1400,7 @@ Function Request-UserString($message, $title, $default, $completionItems = $null
     $Form.MinimizeBox = $false
     $Form.MaximizeBox = $false
     $Form.Icon = $Script:form.Icon
-    
+
     $TextBox1                        = New-Object system.Windows.Forms.TextBox
     $TextBox1.multiline              = $false
     $TextBox1.width                  = 379
@@ -1414,7 +1431,7 @@ Function Request-UserString($message, $title, $default, $completionItems = $null
     $Form.controls.AddRange( @($TextBox1, $ButtonCancel, $ButtonOK, $Label1) )
     $Form.AcceptButton = $ButtonOK
     $Form.CancelButton = $ButtonCancel
-    
+
     $TextBox1.Text = $default
     if ($completionItems) {
         $autoCompleteStrings = New-Object System.Windows.Forms.AutoCompleteStringCollection
@@ -1423,14 +1440,14 @@ Function Request-UserString($message, $title, $default, $completionItems = $null
         $TextBox1.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
         $TextBox1.AutoCompleteCustomSource = $autoCompleteStrings
     }
-    
+
     $result = $Form.ShowDialog()
-    
+
     if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
-        return $TextBox1.Text         
+        return $TextBox1.Text
     } else {
         return $null
-    }         
+    }
 }
 
 Function Generate-FormSearch {
@@ -1438,7 +1455,7 @@ Function Generate-FormSearch {
     $message = "Enter keywords to search with PyPi, Conda, Github and plugins: $pluginNames`n`nChecked items will be kept in the search list"
     $title = "pip, conda, github search"
     $default = ""
-    $input = Request-UserString $message $title $default    
+    $input = Request-UserString $message $title $default
     if (-not $input) {
         return
     }
@@ -1502,7 +1519,7 @@ Function Highlight-PythonPackages {
             }
         }
         $dataGridView.EndInit()
-    }    
+    }
 }
 
 Function global:Open-LinkInBrowser($url) {
@@ -1525,8 +1542,8 @@ Function Run-SubProcessWithCallback($code, $callback, $params) {
         # Write-Host 'run timer'
         }
     $Global:jobSemaphore++;
-    
-    Register-EngineEvent -SourceIdentifier "Custom.RaisedEvent$n" -Action $callback 
+
+    Register-EngineEvent -SourceIdentifier "Custom.RaisedEvent$n" -Action $callback
 
     $codeString = $code.ToString()
 
@@ -1539,22 +1556,22 @@ Function Run-SubProcessWithCallback($code, $callback, $params) {
     } -Name "Job$n" -ArgumentList $codeString, $params, $n
 
     $null = Register-ObjectEvent $job -EventName StateChanged -SourceIdentifier "JobEnd$n" -MessageData @{Id=$n} `
-        -Action {            
+        -Action {
             if($sender.State -eq 'Completed')  {
-                $n = $event.MessageData.Id                
+                $n = $event.MessageData.Id
                 Unregister-Event -SourceIdentifier "JobEnd$n"
                 Unregister-Event -SourceIdentifier "Custom.RaisedEvent$n"
                 Get-Job -Name "Job$n" | Wait-Job | Remove-Job
                 Get-Job -Name "JobEnd$n" | Wait-Job | Remove-Job
                 Get-Job -Name "Custom.RaisedEvent$n" | Wait-Job | Remove-Job
-                
+
                 $Global:jobSemaphore--;
-                if ($Global:jobSemaphore -eq 0) {                    
+                if ($Global:jobSemaphore -eq 0) {
                     $Global:jobTimer.Stop()
                     # Write-Host 'stop timer'
                 }
                 # Write-Host "*** Cleaned up $n sem=$Global:jobSemaphore"
-            }           
+            }
         }
 }
 
@@ -1565,14 +1582,14 @@ Function global:Format-PythonPackageToolTip($info) {
     $tt = "Summary: $($info.info.summary)`nAuthor: $($info.info.author)`nRelease: $($info.info.version)`n"
     $ti = "License: $($info.info.license)`nHome Page: $($info.info.home_page)`n"
     $lr = ($info.releases."$($info.info.version)")[0]  # The latest release
-    
+
     $downloadStats = $info.releases |
         ForEach-Object { $_.PSObject.Properties.Value.downloads } |
         Measure-Object -Sum
-    
+
     $tr = "Release Uploaded: $($lr.upload_time -replace 'T',' ')`n"
     $stats_rd = "Release Downloads: $($lr.downloads)`n"
-    $stats_td = "Total Downloads: $($downloadStats.Sum.ToString("#,##0"))`n"     
+    $stats_td = "Total Downloads: $($downloadStats.Sum.ToString("#,##0"))`n"
     $stats_tr = "Total Releases: $($downloadStats.Count)`n"
     $deps = "`nRequires Python: $($info.info.requires_python)`nRequires libraries:`n`t$($info.info.requires_dist -join "`n`t")`n"
     $tags = "`n$($info.info.classifiers -join "`n")"
@@ -1632,17 +1649,17 @@ Function global:Update-PythonPackageDetails {
         return @($info)
     }) ({
         # Callback: Access over $Global in here
-        $message = $event.SourceArgs        
+        $message = $event.SourceArgs
         $okay = $message.Result -ne $null
         if ($okay) {
             $Global:PyPiPackageJsonCache.Add($message.Params.PackageName, $message.Result)
         }
         $viewRow = $Global:dataGridView.Rows[$message.Params.RowIndex]
         $viewRow.DefaultCellStyle.BackColor = [Drawing.Color]::Empty
-        $row = $viewRow.DataBoundItem.Row        
+        $row = $viewRow.DataBoundItem.Row
         $Global:dataModel.Columns['Status'].ReadOnly = $false
         $row.Status = if ($okay) { 'OK' } else { 'Failed' }
-        $Global:dataModel.Columns['Status'].ReadOnly = $true        
+        $Global:dataModel.Columns['Status'].ReadOnly = $true
     }) @{PackageName=$packageName; RowIndex=$_.RowIndex; FuncNetWorkaround=$FuncSetWebClientWorkaround.ToString();}
 }
 
@@ -1680,7 +1697,7 @@ Function Add-CreateEnvButtonMenu {
             MenuText = 'with virtualenv';
             Code = {
                 param($path)
-                $output = & (Get-CurrentInterpreter 'VirtualenvExe') --python="$(Get-CurrentInterpreter 'PythonExe')" $path 2>&1                
+                $output = & (Get-CurrentInterpreter 'VirtualenvExe') --python="$(Get-CurrentInterpreter 'PythonExe')" $path 2>&1
                 return $output
             };
             IsAccessible = { [bool] (Get-CurrentInterpreter 'VirtualenvExe' -Executable) };
@@ -1711,7 +1728,7 @@ Function Add-CreateEnvButtonMenu {
             MenuText = '(tool required) Install virtualenv';
             Code = {
                 param($path)
-                $output = & (Get-CurrentInterpreter 'PythonExe') -m pip install virtualenv 2>&1                 
+                $output = & (Get-CurrentInterpreter 'PythonExe') -m pip install virtualenv 2>&1
                 return $output
             };
             IsAccessible = { -not [bool] (Get-CurrentInterpreter 'VirtualenvExe') };
@@ -1721,7 +1738,7 @@ Function Add-CreateEnvButtonMenu {
             MenuText = '(tool required) Install pipenv';
             Code = {
                 param($path)
-                $output = & (Get-CurrentInterpreter 'PythonExe') -m pip install pipenv 2>&1                 
+                $output = & (Get-CurrentInterpreter 'PythonExe') -m pip install pipenv 2>&1
                 return $output
             };
             IsAccessible = { -not [bool] (Get-CurrentInterpreter 'PipenvExe') };
@@ -1733,10 +1750,10 @@ Function Add-CreateEnvButtonMenu {
                 param($path)
                 # menuinst, cytoolz are required by conda to run
                 $menuinst = Validate-GitLink "https://github.com/ContinuumIO/menuinst@1.4.8"
-                $output_0 = & (Get-CurrentInterpreter 'PythonExe') -m pip install $menuinst 2>&1                 
-                $output_1 = & (Get-CurrentInterpreter 'PythonExe') -m pip install cytoolz conda 2>&1                 
+                $output_0 = & (Get-CurrentInterpreter 'PythonExe') -m pip install $menuinst 2>&1
+                $output_1 = & (Get-CurrentInterpreter 'PythonExe') -m pip install cytoolz conda 2>&1
                 $CondaExe = Guess-EnvPath (Get-CurrentInterpreter 'Path') 'conda' -Executable
-                
+
                 # conda needs a little caress to run together with pip
                 $path = (Get-CurrentInterpreter 'Path')
                 $stub = "$path\Lib\site-packages\conda\cli\pip_warning.py"
@@ -1744,7 +1761,7 @@ Function Add-CreateEnvButtonMenu {
                 Move-Item $stub "${stub}_"
                 Copy-Item $main $stub
                 # New-Item -Path $stub -ItemType SymbolicLink -Value $main
-                
+
                 $record = Get-CurrentInterpreter
                 $record.CondaExe = $CondaExe
                 return @($output_0, $output_1) | ForEach-Object { $_ }
@@ -1757,12 +1774,12 @@ Function Add-CreateEnvButtonMenu {
             Code = {  };
         }
     )
-    
+
     $FuncUpdateInterpreters = {
         param($path)
         Get-InterpreterRecord $path $interpreters -user $true
         Set-ActiveInterpreterWithPath $path
-        
+
         $ruleName = "pip env $path"
         $pythonExe = (Get-CurrentInterpreter 'PythonExe')
         $firewallUserResponse = ([System.Windows.Forms.MessageBox]::Show(
@@ -1778,7 +1795,7 @@ Function Add-CreateEnvButtonMenu {
                     -Direction Outbound `
                     -Action Allow
             }) @($ruleName, $pythonExe)
-        
+
             $rule = Get-NetFirewallRule -DisplayName "$ruleName" -ErrorAction SilentlyContinue
             if ($rule) {
                 Write-PipLog "Firewall rule '$ruleName' was successfully created."
@@ -1787,7 +1804,7 @@ Function Add-CreateEnvButtonMenu {
             }
         }
     }
-    
+
     $FuncGetPythonInfo = {
         return (Get-CurrentInterpreter 'Version')
     }
@@ -1800,13 +1817,13 @@ Function Add-CreateEnvButtonMenu {
                 "New python environment with active version $($FuncGetPythonInfo.Invoke()) will be created"
             if ($path -eq $null) { return }
         }
-        Write-PipLog "$($tool.MenuText), please wait..."        
+        Write-PipLog "$($tool.MenuText), please wait..."
         $output = $tool.Code.Invoke( @($path) )
         Write-PipLog ($output -join "`n")
 
         [void] $FuncUpdateInterpreters.Invoke($path)
     }.GetNewClosure()
-    
+
     $createEnvButton = Add-ButtonMenu 'env: Create' $tools $menuclick
 }
 
@@ -1836,13 +1853,13 @@ Function Add-EnvToolButtonMenu {
             Persistent = $true;
             MenuText = 'Environment variables...';
             Code = {
-                $interpreter = Get-CurrentInterpreter 
+                $interpreter = Get-CurrentInterpreter
                 if ($interpreter.User) {
                     Generate-FormEnvironmentVariables $interpreter
                 } else {
                     $path = $interpreter.Path
                     Write-PipLog "WARNING: Editing global variables for global interpreter $path"
-                    & rundll32 sysdm.cpl,EditEnvironmentVariables                     
+                    & rundll32 sysdm.cpl,EditEnvironmentVariables
                 }
             };
         };
@@ -1860,12 +1877,12 @@ Function Add-EnvToolButtonMenu {
             IsAccessible = { [bool] (Get-CurrentInterpreter 'User') };
         };
     )
-    
+
     $menuclick = {
         param($item)
         $output = $item.Code.Invoke()
     }
-    
+
     $envToolsButton = Add-ButtonMenu 'env: Tools' $menu $menuclick
 }
 
@@ -1907,7 +1924,7 @@ Function Add-ToolsButtonMenu {
             MenuText = 'View PyDoc for...';
             Code = {
                 $message = "Enter requset in format: package.subpackage.Name
-                
+
 or symbol like 'print' or '%'
 
 or topic like 'FORMATTING'
@@ -1927,7 +1944,7 @@ or keyword like 'elif'
         @{
             Persistent = $true;
             MenuText = 'Search through PyDocs (apropos) ...'
-            Code = {                 
+            Code = {
                 $message = "Enter keywords to search
 
 All module docs will be scanned.
@@ -1936,7 +1953,7 @@ Some packages may generate garbage or show windows, don't panic.
 "
                 $title = "PyDoc apropos"
                 $default = ""
-                $input = Request-UserString $message $title $default    
+                $input = Request-UserString $message $title $default
                 if (-not $input) {
                     return
                 }
@@ -1965,7 +1982,7 @@ Some packages may generate garbage or show windows, don't panic.
                 [System.IO.File]::WriteAllLines(
                     "$($env:LOCALAPPDATA)\py.ini",
                     $fileLines,
-                    $Utf8NoBomEncoding)     
+                    $Utf8NoBomEncoding)
                 Write-PipLog "$bits bit Python $version - is now default, use py.exe to launch"
             };
         };
@@ -1990,7 +2007,7 @@ Some packages may generate garbage or show windows, don't panic.
             MenuText = 'Show pip cache info';
             Code = {
                 $paths = [System.Collections.Generic.List[string]]::new()
-                
+
                 foreach ($type in @('pip', 'wheel')) {
                     $getCacheFolderScript_b10 = "from pip.utils.appdirs import user_cache_dir; print(user_cache_dir('$type'))"
                     $getCacheFolderScript_a10 = "from pip._internal.utils.appdirs import user_cache_dir; print(user_cache_dir('$type'))"
@@ -2004,12 +2021,12 @@ Some packages may generate garbage or show windows, don't panic.
                     }
                     [void] $paths.Add($cacheFolder)
                 }
-                
+
                 foreach ($plugin in $global:plugins) {
                     [void] $paths.Add($plugin.GetCachePath())
                 }
-                
-                foreach ($cacheFolder in $paths) {                     
+
+                foreach ($cacheFolder in $paths) {
                     $stats = Get-ChildItem -Recurse $cacheFolder | Measure-Object -Property Length -Sum
                     Write-PipLog ("`nCache at {0}`nFiles: {1}`nSize: {2} MB" -f $cacheFolder,$stats.Count,[math]::Round($stats.Sum / 1048576, 2))
                 }
@@ -2021,26 +2038,26 @@ Some packages may generate garbage or show windows, don't panic.
             Code = {
                 Clear-PipLog
             };
-        };         
+        };
         @{
             Persistent=$true;
             MenuText = 'Clear package list';
             Code = {
                 Clear-Rows
             };
-        };         
+        };
         @{
             Persistent=$true;
             MenuText = "Report a bug";
-            Code = {                 
-                $title = [System.Web.HttpUtility]::UrlEncode("Something went wrong") 
+            Code = {
+                $title = [System.Web.HttpUtility]::UrlEncode("Something went wrong")
                 Open-LinkInBrowser "https://github.com/ptytb/pips/issues/new?title=$title"
             };
-        };         
-    )     
-    
+        };
+    )
+
     $menuArray = [System.Collections.ArrayList]::new()
-    [void] $menuArray.AddRange($menu)     
+    [void] $menuArray.AddRange($menu)
     if ($global:plugins.Count -gt 0) {
         [void] $menuArray.Add(@{ 'IsSeparator'=$true; })
     }
@@ -2048,12 +2065,12 @@ Some packages may generate garbage or show windows, don't panic.
         [void] $menuArray.AddRange($plugin.GetToolMenuCommands())
     }
     $menu = $menuArray
-    
+
     $menuclick = {
         param($item)
         $output = $item.Code.Invoke()
     }
-    
+
     $envToolsButton = Add-ButtonMenu 'Tools' $menu $menuclick
 }
 
@@ -2063,14 +2080,14 @@ Function global:Show-CurrentPackageInBrowser() {
         $row = $view_row.DataBoundItem.Row
         $packageName = $row.Package
         $urlName = [System.Web.HttpUtility]::UrlEncode($packageName)
-        
+
         foreach ($plugin in $global:plugins) {
             $packageHomepageFromPlugin = $plugin.GetPackageHomepage($packageName, $row.Type)
             if ($packageHomepageFromPlugin) {
                 break
             }
         }
-        
+
         if ($packageHomepageFromPlugin) {
             Open-LinkInBrowser "$packageHomepageFromPlugin"
         } elseif ($row.Type -eq 'conda') {
@@ -2084,7 +2101,7 @@ Function global:Show-CurrentPackageInBrowser() {
         }
         Open-LinkInBrowser "${url}${urlName}"
     }
-}     
+}
 
 Function Generate-Form {
     $form = New-Object Windows.Forms.Form
@@ -2097,29 +2114,29 @@ Function Generate-Form {
 
     $null = Add-Buttons
 
-    $actionListComboBox = Add-ComboBoxActions    
+    $actionListComboBox = Add-ComboBoxActions
 
     $group = New-Object System.Windows.Forms.Panel
     $group.Location = New-Object System.Drawing.Point 502,2
     $group.Size = New-Object System.Drawing.Size 226,28
     $group.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
     $form.Controls.Add($group)
-    
+
     $Script:isolatedCheckBox = Add-CheckBox 'isolated' { Toggle-VirtualEnv $Script:isolatedCheckBox.Checked }
     $toolTip = New-Object System.Windows.Forms.ToolTip
     $toolTip.SetToolTip($isolatedCheckBox, "Ignore environmental variables, user configuration and global packages.`n`n--isolated`n--local")
 
     $null = Add-Button "Search..." { Generate-FormSearch }
-    $null = Add-Button "Install..." { Generate-FormInstall }    
+    $null = Add-Button "Install..." { Generate-FormInstall }
     Add-ToolsButtonMenu
 
     $null = NewLine-TopLayout
 
     $null = Add-Label "Filter results:"
-    
+
     $inputFilter = Add-Input {  # TextChanged Handler here
         param($input)
-        
+
         if ($Script:dataGridView.CurrentRow) {
             # Keep selection while filter is being changed
             $selectedRow = $Script:dataGridView.CurrentRow.DataBoundItem.Row
@@ -2127,7 +2144,7 @@ Function Generate-Form {
 
         $searchText = $input.Text -replace "'","''"
         $searchText = $searchText -replace '\[|\]',''
-        
+
         Function Create-SearchSubQuery($column, $searchText, $junction) {
             return "$column LIKE '%" + ( ($searchText -split '\s+' | where { -not [String]::IsNullOrEmpty($_) }) -join  "%' $junction $column LIKE '%" ) + "%'"
         }
@@ -2148,7 +2165,7 @@ Function Generate-Form {
             'All Words' {
                 $subQueryPackage     = Create-SearchSubQuery 'Package'     $searchText 'AND'
                 $subQueryDescription = Create-SearchSubQuery 'Description' $searchText 'AND'
-            }            
+            }
         }
         $isInstallMode = $dataModel.Columns.Contains('Description')
         if ($isInstallMode) {
@@ -2158,7 +2175,7 @@ Function Generate-Form {
         }
 
         #Write-Host $query
-        
+
         if ($searchText.Length -gt 0) {
             $Script:dataModel.DefaultView.RowFilter = $query
         } else {
@@ -2208,16 +2225,16 @@ Function Generate-Form {
                 if ($interpreters.Count -gt $oldCount) {
                     Write-PipLog "Added virtual environment location: $path"
                 }
-                Set-ActiveInterpreterWithPath $path                
+                Set-ActiveInterpreterWithPath $path
             } else {
                 Write-PipLog "No python found in $path"
             }
         }
     }
-    
+
     Add-CreateEnvButtonMenu
     Add-EnvToolButtonMenu
-    
+
     $interpreters = $Script:interpreters
     $trackDuplicateInterpreters = $Script:trackDuplicateInterpreters
     $form.add_KeyDown({
@@ -2232,7 +2249,7 @@ Function Generate-Form {
             }
         }
     }.GetNewClosure())
-    
+
     $dataGridView = New-Object System.Windows.Forms.DataGridView
     $Script:dataGridView = $dataGridView
     $Global:dataGridView = $dataGridView
@@ -2241,9 +2258,9 @@ Function Generate-Form {
     $dataGridView.Size = New-Object Drawing.Point 800,450
     $dataGridView.ShowCellToolTips = $false
     $dataGridView.Add_Sorted({ Highlight-PythonPackages })
-    
+
     $dataGridToolTip = New-Object System.Windows.Forms.ToolTip
-    
+
     $dataGridView.Add_CellMouseEnter({
         if (($_.RowIndex -gt -1)) {
             Update-PythonPackageDetails $_
@@ -2262,12 +2279,12 @@ Function Generate-Form {
         if ($_.KeyCode -eq 'Escape') {
             $dataGridToolTip.Hide($dataGridView)
             $dataGridToolTip.InitialDelay = [Int16]::MaxValue
-            
+
             if ($inputFilter.Focused) {
                 if ([string]::IsNullOrEmpty($inputFilter.Text)) {
-                    $dataGridView.Focus()                     
+                    $dataGridView.Focus()
                 } else {
-                    $inputFilter.Text = [String]::Empty                     
+                    $inputFilter.Text = [String]::Empty
                 }
             } else {
                 $inputFilter.Focus()
@@ -2278,16 +2295,16 @@ Function Generate-Form {
                 $_.Handled = $true
                 $dataGridView.Focus()
             }
-        }     
+        }
         if ($inputFilter.Focused -and ($_.KeyCode -in @('Up', 'Down'))) {
             $Script:dataGridView.Focus()
             $_.Handled = $false
         }
     }.GetNewClosure())
     Init-PackageGridViewProperties
-    
+
     $dataModel = New-Object System.Data.DataTable
-    $dataGridView.DataSource = $dataModel    
+    $dataGridView.DataSource = $dataModel
     $Script:dataModel = $dataModel
     $Global:dataModel = $dataModel
     Init-PackageUpdateColumns $dataModel
@@ -2312,12 +2329,12 @@ Function Generate-Form {
         if ($Script:dataModel.Rows.Count -eq 0) {
             return
         }
-        
+
         $viewRow = $Script:dataGridView.CurrentRow
         if (! $viewRow) {
             return
         }
-        $row = $viewRow.DataBoundItem.Row        
+        $row = $viewRow.DataBoundItem.Row
 
         $Script:logView.SelectAll()
         $Script:logView.SelectionBackColor = $Script:logView.BackColor
@@ -2328,7 +2345,7 @@ Function Generate-Form {
             $Script:logView.ScrollToCaret()
         }
     }
-    
+
     $dataGridView.Add_CellMouseClick({ & $FuncHighlightLogFragment }.GetNewClosure())
     $dataGridView.Add_SelectionChanged({ & $FuncHighlightLogFragment }.GetNewClosure())
 
@@ -2338,7 +2355,7 @@ Function Generate-Form {
             }
         }.GetNewClosure())
     $form.Add_Load({ $Script:formLoaded = $true })
-    
+
     $FuncResizeForm = {
         $dataGridView.Width = $form.ClientSize.Width - 15
         $dataGridView.Height = $form.ClientSize.Height / 2
@@ -2353,7 +2370,7 @@ Function Generate-Form {
         Write-PipLog "`n" 'Hold Shift and hover the rows to fetch the detailed package info form PyPi'
         $form.BringToFront()
         })
-        
+
     $form.add_KeyDown({
         if ($_.KeyCode -in (1..12 | ForEach-Object { "F$_" })) {  # Handle F1..F12 functional keys
             $n = [int]("$($_.KeyCode)" -replace 'F','') - 1
@@ -2361,30 +2378,30 @@ Function Generate-Form {
                 $Script:actionListComboBox.SelectedIndex = $n
             }
         }
-        
-        if ($Script:dataGridView.Focused -and $Script:dataGridView.RowCount -gt 0) {            
+
+        if ($Script:dataGridView.Focused -and $Script:dataGridView.RowCount -gt 0) {
             if ($_.KeyCode -eq 'Home') {
                 Set-SelectedNRow 0
                 $_.Handled = $true
             }
-            
+
             if ($_.KeyCode -eq 'End') {
                 Set-SelectedNRow ($Script:dataGridView.RowCount - 1)
                 $_.Handled = $true
             }
-            
+
             if ($_.KeyCode -eq 'Return' -and $_.Control) {
                 Show-CurrentPackageInBrowser
                 $_.Handled = $true
                 return
             }
-            
+
             if ($_.KeyCode -eq 'Return' -and $_.Shift) {
                 $_.Handled = $true
                 Execute-PipAction
                 return
             }
-            
+
             if ($_.KeyCode -in @('Space', 'Return')) {
                 $oldSelect = $Script:dataGridView.CurrentRow.DataBoundItem.Row.Select
                 $Script:dataGridView.CurrentRow.DataBoundItem.Row.Select = -not $oldSelect
@@ -2392,7 +2409,7 @@ Function Generate-Form {
             }
         }
     }.GetNewClosure())
-        
+
     return ,$form
 }
 
@@ -2438,13 +2455,13 @@ Function Generate-FormEnvironmentVariables($interpreterRecord) {
     $DataGridView1.AllowUserToDeleteRows = $true
     $DataGridView1.AutoSizeColumnsMode = [System.Windows.Forms.DataGridViewAutoSizeColumnsMode]::AllCells
     $DataGridView1.DataSource        = Create-EnvironmentVariablesDataTable
-    
+
     $StartupScriptGroup              = New-Object system.Windows.Forms.Groupbox
     $StartupScriptGroup.height       = 222
     $StartupScriptGroup.width        = 624
     $StartupScriptGroup.text         = "Activate Script additional commands at startup (Windows batch)"
     $StartupScriptGroup.location     = New-Object System.Drawing.Point(16,360)
-    
+
     $TextBox1                        = New-Object System.Windows.Forms.TextBox
     $TextBox1.Multiline              = $true
     $TextBox1.WordWrap               = $false
@@ -2475,7 +2492,7 @@ Function Generate-FormEnvironmentVariables($interpreterRecord) {
     $ButtonWrite.width                = 151
     $ButtonWrite.height               = 26
     $ButtonWrite.location             = New-Object System.Drawing.Point(19,612)
-    
+
     $ButtonRestore                    = New-Object system.Windows.Forms.Button
     $ButtonRestore.text               = "Restore Activate Script"
     $ButtonRestore.width              = 151
@@ -2488,7 +2505,7 @@ Function Generate-FormEnvironmentVariables($interpreterRecord) {
     $StartupScriptGroup.Controls.AddRange(@($TextBox1))
     $Form.AcceptButton = $ButtonOK
     $Form.CancelButton = $ButtonCancel
-    
+
     # Convert form's DataTable back to '$interpreterRecord.EnvironmentVariables'
     $FuncDataTableToEnvVars = {
         $newVars = New-Object System.Collections.ArrayList
@@ -2503,26 +2520,26 @@ Function Generate-FormEnvironmentVariables($interpreterRecord) {
         }
         $interpreterRecord | Add-Member -Force NoteProperty `
             -Name 'EnvironmentVariables' `
-            -Value $newVars         
-            
+            -Value $newVars
+
         $interpreterRecord | Add-Member -Force NoteProperty `
             -Name 'StartupScript' `
             -Value $TextBox1.Lines
     }.GetNewClosure()
-    
+
     $FuncUpdateActivateScript = {
         param($WritePipsSection = $true)
-        
+
         & $FuncDataTableToEnvVars
-    
+
         $lines = Get-Content $interpreterRecord.VenvActivate
         $newLines = New-Object System.Collections.ArrayList
         $skipRegion = $false
         $sectionBegin = "REM PIPS VARS BEGIN"
         $sectionEnd   = "REM PIPS VARS END"
-        
+
         $newLines.Add("@echo off")
-        
+
         if ($WritePipsSection) {
             $newLines.Add($sectionBegin)
             $interpreterRecord.EnvironmentVariables |
@@ -2533,7 +2550,7 @@ Function Generate-FormEnvironmentVariables($interpreterRecord) {
             }
             $newLines.Add($sectionEnd)
         }
-            
+
         foreach ($line in $lines) {
             if ($line -match $sectionBegin) {
                 $skipRegion = $true
@@ -2543,41 +2560,41 @@ Function Generate-FormEnvironmentVariables($interpreterRecord) {
                 $newLines.Add($line)
             }
         }
-        
+
         $Utf8NoBomEncoding = New-Object System.Text.UTF8Encoding $False
         [System.IO.File]::WriteAllLines(
             $interpreterRecord.VenvActivate,
             $newLines,
-            $Utf8NoBomEncoding)     
+            $Utf8NoBomEncoding)
     }.GetNewClosure()
-    
+
     $New.Add_Click({
-            $row  = $DataGridView1.DataSource.NewRow()         
+            $row  = $DataGridView1.DataSource.NewRow()
             $row.Enabled = $true
             $DataGridView1.DataSource.Rows.Add($row)
         }.GetNewClosure())
-    
+
     $Delete.Add_Click({
             if ($DataGridView1.CurrentRow -ne $null) {
                 $DataGridView1.CurrentRow.DataBoundItem.Delete()
             }
         }.GetNewClosure())
-        
+
     $ButtonWrite.Add_Click({
         & $FuncUpdateActivateScript
         }.GetNewClosure())
-        
+
     $ButtonRestore.Add_Click({
         & $FuncUpdateActivateScript -WritePipsSection $false
         }.GetNewClosure())
-       
+
     # $Form.add_KeyDown({
     #         if ($_.KeyCode -eq 'Return' -and $TextBox1.Focused) {
     #             $_.SuppressKeyPress = $true
     #             $_.Handled = $true
     #         }
     #     }.GetNewClosure())
-    
+
     # Convert '$interpreterRecord.EnvironmentVariables' object to DataTable
     $interpreterRecord.EnvironmentVariables |
         Sort-Object -Property Variable |
@@ -2588,11 +2605,11 @@ Function Generate-FormEnvironmentVariables($interpreterRecord) {
             $row.Enabled  = $_.Enabled
             $DataGridView1.DataSource.Rows.Add($row)
         }
-    
+
     $TextBox1.Lines = $interpreterRecord.StartupScript
-    
+
     $result = $Form.ShowDialog()
-        
+
     if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
         & $FuncDataTableToEnvVars
     }
@@ -2634,7 +2651,7 @@ $pyRegexNameChain = Compile-Regex '^\s*(\w+(?:\.\w+)*)' ($ro_compiled + $ro_mult
 $DrawingColor = New-Object Drawing.Color  # Workaround for PowerShell, which parses script classes before loading types
 
 class DocView {
-    
+
     [System.Windows.Forms.Form]        $formDoc
     [System.Windows.Forms.RichTextBox] $docView
     [int]           $modifiedTextLengthDelta  # We've found all matches with immutual Text, but will be changing actual document
@@ -2644,7 +2661,7 @@ class DocView {
         $self = $this
         $this.packageName = $packageName
         $this.modifiedTextLengthDelta = 0
-        
+
         $this.formDoc = New-Object Windows.Forms.Form
         $this.formDoc.Text = "PyDoc for [$packageName] *** Click/Enter goto $packageName.WORD | Esc back | Ctrl+Wheel font | Space scroll"
         $this.formDoc.Size = New-Object Drawing.Point 830, 840
@@ -2676,7 +2693,7 @@ class DocView {
                         break
                     }
                 }
-            
+
                 for ($charIndex = $clickedIndex; $charIndex -lt $self.docView.Text.Length; $charIndex++) {
                     if ($self.docView.Text[$charIndex] -notmatch '\w|\.') {
                         $end = $charIndex
@@ -2687,7 +2704,7 @@ class DocView {
                 $selectedLength = $end - $begin
                 if ($selectedLength -gt 0) {
                     $clickedWord = $self.docView.Text.Substring($begin, $selectedLength)
-                    
+
                     $childViewer = Show-DocView "$($self.PackageName).${clickedWord}"
                     $childViewer.formDoc.add_Shown({
                             $childViewer.SetSize($self.GetSize())
@@ -2735,12 +2752,12 @@ class DocView {
         if (-not $NoDefaultHighlighting) {
             $this.Highlight_PEPLinks()
             $this.Highlight_PyDocSyntax()
-        }         
+        }
     }
-    
+
     [void] Show() {
         $this.docView.Select(0, 0)
-        $this.docView.ScrollToCaret()        
+        $this.docView.ScrollToCaret()
         $this.formDoc.ShowDialog()
     }
 
@@ -2756,14 +2773,14 @@ class DocView {
     [System.Drawing.Point] GetLocation() {
         return $this.formDoc.DesktopLocation
     }
-    
+
     [void] SetSize($size) {
         $this.formDoc.Size = $size
     }
 
     [void] SetLocation($location) {
         $this.formDoc.DesktopLocation = $location
-    }    
+    }
 
     [void] Alter_MatchingFragments($pattern, $selectionAlteringCode) {
         $this.modifiedTextLengthDelta = 0
@@ -2798,12 +2815,12 @@ class DocView {
         $this.Highlight_Text($Script:pyRegexSpecial,   ($Script:DrawingColor::DarkOrange),  $true,  $false)
         $this.Highlight_Text($Script:pyRegexSpecialU,  ($Script:DrawingColor::DarkOrange),  $true,  $false)
     }
-    
+
     [void] Highlight_PEPLinks() {
         # PEP Links
         $this.Alter_MatchingFragments($Script:pyRegexPEP, {
             param($index, $length, $match)
-            
+
             $parts = "$match".Split(' -', [System.StringSplitOptions]::RemoveEmptyEntries)
             if ($parts.Count -ne 2) {
                 return
@@ -2816,11 +2833,11 @@ class DocView {
             $this.docView.SelectedText = "$match [$pep_url] "  # keep the space to prevent link merging
             $this.modifiedTextLengthDelta += $this.docView.TextLength
         })
-    
+
         # Subpackage Links
         $this.Alter_MatchingFragments($Script:pyRegexSubPkgs, {
             param($index, $length, $match)
-        
+
             $startLine = $this.docView.GetLineFromCharIndex($index)
             for ($n = $startLine; $n -lt $this.docView.Lines.Count ; $n++) {
                 $rawLine = $this.docView.Lines[$n]
@@ -2837,7 +2854,7 @@ class DocView {
             }
         })
     }
-    
+
 }
 
 Function global:Show-DocView($packageName, $SetContent = $null, $Highlight = $null, [switch] $NoDefaultHighlighting) {
@@ -2846,13 +2863,13 @@ Function global:Show-DocView($packageName, $SetContent = $null, $Highlight = $nu
     } else {
         $content = $SetContent
     }
-    
+
     $viewer = New-Object DocView -ArgumentList @($content, $packageName, $NoDefaultHighlighting)
-    
+
     if ($Highlight) {
         $viewer.Highlight_Text($Highlight, ([System.Drawing.Color]::Navy), $false, $true)
     }
-    
+
     return $viewer
 }
 
@@ -2923,31 +2940,31 @@ Function Get-CondaSearchResults($request) {
     #   anaconda = main, free, pro, msys2[windows]
     # --info should give better details but not supported on every conda
     $totalCount = 0
-    $channels = Get-PipsSetting 'CondaChannels'     
-    
+    $channels = Get-PipsSetting 'CondaChannels'
+
     foreach ($channel in $channels) {
         Write-PipLog "Searching on channel: $channel ... " -NoNewline
-        
+
         $items = & $conda_exe search -c $channel --json $request | ConvertFrom-Json
-        
+
         $count = 0
         $items.PSObject.Properties | ForEach-Object {
             $name = $_.Name
             $item = $_.Value
-            
+
             foreach ($package in $item) {
                 $row = $dataModel.NewRow()
                 $row.Select = $false
-                $row.Package = $name                 
+                $row.Package = $name
                 $row.Version = $package.version
                 $row.Description = "channel: $channel, arch: $($package.arch), build: $($package.build), date: $($package.date), license: $($package.license_family)"
                 $row.Type = 'conda'
                 $row.Status = ''
                 $dataModel.Rows.Add($row)
                 $count += 1
-            }             
+            }
         }
-        
+
         Write-PipLog "$count packages."
         $totalCount += $count
     }
@@ -2981,7 +2998,7 @@ Function global:Get-PluginSearchResults($request) {
             $request,
             (Get-CurrentInterpreter 'Version'),
             (Get-CurrentInterpreter 'Bits'))
-        
+
         foreach ($package in $packages) {
             $row = $dataModel.NewRow()
             $row.Select = $false
@@ -3001,7 +3018,7 @@ Function global:Get-GithubRepoTags($gitLinkInfo) {
     if (-not $gitLinkInfo) {
         return $null
     }
-    
+
     if ($gitLinkInfo.Path) {
         $git = Get-Bin 'git'
         if (-not $git) {
@@ -3009,7 +3026,7 @@ Function global:Get-GithubRepoTags($gitLinkInfo) {
         }
         return (& $git -C $gitLinkInfo.Path tag)
     }
-    
+
     $github_tags_url = 'https://api.github.com/repos/{0}/{1}/tags'
     $url = $github_tags_url -f $gitLinkInfo.User,$gitLinkInfo.Repo
     $json = Download-String $url
@@ -3017,22 +3034,22 @@ Function global:Get-GithubRepoTags($gitLinkInfo) {
         $tags = $json | ConvertFrom-Json | ForEach-Object { $_.Name }
         return $tags
     }
-    
+
     return $null
 }
 
 Function Get-SearchResults($request) {
-    $previousSelected = Store-CheckedPipSearchResults    
+    $previousSelected = Store-CheckedPipSearchResults
     Clear-Rows
     Init-PackageSearchColumns $dataModel
 
     $dataGridView.BeginInit()
     $dataModel.BeginLoadData()
-    
+
     foreach ($row in $previousSelected) {
         $dataModel.ImportRow($row)
     }
-    
+
     # $pipCount = Get-PipSearchResults $request
     # $condaCount = Get-CondaSearchResults $request
     # $githubCount = Get-GithubSearchResults $request
@@ -3047,29 +3064,29 @@ Function Get-SearchResults($request) {
  Function Get-PythonPackages($outdatedOnly = $true) {
     Write-PipLog
     Write-PipLog 'Updating package list... '
-    
+
     $python_exe = Get-CurrentInterpreter 'PythonExe' -Executable
     $pip_exe = Get-CurrentInterpreter 'PipExe' -Executable
     $conda_exe = Get-CurrentInterpreter 'CondaExe' -Executable
-    
+
     if ($python_exe) {
         Write-PipLog (& $python_exe --version 2>&1)
     } else {
         Write-PipLog 'Python is not found!'
     }
-    
+
     if ($pip_exe) {
         Write-PipLog (& $pip_exe --version 2>&1)
     } else {
         Write-PipLog 'pip is not found!'
     }
-    
+
     Write-PipLog
 
     Clear-Rows
     Init-PackageUpdateColumns $dataModel
 
-    
+
     if ($pip_exe) {
         $args = New-Object System.Collections.ArrayList
         $null = $args.Add('list')
@@ -3078,7 +3095,7 @@ Function Get-SearchResults($request) {
         if ($outdatedOnly) {
             $null = $args.Add('--outdated')
         }
-        
+
         if ($Script:isolatedCheckBox.Checked) {
             $null = $args.Add('--isolated')  # ignore user config
             $null = $args.Add('--local')     # ignore global packages
@@ -3092,9 +3109,9 @@ Function Get-SearchResults($request) {
             | where { -not [String]::IsNullOrEmpty($_.Package) }
     }
 
-    Function Add-PackagesToTable($packages, $defaultType = [String]::Empty) {        
+    Function Add-PackagesToTable($packages, $defaultType = [String]::Empty) {
         for ($n = 0; $n -lt $packages.Count; $n++) {
-            $row = $dataModel.NewRow()        
+            $row = $dataModel.NewRow()
             $row.Select = $false
             $row.Package = $packages[$n].Package
             $row.Installed = $packages[$n].Installed
@@ -3105,9 +3122,9 @@ Function Get-SearchResults($request) {
             }
             if ([String]::IsNullOrEmpty($row.Type)) {
                 $row.Type = $defaultType
-            } 
+            }
             $dataModel.Rows.Add($row)
-        }        
+        }
     }
 
     $dataModel.BeginLoadData()
@@ -3132,7 +3149,7 @@ Function Get-SearchResults($request) {
 
     Write-PipLog 'Package list updated.'
     Write-PipLog 'Double click or [Ctrl+Enter] a table row to open PyPi, Anaconda.com or github.com in browser'
-    
+
     $count = $dataModel.Rows.Count
     $pipCount = $pipPackages.Count
     $builtinCount = $builtinPackages.Count
@@ -3181,7 +3198,7 @@ Function Clear-Rows() {
     $Script:inputFilter.Clear()
     $dataModel.DefaultView.RowFilter = $null
     $dataGridView.ClearSelection()
-    
+
     #if ($dataGridView.SortedColumn) {
     #    $dataGridView.SortedColumn.SortMode = [System.Windows.Forms.DataGridViewColumnSortMode]::NotSortable
     #}
@@ -3190,11 +3207,11 @@ Function Clear-Rows() {
 
     $dataGridView.BeginInit()
     $dataModel.BeginLoadData()
-    
+
     $dataModel.Rows.Clear()
 
     $dataModel.EndLoadData()
-    $dataGridView.EndInit()   
+    $dataGridView.EndInit()
 }
 
 Function global:Set-SelectedNRow($n) {
@@ -3230,7 +3247,7 @@ Function Check-PipDependencies {
 
     $result = & $pip_exe check 2>&1
     $result = $result -join "`n"
-    
+
     if ($result -match 'No broken requirements found') {
         Write-PipLog "OK"
         Write-PipLog $result
@@ -3253,57 +3270,57 @@ Function global:Select-PipAction($actionName) {
 
 Function global:Execute-PipAction {
     $action = $Script:actionsModel[$actionListComboBox.SelectedIndex]
-    
+
     if ($action.TakesList) {
         $checkedList = New-Object System.Collections.ArrayList
     }
-    
+
     $tasksOkay = 0
     $tasksFailed = 0
-    
+
     for ($i = 0; $i -lt $dataModel.Rows.Count; $i++) {
        if ($dataModel.Rows[$i].Select -eq $true) {
             $package = $dataModel.Rows[$i]
-            
+
             if (-not $action.TakesList) {
                 Set-SelectedRow $dataModel.Rows[$i]
                 [System.Windows.Forms.Application]::DoEvents()
-            
+
                 Write-PipLog ""
-                $logFrom = $Script:logView.TextLength 
+                $logFrom = $Script:logView.TextLength
                 $dataModel.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $logFrom
                 Write-PipLog $action.Name ' ' $package.Package
-                
+
                 $name = $package.Package
                 $version = if ($package.Version) { $package.Version } else { $package.Latest }
                 $type = $package.Type
-                
+
                 $pluginHookError = $false
                 foreach ($plugin in $global:plugins) {
                     $info = $plugin.PackageActionHook($name, $version, $type,
                                                       (Get-CurrentInterpreter 'Version'),
                                                       (Get-CurrentInterpreter 'Bits'),
                                                       ([ref] $pluginHookError))
-                                                      
+
                     if ($pluginHookError) {
                         Write-PipLog "Interrupted because of an error produced by plugin $($plugin.GetPluginName())"
                         break
                     }
-                    
+
                     if ($info) {
                         $name = $info.Name
                         $version = $info.Version
                         $type = $info.Type
                         break
-                    }                     
+                    }
                 }
-                
+
                 if (-not $pluginHookError) {
                     $result = $action.Execute($name, $type, $version) -join "`n"
                 } else {
                     $result = ''
                 }
-                
+
                 Write-PipLog $result
                 $logTo = $Script:logView.TextLength - $logFrom
                 $dataModel.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
@@ -3318,7 +3335,7 @@ Function global:Execute-PipAction {
                     $tasksFailed++
                 }
                 $dataModel.Columns['Status'].ReadOnly = $true
-            
+
                 Set-SelectedRow $dataModel.Rows[$i]
                 [System.Windows.Forms.Application]::DoEvents()
             } else {
@@ -3326,12 +3343,12 @@ Function global:Execute-PipAction {
             }
        }
     }
-    
+
     if ($action.TakesList) {
         $null = $action.Execute($checkedList)
         return
     }
-    
+
     if (($tasksOkay -eq 0) -and ($tasksFailed -eq 0)) {
         Write-PipLog 'Nothing is selected.'
     } else {
@@ -3364,7 +3381,7 @@ function Test-is64Bit {
     $result.FilePath = $FilePath
     $result.Is64Bit = $false
 
-    switch ($machineUint) 
+    switch ($machineUint)
     {
         0      { $result.FileType = 'Native' }
         0x014c { $result.FileType = 'x86' }
@@ -3383,7 +3400,7 @@ Function global:Test-KeyPress
         Checks to see if a key or keys are currently pressed.
 
         .DESCRIPTION
-        Checks to see if a key or keys are currently pressed. If all specified keys are pressed then will return true, but if 
+        Checks to see if a key or keys are currently pressed. If all specified keys are pressed then will return true, but if
         any of the specified keys are not pressed, false will be returned.
 
         .PARAMETER Keys
@@ -3415,7 +3432,7 @@ Function global:Test-KeyPress
         .OUTPUTS
         System.Boolean
     #>
-    
+
     [CmdletBinding()]
     param
     (
@@ -3424,20 +3441,20 @@ Function global:Test-KeyPress
         [System.Windows.Forms.Keys[]]
         $Keys
     )
-    
+
     # use the User32 API to define a keypress datatype
     $Signature = @'
-[DllImport("user32.dll", CharSet=CharSet.Auto, ExactSpelling=true)] 
-public static extern short GetAsyncKeyState(int virtualKeyCode); 
+[DllImport("user32.dll", CharSet=CharSet.Auto, ExactSpelling=true)]
+public static extern short GetAsyncKeyState(int virtualKeyCode);
 '@
-    $API = Add-Type -MemberDefinition $Signature -Name 'Keypress' -Namespace Keytest -PassThru 
-    
+    $API = Add-Type -MemberDefinition $Signature -Name 'Keypress' -Namespace Keytest -PassThru
+
     # test if each key in the collection is pressed
     $Result = foreach ($Key in $Keys)
     {
         [bool]($API::GetAsyncKeyState($Key) -eq -32767)
     }
-    
+
     # if all are pressed, return true, if any are not pressed, return false
     $Result -notcontains $false
 }
@@ -3451,9 +3468,9 @@ pkgs = pkg_resources.working_set
 info = {p.key: {'deps': {r.name: [str(s) for s in r.specifier] for r in p.requires()}, 'extras': p.extras} for p in pkgs}
 print(json.dumps(info))
 '@ -join ';'
-    
+
     $output = & (Get-CurrentInterpreter 'PythonExe') -c "`"$python_code`""
-    $pkgs = $output | ConvertFrom-Json     
+    $pkgs = $output | ConvertFrom-Json
     return $pkgs
 }
 
@@ -3465,40 +3482,40 @@ Function Get-AsciiTree($name,
                        $isExtra = $false,
                        $loopTracking = (New-Object 'System.Collections.Generic.HashSet[string]')) {
     # $output = & pip.exe show $name 2>&1
-    # 
+    #
     # if ([string]::IsNullOrEmpty($output)) {
     #     return
     # }
-    # 
+    #
     # $reqs = $output[$output.Count - 1]
-    # 
+    #
     # if ([string]::IsNullOrEmpty($reqs) -or -not $reqs.StartsWith('Requires:')) {
     #     return
     # }
-    # 
+    #
     # $n = "Requires:".Length
     # $children = $reqs.Substring($n).Split(', ', [System.StringSplitOptions]::RemoveEmptyEntries)
-    
-    $children = $distributionInfo."$name"."deps".PSObject.Properties.Name  # dep name list from JSON from pip                 
+
+    $children = $distributionInfo."$name"."deps".PSObject.Properties.Name  # dep name list from JSON from pip
     if ($children -eq $null) {
         $children = @()
     } else {
         $children = @($children)
     }
-    
-    $extras = @($distributionInfo."$name"."extras")     
+
+    $extras = @($distributionInfo."$name"."extras")
     if (($extras -ne $null) -and ($extras.Length -gt 0)) {
         $children = @($children; $extras)
     }
-    
+
     if ($children.Length -gt 1) {
         $children = @($children) | Sort-Object
     }
-    
+
     # Write-PipLog "$name children: '$children' $($children.Length) sibl=$hasSibling"
     $hasChildren = $children.Length -gt 0
     $isLooped = $loopTracking.Contains($name)
-   
+
     $prefix = if ($indent -gt 0) {
         if ($hasChildren -and -not $isLooped) {
             if ($hasSibling) {
@@ -3516,7 +3533,7 @@ Function Get-AsciiTree($name,
     } else {
         ''
     }
-    
+
     if (-not [string]::IsNullOrEmpty($prefix)) {
         foreach ($i in $dangling) {
             if ($i -ne -1) {
@@ -3524,11 +3541,11 @@ Function Get-AsciiTree($name,
             }
         }
     }
-    
+
     $suffixList = @()
-    if ($isExtra) { $suffixList += @('*') }     
+    if ($isExtra) { $suffixList += @('*') }
     if ($isLooped) { $suffixList += @('∞') }
-    if (-not $Script:autoCompleteIndex.Contains($name.ToLower())) { $suffixList += @('x') }  # unavailable package
+    if (-not $global:autoCompleteIndex.Contains($name.ToLower())) { $suffixList += @('x') }  # unavailable package
     $suffix = if ($suffixList.Count -eq 0) { '' } else { " ($($suffixList -join ' '))" }
 
     "${prefix}${name}${suffix}"  # Add a line to the Return Stack
@@ -3574,7 +3591,7 @@ Function Show-ConsoleWindow([bool] $show) {
     [DllImport("user32.dll")]
     public static extern bool ShowWindow(IntPtr hWnd, Int32 nCmdShow);
 '
-    
+
     $consolePtr = [Console.Window]::GetConsoleWindow()
     $value = if ($show) { 2 } else { 0 }
     [Console.Window]::ShowWindow($consolePtr, $value)
@@ -3593,7 +3610,7 @@ Function Save-PipsSettings {
 
 Function Load-PipsSettings {
     $settingsFile = "$($env:LOCALAPPDATA)\pips\settings.json"
-    $global:settings = @{} 
+    $global:settings = @{}
     if (Exists-File $settingsFile) {
         try {
             $settings = (Get-Content $settingsFile | ConvertFrom-Json)
@@ -3624,15 +3641,15 @@ Function global:Deserialize([string] $FileName) {
 Function global:Get-PackageInfoFromWheelName($name) {
     # Related documentation:
     # https://www.python.org/dev/peps/pep-0425/
-    
+
     $parser = [regex] '(?<Distribution>[^-]+)-(?<VersionCanonical>[0-9]+(?:\.[0-9]+)*)(?<VersionExtra>[^-]+)?(:?-(?<BuildTag>\d[^-.]*))?(:?-(?<PythonTag>(:?py|cp|ip|pp|jy)[^-]+))?(:?-(?<AbiTag>none|(:?(:?abi|py|cp|ip|pp|jy)[^-.]+)))?(?:-(?<PlatformTag>(:?any|linux|mac|win)[^.]*))?(?<ArchiveExtension>(:?\.[a-z0-9]+)+)'
-    
+
     $groups = $parser.Match($name).Groups
-    
+
     if ($groups.Count -lt 2) {
         return $null
     }
-    
+
     Function Get-GroupValueOrNull($group) {
         if (-not $group.Success -or [string]::IsNullOrWhiteSpace($group.Value)) {
             return $null
@@ -3640,10 +3657,10 @@ Function global:Get-PackageInfoFromWheelName($name) {
             return $group.Value.Trim()
         }
     }
-    
+
     $versionCanonical = (Get-GroupValueOrNull $groups['VersionCanonical'])
     $versionExtra = (Get-GroupValueOrNull $groups['VersionExtra'])
-    
+
     return @{
         'Distribution'=(Get-GroupValueOrNull $groups['Distribution']);
         'VersionCanonical'=$versionCanonical;
@@ -3662,10 +3679,10 @@ Function global:Test-CanInstallPackageTo([string] $pythonVersion, [string] $pyth
     $pyMajor = $pythonVersion[0]
     $testVersion = [regex] "cp$pythonVersion|py$pyMajor"
     $testAbi = [regex] "none|$testVersion"
-    
-    return {         
+
+    return {
         param([hashtable] $wheelInfo)
-        
+
         if (($wheelInfo.Python -and
             ($wheelInfo.Python -notmatch $testVersion)) `
             -or
@@ -3687,7 +3704,7 @@ Function Load-Plugins() {
     $plugins = Get-ChildItem "$PipsRoot\external-repository-providers" -Directory -Depth 0
     foreach ($plugin in $plugins) {
         Write-PipLog "Loading plugin $($plugin.Name)"
-        Import-Module "$($plugin.FullName)"         
+        Import-Module "$($plugin.FullName)"
         $instance = & (Get-Module $plugin.Name).ExportedFunctions.NewPluginInstance
         $pluginConfigPath = "$($env:LOCALAPPDATA)\pips\plugins\$($instance.GetPluginName())"
         [void] $instance.Init(
@@ -3699,6 +3716,7 @@ Function Load-Plugins() {
                     'output'=($output -join "`n");
                 }
             }.GetNewClosure(),
+            ${function:Download-Data},
             {
                 Write-PipLog "$($instance.GetPluginName()) : $args"
             }.GetNewClosure(),
@@ -3706,7 +3724,9 @@ Function Load-Plugins() {
             ${function:Serialize},
             ${function:Deserialize},
             ${function:Get-PackageInfoFromWheelName},
-            ${function:Test-CanInstallPackageTo})
+            ${function:Test-CanInstallPackageTo},
+            { param([string] $name) return $global:autoCompleteIndex.Contains($name) }.GetNewClosure(),
+            ${function:Prepare-PackageAutoCompletion})
         [void] $global:plugins.Add($instance)
         [void] $global:packageTypes.AddRange($instance.GetSupportedPackageTypes())
         Write-PipLog $instance.GetDescription()
@@ -3716,26 +3736,31 @@ Function Load-Plugins() {
 Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
     $env:PYTHONIOENCODING="utf-8"
     $env:LC_CTYPE="utf-8"
-    
+
     if (-not $Debug) {
        Set-StrictMode -Off
        Set-PSDebug -Off
     } else {
        Set-StrictMode -Version latest
-       Set-PSDebug -Strict         
+       Set-PSDebug -Strict
     }
-    
+
     if ($HideConsole) {
         Show-ConsoleWindow $false
     }
-    
+
     Load-PipsSettings
     Load-Plugins
-    
+
     [System.Windows.Forms.Application]::EnableVisualStyles()
     $form = Generate-Form
 
     $form.Add_Closing({
+
+        foreach ($plugin in $global:plugins) {
+            $plugin.Release()
+        }
+
         Save-PipsSettings
         [System.Windows.Forms.Application]::Exit()
         if (-not [Environment]::UserInteractive) {
@@ -3746,7 +3771,7 @@ Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
     $form.Show()
     $form.Activate()
 
-    $appContext = New-Object System.Windows.Forms.ApplicationContext 
+    $appContext = New-Object System.Windows.Forms.ApplicationContext
     try {
         [void][System.Windows.Forms.Application]::Run($appContext)
     } catch {
