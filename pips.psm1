@@ -3050,10 +3050,10 @@ Function Get-SearchResults($request) {
         $dataModel.ImportRow($row)
     }
 
-    # $pipCount = Get-PipSearchResults $request
-    # $condaCount = Get-CondaSearchResults $request
-    # $githubCount = Get-GithubSearchResults $request
+    $pipCount = Get-PipSearchResults $request
+    $condaCount = Get-CondaSearchResults $request
     $pluginCount = Get-PluginSearchResults $request
+    $githubCount = Get-GithubSearchResults $request
 
     $dataModel.EndLoadData()
     $dataGridView.EndInit()
