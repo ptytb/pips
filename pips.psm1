@@ -20,6 +20,17 @@
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Net.WebClient")
 
 
+$pips_pipe_instance = [System.IO.Directory]::GetFiles("\\.\\pipe\\") | Where-Object { $_ -match 'pips_spelling_server'}
+if ($pips_pipe_instance) {
+    [System.Windows.Forms.MessageBox]::Show(
+        "There's another pips instance running, exiting.",
+        "pips",
+        [System.Windows.Forms.MessageBoxButtons]::OK)
+    ${function:global:Start-Main} = { Exit }
+    Return
+}
+
+
 Import-Module -Global .\PSRunspacedDelegate\PSRunspacedDelegate
 
 
@@ -69,8 +80,7 @@ $continuation = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task[Obje
     $Global:sw.AutoFlush = $false
     [bool] $Global:SuggestionsWorking = $false
 });
-# Write-Host $task
-# Write-Host $continuation
+
 $task.ContinueWith($continuation);
 $task.Start()
 
