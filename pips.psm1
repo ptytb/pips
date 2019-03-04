@@ -23,6 +23,24 @@
 Import-Module -Global .\PSRunspacedDelegate\PSRunspacedDelegate
 
 
+Function WrapStackTraceLog($func) {
+    try {
+        # return $func.Invoke($args)
+        return (& $func $args)
+    } catch {
+        Write-Host ('=' * 70)
+        Write-Host $_.Exception.Message
+        Write-Host ('-' * 70)
+        Write-Host $_.ScriptStackTrace
+        Write-Host ('-' * 70)
+        Write-Host "$StackTrace"
+        Write-Host ('=' * 70)
+        Show-ConsoleWindow $true
+    }
+    return $null
+}
+
+
 $startServer = New-RunspacedDelegate ( [Func[Object]] {
     Write-Host Start server
     Start-Process -WindowStyle Hidden -FilePath powershell -ArgumentList "-ExecutionPolicy Bypass $PSScriptRoot\pips-spelling-server.ps1"
@@ -3130,15 +3148,27 @@ Function Get-SearchResults($request) {
             $row = $dataModel.NewRow()
             $row.Select = $false
             $row.Package = $packages[$n].Package
-            $row.Installed = $packages[$n].Installed
-            $row.Latest = $packages[$n].Latest
-            $row.Type = $packages[$n].Type
-            if (! [String]::IsNullOrEmpty($packages[$n].Version)) {
+
+            $availableKeys = $packages[$n].PSobject.Properties.Name
+
+            if ($availableKeys -contains 'Installed') {
+                $row.Installed = $packages[$n].Installed
+            }
+
+            if ($availableKeys -contains 'Latest') {
+                $row.Latest = $packages[$n].Latest
+            }
+
+            if ($availableKeys -contains 'Version') {
                 $row.Installed = $packages[$n].Version
             }
-            if ([String]::IsNullOrEmpty($row.Type)) {
+
+            if ($availableKeys -contains 'Type') {
+                $row.Type = $packages[$n].Type
+            } else {
                 $row.Type = $defaultType
             }
+
             $dataModel.Rows.Add($row)
         }
     }
@@ -3788,9 +3818,5 @@ Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
     $form.Activate()
 
     $appContext = New-Object System.Windows.Forms.ApplicationContext
-    try {
-        [void][System.Windows.Forms.Application]::Run($appContext)
-    } catch {
-        Show-ConsoleWindow $true
-    }
+    $null = WrapStackTraceLog({ [System.Windows.Forms.Application]::Run($appContext) }.GetNewClosure())
 }
