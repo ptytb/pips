@@ -641,6 +641,17 @@ $actionCommands = @{
         install_nodep = { return (& (Get-CurrentInterpreter 'PythonExe') -m pip  install --no-deps $args 2>&1) };
         download      = { return (& (Get-CurrentInterpreter 'PythonExe') -m pip  download          $args 2>&1) };
         uninstall     = { return (& (Get-CurrentInterpreter 'PythonExe') -m pip  uninstall --yes   $args 2>&1) };
+        reverseDependencies = {
+            param($pkg)
+            $di = Get-PipDistributionInfo
+            $packages = $di | Get-Member -Type NoteProperty | Select-Object -ExpandProperty Name
+            foreach ($package in $packages) {
+                    $deps = $di."$package".deps | Get-Member -Type NoteProperty | Select-Object -ExpandProperty Name
+                    if ($pkg -in $deps) {
+                        "$package"
+                    }
+            }
+        };
     };
     conda=@{
         info          = { return (& (Get-CurrentInterpreter 'CondaExe') list --prefix (Get-CurrentInterpreter 'Path') -v --json $args 2>&1) };
@@ -658,6 +669,7 @@ $actionCommands = @{
         install_nodep = { return (& (Get-CurrentInterpreter 'CondaExe') install (Get-PipsSetting 'CondaChannels' -AsArgs -First) --prefix (Get-CurrentInterpreter 'Path') --yes -q --no-shortcuts --no-deps --no-update-dependencies   $args 2>&1) };
         download      = { return 'Not supported on conda' };
         uninstall     = { return (& (Get-CurrentInterpreter 'CondaExe') uninstall --prefix (Get-CurrentInterpreter 'Path') --yes $args 2>&1) };
+        reverseDependencies = { return (& (Get-CurrentInterpreter 'CondaExe') search --json --reverse-dependency $args 2>&1) | ConvertFrom-Json | Get-Member -Type NoteProperty | Select-Object -ExpandProperty Name };
     };
 }
 $actionCommands.wheel   = $actionCommands.pip
@@ -753,6 +765,10 @@ x = Package doesn't exist in index
 
     & $Add (Make-PipActionItem 'Dependency tree' `
         { param($list); $Script:PIPTREE_LEGEND; Get-DependencyAsciiGraph $list; Write-PipLog "`n" }.GetNewClosure() `
+        { param($pkg,$out); $out -match '.*' } )
+
+    & $Add (Make-PipActionItem 'Reverse dependencies' `
+        { param($pkg,$type); $actionCommands[$type].reverseDependencies.Invoke($pkg) } `
         { param($pkg,$out); $out -match '.*' } )
 
     $Script:actionsModel = $actionsModel
