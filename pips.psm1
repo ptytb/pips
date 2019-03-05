@@ -581,7 +581,7 @@ Function Get-PythonBuiltinPackages() {
             continue
         }
         $null = $trackDuplicates.Add("$packageName")
-        $null = $builtinLibs.Add(@{Package=$packageName; Type='builtin'})
+        $null = $builtinLibs.Add([PSCustomObject] @{Package=$packageName; Type='builtin'})
     }
 
     $getBuiltinsScript = "import sys; print(','.join(sys.builtin_module_names))"
@@ -591,7 +591,7 @@ Function Get-PythonBuiltinPackages() {
         if ($trackDuplicates.Contains("$builtinModule")) {
             continue
         }
-        $null = $builtinLibs.Add(@{Package=$builtinModule; Type='builtin'})
+        $null = $builtinLibs.Add([PSCustomObject] @{Package=$builtinModule; Type='builtin'})
     }
 
     return ,$builtinLibs
@@ -622,7 +622,7 @@ Function Get-PythonOtherPackages {
                 -or ((Test-PackageInList ($packageName -replace '_','-')) -ne -1)) {
                 continue
             }
-            $null = $otherLibs.Add(@{Package=$packageName; Type='other'})
+            $null = $otherLibs.Add([PSCustomObject] @{Package=$packageName; Type='other'})
         }
     }
 
@@ -651,7 +651,7 @@ Function Get-CondaPackages() {
         $items = & $conda_exe $arguments | ConvertFrom-Json
 
         foreach ($item in $items) {
-            $null = $condaPackages.Add(@{Type='conda'; Package=$item.name; Version=$item.version})
+            $null = $condaPackages.Add([PSCustomObject] @{Type='conda'; Package=$item.name; Installed=$item.version})
         }
     }
 
@@ -936,7 +936,7 @@ Function Add-CheckBox($text, $code) {
 }
 
 Function Toggle-VirtualEnv ($state) {
-    if (! $Script:formLoaded) {
+    if (-not $Script:formLoaded) {
         return
     }
 
@@ -1553,7 +1553,7 @@ Function Init-PackageSearchColumns($dataTable) {
 }
 
 Function Highlight-PythonPackages {
-    if (! $outdatedOnly) {
+    if (-not $outdatedOnly) {
         $dataGridView.BeginInit()
         foreach ($row in $dataGridView.Rows) {
             if ($row.DataBoundItem.Row.Type -eq 'builtin') {
@@ -1658,7 +1658,7 @@ Function global:Update-PythonPackageDetails {
     $cells = $dataGridView.Rows[$_.RowIndex].Cells
     $packageName = $rowItem.Row.Package
 
-    if (! [String]::IsNullOrEmpty($cells['Package'].ToolTipText) -or (!($rowItem.Row.Type -in @('pip', 'wheel', 'sdist')))) {
+    if ((-not [String]::IsNullOrEmpty($cells['Package'].ToolTipText)) -or (-not($rowItem.Row.Type -in @('pip', 'wheel', 'sdist')))) {
         return
     }
 
@@ -1668,7 +1668,7 @@ Function global:Update-PythonPackageDetails {
         return
     }
 
-    if (!(Test-KeyPress -Keys ShiftKey)) {
+    if (-not (Test-KeyPress -Keys ShiftKey)) {
         return
     }
 
@@ -2375,7 +2375,7 @@ Function Generate-Form {
         }
 
         $viewRow = $Script:dataGridView.CurrentRow
-        if (! $viewRow) {
+        if (-not $viewRow) {
             return
         }
         $row = $viewRow.DataBoundItem.Row
@@ -2940,7 +2940,7 @@ Function Store-CheckedPipSearchResults() {
 
 Function Get-PipSearchResults($request) {
     $pip_exe = Get-CurrentInterpreter 'PipExe' -Executable
-    if (!$pip_exe) {
+    if (-not $pip_exe) {
         Write-PipLog 'pip is not found!'
         return 0
     }
@@ -3157,24 +3157,24 @@ Function Get-SearchResults($request) {
         for ($n = 0; $n -lt $packages.Count; $n++) {
             $row = $dataModel.NewRow()
             $row.Select = $false
-            $row.Package = $packages[$n].Package
+            $package = $packages[$n]
+            $row.Package = $package.Package
 
-            $availableKeys = $packages[$n].PSobject.Properties.Name
+            $availableKeys = $package.PSObject.Properties.Name
+
+            # write-host $availableKeys
+            # Write-Host $package.Package $availableKeys
 
             if ($availableKeys -contains 'Installed') {
-                $row.Installed = $packages[$n].Installed
+                $row.Installed = $package.Installed
             }
 
             if ($availableKeys -contains 'Latest') {
-                $row.Latest = $packages[$n].Latest
+                $row.Latest = $package.Latest
             }
 
-            if ($availableKeys -contains 'Version') {
-                $row.Installed = $packages[$n].Version
-            }
-
-            if ($availableKeys -contains 'Type') {
-                $row.Type = $packages[$n].Type
+            if (($availableKeys -contains 'Type') -and (-not [string]::IsNullOrWhiteSpace($package.Type))) {
+                $row.Type = $package.Type
             } else {
                 $row.Type = $defaultType
             }
@@ -3184,19 +3184,30 @@ Function Get-SearchResults($request) {
     }
 
     $dataModel.BeginLoadData()
+
+    $pipCount = 0
+    $condaCount = 0
+    $builtinCount = 0
+    $otherCount = 0
+
     if ($pip_exe) {
         Add-PackagesToTable $pipPackages 'pip'
+        $pipCount = $pipPackages.Count
     }
     if ($conda_exe) {
         $condaPackages = Get-CondaPackages
         Add-PackagesToTable $condaPackages 'conda'
+        $condaCount = $condaPackages.Count
     }
-    if (! $outdatedOnly) {
+    if (-not $outdatedOnly) {
         $builtinPackages = Get-PythonBuiltinPackages
         Add-PackagesToTable $builtinPackages 'builtin'
 
         $otherPackages = Get-PythonOtherPackages
         Add-PackagesToTable $otherPackages 'other'
+
+        $builtinCount = $builtinPackages.Count
+        $otherCount = $otherPackages.Count
     }
     $dataModel.EndLoadData()
 
@@ -3207,10 +3218,6 @@ Function Get-SearchResults($request) {
     Write-PipLog 'Double click or [Ctrl+Enter] a table row to open PyPi, Anaconda.com or github.com in browser'
 
     $count = $dataModel.Rows.Count
-    $pipCount = $pipPackages.Count
-    $builtinCount = $builtinPackages.Count
-    $condaCount = $condaPackages.Count
-    $otherCount = $otherPackages.Count
     Write-PipLog "Total $count packages: $builtinCount builtin, $pipCount pip, $condaCount conda, $otherCount other"
     Write-PipLog
 }
@@ -3296,7 +3303,7 @@ Function Check-PipDependencies {
     Write-PipLog 'Checking dependencies...'
 
     $pip_exe = Get-CurrentInterpreter 'PipExe' -Executable
-    if (!$pip_exe) {
+    if (-not $pip_exe) {
         Write-PipLog 'pip is not found!'
         return
     }
