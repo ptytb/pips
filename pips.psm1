@@ -54,7 +54,7 @@ Function WrapStackTraceLog($func) {
 
 $startServer = New-RunspacedDelegate ( [Func[Object]] {
     Write-Host Start server
-    Start-Process -WindowStyle Hidden -FilePath powershell -ArgumentList "-ExecutionPolicy Bypass $PSScriptRoot\pips-spelling-server.ps1"
+    Start-Process -WindowStyle Normal -FilePath powershell -ArgumentList "-ExecutionPolicy Bypass $PSScriptRoot\pips-spelling-server.ps1"
     Write-Host Server started.
 });
 $task = [System.Threading.Tasks.Task[Object]]::new($startServer);
@@ -110,7 +110,6 @@ $Global:FuncRPCSpellCheck = {
                 param($t)
                 if (-not [string]::IsNullOrEmpty($t.Result)) {
                     $result = $t.Result | ConvertFrom-Json
-                    $Global:SuggestionsWorking = $false
                     $null = & $Global:FuncRPCSpellCheck_Callback $result
                 }
         	});
@@ -126,7 +125,8 @@ Function global:Get-Bin($command, $all = $false) {
     $commands = Get-Command -All -ErrorAction SilentlyContinue $command
     $found = $null
     if ($commands) {
-        $commands = $commands | ForEach-Object { $_.Source }
+        # $commands = $commands | ForEach-Object { $_.Source }
+        $commands = $commands | Select-Object -ExpandProperty Source
         if ($all) {
             $found = $commands
         } else {
@@ -282,7 +282,7 @@ $lastWidgetTop = 5
 $widgetLineHeight = 23
 $dataGridView = $null
 $inputFilter = $null
-$logView = $null
+$global:logView = $null
 $actionsModel = $null
 $isolatedCheckBox = $null
 $header = ("Select", "Package", "Installed", "Latest", "Type", "Status")
@@ -391,11 +391,13 @@ $FuncSetWebClientWorkaround = {
 
 & $FuncSetWebClientWorkaround
 Function Download-String($url) {
+    Write-Host 'get' $url
     try {
         $wc = New-Object System.Net.WebClient
         $wc.Headers["User-Agent"] = "Mozilla/5.0 (compatible; MSIE 6.0;)"
         $wc.Encoding = [System.Text.Encoding]::UTF8
         $result = $wc.DownloadString($url)
+        write-host 'res=' $result
     } catch {
         Write-Error "$url`n$_`n"
         $result = $null
@@ -428,29 +430,37 @@ Function Convert-Base64ToICO($base64Text) {
     return $icon
 }
 
+
 $global:_WritePipLogBacklog = [System.Collections.Generic.List[string]]::new()
+
+
+
+# https://docs.microsoft.com/en-us/dotnet/api/system.eventhandler?view=netframework-4.7.2
+$logViewDelegate = New-RunspacedDelegate ([EventHandler] {
+    param($Sender, $EventArgs)
+    $null = & $global:FuncWriteLog $EventArgs.Lines $EventArgs.UpdateLastLine $EventArgs.NoNewline
+})
+
 Function global:Write-PipLog([switch] $UpdateLastLine, [switch] $NoNewline) {
-    if (-not $logView) {
+    if (-not $global:logView) {
         [void] $global:_WritePipLogBacklog.Add($args -join ' ')
         return
     }
-    if ($UpdateLastLine) {
-        $text = $args -join ' '
-        $logView.Select($logView.GetFirstCharIndexFromLine($logView.Lines.Count - 1), $logView.Text.Length);
-        $logView.SelectedText = $text
-        return
-    }
-    foreach ($obj in $args) {
-        $logView.AppendText("$obj")
-    }
-    if (-not $NoNewline) {
-        $logView.AppendText("`n")
-    }
-    $logView.ScrollToCaret()
+
+    # if ($global:logView.InvokeRequired) {
+    #     [EventArgs] $Eventargs = [EventArgs]::Empty
+    #     Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'Lines' -Value ($args | ForEach-Object { "$_" }) -Force
+    #     Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'UpdateLastLine' -Value ([bool] $PSBoundParameters['UpdateLastLine']) -Force
+    #     Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'NoNewline' -Value ([bool] $PSBoundParameters['NoNewline']) -Force
+    #     $null = $global:logView.Invoke($logViewDelegate, ($global:logView, $EventArgs))
+    # }
+    # else {
+        $null = & $global:FuncWriteLog $args $UpdateLastLine $NoNewline
+    # }
 }
 
 Function global:Clear-PipLog() {
-    $logView.Clear()
+    $global:logView.Clear()
 }
 
 Function Add-TopWidget($widget, $span=1) {
@@ -1162,11 +1172,32 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         }
     }.GetNewClosure()
 
+
+    $FuncAfterDownload = New-RunspacedDelegate ([EventHandler] {
+        param($Sender, $EventArgs)
+        # https://docs.microsoft.com/en-us/dotnet/api/system.windows.forms.control.invoke?view=netframework-4.7.2
+
+        $cb = $Sender
+        ($packageName, $completions_format, $releases) = ($EventArgs.PackageName, $EventArgs.CompletionsFormat,
+            $EventArgs.Items)
+
+        $autoCompletePackageVersion = New-Object System.Windows.Forms.AutoCompleteStringCollection
+        foreach ($release in $releases) {
+            $autoCompletePackageVersion.Add($completions_format -f @($packageName,$release))
+        }
+
+        $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
+        $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
+        $cb.AutoCompleteCustomSource = $autoCompletePackageVersion
+    })
+
     $FuncSetAutoCompleteMode = {
         param([InstallAutoCompleteMode] $mode)
 
         # Write-Host "ACTIVATING MODE !!! $mode"
 
+        $cb = $script:cb  # drag from outer closure
+        $FuncAfterDownload = $script:FuncAfterDownload
         $text = $cb.Text
         $n = $text.LastIndexOfAny('\/')
         $possibleDirectoryPath = $text.Substring(0, $n + 1)
@@ -1187,20 +1218,65 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
 
             ([InstallAutoCompleteMode]::Version) {
                 $packageName = $text -replace '==.*',''
-
-                if (-not $Global:PyPiPackageJsonCache.ContainsKey($packageName)) {
-                    Download-PythonPackageDetails $packageName
-                }
-
-                $releases = $Global:PyPiPackageJsonCache[$packageName].'releases' | Get-Member -Type Properties | ForEach-Object { $_.Name }
                 $completions_format = "{0}=={1}"
+
+                if (-not $global:PyPiPackageJsonCache.ContainsKey($packageName)) {
+                    $download = New-RunspacedDelegate ([Func[System.Collections.ArrayList]] {
+                        $null = Download-PythonPackageDetails $packageName
+                        $releases = $global:PyPiPackageJsonCache[$packageName].'releases' | Get-Member -Type Properties | ForEach-Object { $_.Name }
+                        return ,$releases
+                    }.GetNewClosure())
+                    $task = [System.Threading.Tasks.Task[System.Collections.ArrayList]]::new($download);
+
+                    $continuation = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task[System.Collections.ArrayList]]] {
+                        param([System.Threading.Tasks.Task] $task)
+                        $releases = $task.Result
+                        if ($releases -and $releases.Count) {
+                            [EventArgs] $EventArgs = [EventArgs]::Empty
+                            Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'PackageName' -Value $packageName -Force
+                            Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'CompletionsFormat' -Value $completions_format -Force
+                            Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'Items' -Value $releases -Force
+                            $null = $cb.Invoke($FuncAfterDownload, ($cb, $EventArgs))
+                        }
+                    }.GetNewClosure())
+
+                    $task.ContinueWith($continuation)
+                    $task.Start()
+                } else {
+                    $releases = $global:PyPiPackageJsonCache[$packageName].'releases' | Get-Member -Type Properties | ForEach-Object { $_.Name }
+                    [EventArgs] $EventArgs = [EventArgs]::Empty
+                    Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'PackageName' -Value $packageName -Force
+                    Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'CompletionsFormat' -Value $completions_format -Force
+                    Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'Items' -Value $releases -Force
+                    $null = $cb.Invoke($FuncAfterDownload, ($cb, $EventArgs))
+                }
             }
 
             ([InstallAutoCompleteMode]::GitTag) {
                 $packageName = $text -replace '@.*',''
-                $gitLinkInfo = Validate-GitLink $packageName -AsObject $true
-                $releases = Get-GithubRepoTags $gitLinkInfo
                 $completions_format = "{0}@{1}"
+
+                $download = New-RunspacedDelegate ([Func[System.Collections.ArrayList]] {
+                    $gitLinkInfo = Validate-GitLink $packageName -AsObject $true
+                    $releases = Get-GithubRepoTags $gitLinkInfo
+                    return ,$releases
+                }.GetNewClosure())
+                $task = [System.Threading.Tasks.Task[System.Collections.ArrayList]]::new($download);
+
+                $continuation = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task[System.Collections.ArrayList]]] {
+                    param([System.Threading.Tasks.Task] $task)
+                    $releases = $task.Result
+                    if ($releases -and $releases.Count) {
+                        [EventArgs] $EventArgs = [EventArgs]::Empty
+                        Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'PackageName' -Value $packageName -Force
+                        Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'CompletionsFormat' -Value $completions_format -Force
+                        Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'Items' -Value $releases -Force
+                        $null = $cb.Invoke($FuncAfterDownload, ($cb, $EventArgs))
+                    }
+                }.GetNewClosure())
+
+                $task.ContinueWith($continuation)
+                $task.Start()
             }
 
             ([InstallAutoCompleteMode]::WheelFile) {
@@ -1218,16 +1294,6 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
             }
 
             Default { throw "Wrong completion mode: $mode $($mode.GetType())" }
-        }
-
-        if ($mode -in @([InstallAutoCompleteMode]::Version, [InstallAutoCompleteMode]::GitTag)) {
-            $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
-            $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
-            $autoCompletePackageVersion = New-Object System.Windows.Forms.AutoCompleteStringCollection
-            foreach ($release in $releases) {
-                $autoCompletePackageVersion.Add($completions_format -f @($packageName,$release))
-            }
-            $cb.AutoCompleteCustomSource = $autoCompletePackageVersion
         }
 
         $global:currentInstallAutoCompleteMode = $mode
@@ -1381,11 +1447,19 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         # }
 
         # & $FuncShowToolTip "$text" "Packages with similar names found in the index.`n`nDid you mean:`n`n$candidatesToolTipText"
-        Write-PipLog -UpdateLastLine "Suggestions for '$($result.Request)': $($result.Candidates)"
+
+
+        # Write-Host "Suggestions for '$($result.Request)': $($result.Candidates)"
+        Write-Host "IN"
+        $null = Write-PipLog "Suggestions for '$($result.Request)': $($result.Candidates)"
+        $null = Write-PipLog 'cb=' $cb.Text 'res="' $result.Request '""'
+        Write-Host "OUT"
+
+        $global:SuggestionsWorking = $false
         if ($cb.Text -ne $result.Request) {
             $null = & $FuncRPCSpellCheck $cb.Text 1
         }
-    }
+    }.GetNewClosure()
 
     $cb.add_TextChanged({
         param($cb)
@@ -1401,7 +1475,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         if ($guessedCompletionMode -eq [InstallAutoCompleteMode]::Name) {
             $null = & $FuncRPCSpellCheck $text 1
         }
-    });
+    }.GetNewClosure());
 
     $cb.Location = New-Object Drawing.Point 7,60
     $cb.Size = New-Object Drawing.Point 330,32
@@ -2392,18 +2466,46 @@ Function Generate-Form {
     $form.Controls.Add($dataGridView)
 
     $logView = New-Object System.Windows.Forms.RichTextBox
+    $global:logView = $logView
     $logView.Location = New-Object Drawing.Point 7,520
     $logView.Size = New-Object Drawing.Point 800,270
     $logView.ReadOnly = $true
     $logView.Multiline = $true
     $logView.Font = New-Object System.Drawing.Font("Consolas", 11)
-    $Script:logView = $logView
     $form.Controls.Add($logView)
     foreach ($line in $global:_WritePipLogBacklog) {
         [void] $logView.AppendText($line)
         [void] $logView.AppendText("`n")
     }
     Remove-Variable -Scope Global _WritePipLogBacklog
+    $global:FuncWriteLog = {
+        param($lines, [bool] $UpdateLastLine, [bool] $NoNewline)
+
+        # Write-Host 'a=' $lines $UpdateLastLine $NoNewline
+        # Write-Host 'a=' $lines.GetType()
+
+        $logView = $global:logView
+        if ($UpdateLastLine) {
+            $text = $lines -join ' '
+            $logView.Select($logView.GetFirstCharIndexFromLine($logView.Lines.Count), $logView.Text.Length);
+            $logView.SelectedText = $text
+            $logView.Select(0, 0);
+            return
+        }
+        foreach ($obj in $lines) {
+            $logView.AppendText("$obj")
+        }
+        if (-not $NoNewline) {
+            $logView.AppendText("`n")
+        }
+        $logView.ScrollToCaret()
+    }
+
+    write-host ($global:logView | Get-Member -MemberType Event)
+    # Register-ObjectEvent -InputObject $global:logView -EventName Invoke -Action {
+    #     Write-Host '>>>>>>>>> Heeeeey'
+    # }
+
 
     $FuncHighlightLogFragment = {
         if ($Script:dataModel.Rows.Count -eq 0) {
@@ -2416,13 +2518,13 @@ Function Generate-Form {
         }
         $row = $viewRow.DataBoundItem.Row
 
-        $Script:logView.SelectAll()
-        $Script:logView.SelectionBackColor = $Script:logView.BackColor
+        $global:logView.SelectAll()
+        $global:logView.SelectionBackColor = $global:logView.BackColor
 
         if (Get-Member -inputobject $row -name "LogFrom" -Membertype Properties) {
-            $Script:logView.Select($row.LogFrom, $row.LogTo)
-            $Script:logView.SelectionBackColor = [Drawing.Color]::Yellow
-            $Script:logView.ScrollToCaret()
+            $global:logView.Select($row.LogFrom, $row.LogTo)
+            $global:logView.SelectionBackColor = [Drawing.Color]::Yellow
+            $global:logView.ScrollToCaret()
         }
     }
 
@@ -3099,7 +3201,7 @@ Function global:Get-GithubRepoTags($gitLinkInfo) {
         return $null
     }
 
-    if ($gitLinkInfo.Path) {
+    if ($gitLinkInfo.PSObject.Properties.Name -contains 'Path') {
         $git = Get-Bin 'git'
         if (-not $git) {
             return $null
@@ -3386,7 +3488,7 @@ Function global:Execute-PipAction {
                 [System.Windows.Forms.Application]::DoEvents()
 
                 Write-PipLog ""
-                $logFrom = $Script:logView.TextLength
+                $logFrom = $global:logView.TextLength
                 $dataModel.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $logFrom
                 Write-PipLog $action.Name ' ' $package.Package
 
@@ -3421,7 +3523,7 @@ Function global:Execute-PipAction {
                 }
 
                 Write-PipLog $result
-                $logTo = $Script:logView.TextLength - $logFrom
+                $logTo = $global:logView.TextLength - $logFrom
                 $dataModel.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
 
                 $dataModel.Columns['Status'].ReadOnly = $false
