@@ -675,9 +675,18 @@ Function Get-CondaPackages([bool] $outdatedOnly) {
             }
 
             foreach ($archive in $archives) {
-                $null = $condaPackages.Add([PSCustomObject] @{Type='conda'; Package=$name;
-                    'Latest'=$archive.version;
-                    'Installed'=$installed[$name]; })
+                [version] $version_installed = [version]::new()
+                [version] $version_updated = [version]::new()
+
+                $tryVIn = [version]::TryParse(($installed[$name] -replace '[^\d.]',''), [ref] $version_installed)
+                $tryVUpd = [version]::TryParse(($archive.version -replace '[^\d.]',''), [ref] $version_updated)
+
+                if (-not($tryVIn -and $tryVUpd -and ($version_installed -ge $version_updated))) {
+                    $null = $condaPackages.Add([PSCustomObject] @{Type='conda'; Package=$name;
+                        'Latest'=$archive.version;
+                        'Installed'=$installed[$name]; })
+                }
+
             }
         }
     }
