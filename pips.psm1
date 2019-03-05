@@ -243,12 +243,12 @@ Function global:Exists-File($path, [string] $Mask) {
     return [System.IO.File]::Exists($path)
 }
 
-$invalidPathCharacters = [System.IO.Path]::GetInvalidPathChars()
+$global:invalidPathCharacters = [System.IO.Path]::GetInvalidPathChars()
 Function global:Exists-Directory($path) {
     if ([string]::IsNullOrWhiteSpace($path)) {
         return $false
     }
-    if ($path.IndexOfAny($invalidPathCharacters) -ne -1) {
+    if ($path.IndexOfAny($global:invalidPathCharacters) -ne -1) {
         return $false
     }
     return [System.IO.Directory]::Exists($path)
@@ -287,7 +287,7 @@ $actionsModel = $null
 $isolatedCheckBox = $null
 $header = ("Select", "Package", "Installed", "Latest", "Type", "Status")
 $csv_header = ("Package", "Installed", "Latest", "Type", "Status")
-$search_columns = ("Select", "Package", "Version", "Description", "Type", "Status")
+$search_columns = ("Select", "Package", "Installed", "Description", "Type", "Status")
 $formLoaded = $false
 $outdatedOnly = $true
 $interpreters = $null
@@ -384,7 +384,9 @@ $FuncSetWebClientWorkaround = {
         [Net.SecurityProtocolType]::Tls   -bor `
         [Net.SecurityProtocolType]::Ssl3)
 
-    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+    [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+
+    [Net.ServicePointManager]::Expect100Continue = $true
 
     Set-UseUnsafeHeaderParsing -Enable
 }
@@ -396,8 +398,15 @@ Function Download-String($url) {
         $wc = New-Object System.Net.WebClient
         $wc.Headers["User-Agent"] = "Mozilla/5.0 (compatible; MSIE 6.0;)"
         $wc.Encoding = [System.Text.Encoding]::UTF8
+
+        # $Job = Register-ObjectEvent -InputObject $wc -EventName DownloadStringCompleted -Action {
+        #     Write-Host 'Download completed'
+        #     Write-Host $EventArgs.Result
+        # }
+        # $result = $wc.DownloadStringAsync($url)
+        # Receive-Job $Job
+
         $result = $wc.DownloadString($url)
-        write-host 'res=' $result
     } catch {
         Write-Error "$url`n$_`n"
         $result = $null
@@ -435,7 +444,6 @@ $global:_WritePipLogBacklog = [System.Collections.Generic.List[string]]::new()
 
 
 
-# https://docs.microsoft.com/en-us/dotnet/api/system.eventhandler?view=netframework-4.7.2
 $logViewDelegate = New-RunspacedDelegate ([EventHandler] {
     param($Sender, $EventArgs)
     $null = & $global:FuncWriteLog $EventArgs.Lines $EventArgs.UpdateLastLine $EventArgs.NoNewline
@@ -447,14 +455,14 @@ Function global:Write-PipLog([switch] $UpdateLastLine, [switch] $NoNewline) {
         return
     }
 
+    # https://docs.microsoft.com/en-us/dotnet/api/system.eventhandler?view=netframework-4.7.2
     # if ($global:logView.InvokeRequired) {
     #     [EventArgs] $Eventargs = [EventArgs]::Empty
     #     Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'Lines' -Value ($args | ForEach-Object { "$_" }) -Force
     #     Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'UpdateLastLine' -Value ([bool] $PSBoundParameters['UpdateLastLine']) -Force
     #     Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'NoNewline' -Value ([bool] $PSBoundParameters['NoNewline']) -Force
-    #     $null = $global:logView.Invoke($logViewDelegate, ($global:logView, $EventArgs))
-    # }
-    # else {
+    #     $null = $global:logView.BeginInvoke($logViewDelegate, ($global:logView, $EventArgs))
+    # } else {
         $null = & $global:FuncWriteLog $args $UpdateLastLine $NoNewline
     # }
 }
@@ -755,7 +763,7 @@ $actionCommands.git     = $actionCommands.pip
 Function Copy-AsRequirementsTxt($list) {
     $requirements = New-Object System.Text.StringBuilder
     foreach ($item in $list) {
-        $null = $requirements.AppendLine("$($item.Package)==$(if ($item.Installed) { $item.Installed } else { $item.Version })")
+        $null = $requirements.AppendLine("$($item.Package)==$($item.Installed)")
     }
     Set-Clipboard $requirements.ToString()
     Write-PipLog "Copied $($list.Count) items to clipboard."
@@ -1101,7 +1109,7 @@ Function global:Validate-GitLink ($url, $AsObject = $false) {
 }
 
 Function global:Set-PackageListEditable ($enable) {
-    @('Package'; 'Version'; 'Latest'; 'Type'; 'Status') | ForEach-Object {
+    @('Package'; 'Installed'; 'Latest'; 'Type'; 'Status') | ForEach-Object {
         if ($dataModel.Columns.Contains($_)) {
             $dataModel.Columns[$_].ReadOnly = -not $enable
         }
@@ -1258,7 +1266,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
 
                 $download = New-RunspacedDelegate ([Func[System.Collections.ArrayList]] {
                     $gitLinkInfo = Validate-GitLink $packageName -AsObject $true
-                    $releases = Get-GithubRepoTags $gitLinkInfo
+                    $releases = Get-GithubRepoTags $gitLinkInfo  # but this works @('a', 'b', 'c')
                     return ,$releases
                 }.GetNewClosure())
                 $task = [System.Threading.Tasks.Task[System.Collections.ArrayList]]::new($download);
@@ -1271,7 +1279,8 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
                         Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'PackageName' -Value $packageName -Force
                         Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'CompletionsFormat' -Value $completions_format -Force
                         Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'Items' -Value $releases -Force
-                        $null = $cb.Invoke($FuncAfterDownload, ($cb, $EventArgs))
+                        $null = $cb.BeginInvoke($FuncAfterDownload, ($cb, $EventArgs))
+                        # $null = $cb.Invoke($FuncAfterDownload, ($cb, $EventArgs))
                     }
                 }.GetNewClosure())
 
@@ -1299,34 +1308,30 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         $global:currentInstallAutoCompleteMode = $mode
     }.GetNewClosure()
 
-    # TODO: Move popup to to FuncRPCSpellCheck
-    $hint = $null
-    $FuncShowToolTip = {
-        param($title, $text)
-        $hint = New-Object System.Windows.Forms.ToolTip
-        $hint.IsBalloon = $true
-        $hint.ToolTipTitle = $title
-        $hint.ToolTipIcon = [System.Windows.Forms.ToolTipIcon]::Info
-        $hint.Show([string]::Empty, $cb, 0);
-        $hint.Show($text, $cb, 0, $cb.Height);
-        $Script:hint = $hint
-    }.GetNewClosure()
-
     $FuncCleanupToolTip = {
-        if ($Script:hint) {
-            $Script:hint.Dispose()
-            $Script:hint = $null
+        $hint = $global:hint
+        if ($hint) {
+            $hint.Dispose()
+            $global:hint = $null
             return $true
         }
         return $false
     }.GetNewClosure()
 
+    $FuncShowToolTip = {
+        param($title, $text)
+        $null = & $FuncCleanupToolTip
+        $hint = New-Object System.Windows.Forms.ToolTip
+        $global:hint = $hint
+        $hint.IsBalloon = $true
+        $hint.ToolTipTitle = $title
+        $hint.ToolTipIcon = [System.Windows.Forms.ToolTipIcon]::Info
+        $hint.Show([string]::Empty, $cb, 0);
+        $hint.Show($text, $cb, 0, $cb.Height);
+    }.GetNewClosure()
+
     $FuncAddInstallSource = {
         param($package, [bool] $force)
-
-        if ($dataModel.Rows.Count -eq 0) {
-            Init-PackageSearchColumns $dataModel
-        }
 
         $link = Validate-GitLink $package
         if ($link) {
@@ -1370,11 +1375,11 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         if ($nAlreadyInList -ne -1) {
             $oldRow = $dataModel.Rows[$nAlreadyInList]
 
-            if (      -not [string]::IsNullOrEmpty($oldRow.Version)) {
-                $oldVersion = $oldRow.Version
-            } elseif (-not ($oldRow.Latest -eq $null)) {
+            if (($dataModel.Columns.Contains('Latest')) -and
+                (-not ([string]::IsNullOrEmpty($oldRow.Latest)))) {
                 $oldVersion = $oldRow.Latest
-            } elseif (-not [string]::IsNullOrEmpty($oldRow.Installed)) {
+            } elseif (($dataModel.Columns.Contains('Installed')) -and
+                (-not ([string]::IsNullOrEmpty($oldRow.Installed)))) {
                 $oldVersion = $oldRow.Installed
             } else {
                 $oldVersion = [string]::Empty
@@ -1406,11 +1411,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
 
         # opinionated behavior but seems to be conspicuously right
         if ((-not [string]::IsNullOrWhiteSpace($version)) -or [string]::IsNullOrWhiteSpace($type)) {
-            if ($dataModel.Columns.Contains('Version')) {
-                $row.Version = $version
-            } else {
-                $row.Latest = $version
-            }
+            $row.Installed = $version
         }
 
         if ($IsDifferentType) {
@@ -1482,7 +1483,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
     $form.Controls.Add($cb)
 
     $form.add_KeyDown({
-        [void] (& $FuncCleanupToolTip)
+        # [void] (& $FuncCleanupToolTip)
 
         if ($_.KeyCode -eq 'Escape') {
             if (($cb.Text.Length -gt 0) -or (& $FuncCleanupToolTip)) {
@@ -2521,7 +2522,7 @@ Function Generate-Form {
         $global:logView.SelectAll()
         $global:logView.SelectionBackColor = $global:logView.BackColor
 
-        if (Get-Member -inputobject $row -name "LogFrom" -Membertype Properties) {
+        if (Get-Member -inputobject $row -name "LogTo" -Membertype Properties) {
             $global:logView.Select($row.LogFrom, $row.LogTo)
             $global:logView.SelectionBackColor = [Drawing.Color]::Yellow
             $global:logView.ScrollToCaret()
@@ -3099,7 +3100,7 @@ Function Get-PipSearchResults($request) {
         $row = $dataModel.NewRow()
         $row.Select = $false
         $row.Package = $m.Groups[1].Value
-        $row.Version = $m.Groups[2].Value
+        $row.Installed = $m.Groups[2].Value
         $row.Description = $m.Groups[3].Value
         $row.Type = 'pip'
         $row.Status = ''
@@ -3138,7 +3139,7 @@ Function Get-CondaSearchResults($request) {
                 $row = $dataModel.NewRow()
                 $row.Select = $false
                 $row.Package = $name
-                $row.Version = $package.version
+                $row.Installed = $package.version
                 $row.Description = "channel: $channel, arch: $($package.arch), build: $($package.build), date: $($package.date), license: $($package.license_family)"
                 $row.Type = 'conda'
                 $row.Status = ''
@@ -3163,7 +3164,7 @@ Function Get-GithubSearchResults ($request) {
         $row = $dataModel.NewRow()
         $row.Select = $false
         $row.Package = $_.'full_name'
-        $row.Version = ($_.'pushed_at' -replace 'T',' ') -replace 'Z',''
+        $row.Installed = ($_.'pushed_at' -replace 'T',' ') -replace 'Z',''
         $row.Description = "$($_.'stargazers_count') $([char] 0x2729) $($_.'forks') $([char] 0x2442) $($_.'open_issues') $([char] 0x2757) $($_.'description')"
         $row.Type = 'git'
         $row.Status = ''
@@ -3185,7 +3186,7 @@ Function global:Get-PluginSearchResults($request) {
             $row = $dataModel.NewRow()
             $row.Select = $false
             $row.Package = $package.Name
-            $row.Version = $package.Version
+            $row.Installed = $package.Version
             $row.Description = $package.Description
             $row.Type = $package.Type
             $row.Status = ''
@@ -3213,7 +3214,7 @@ Function global:Get-GithubRepoTags($gitLinkInfo) {
     $url = $github_tags_url -f $gitLinkInfo.User,$gitLinkInfo.Repo
     $json = Download-String $url
     if (-not [string]::IsNullOrEmpty($json)) {
-        $tags = $json | ConvertFrom-Json | ForEach-Object { $_.Name }
+        $tags = $json | ConvertFrom-Json | Select-Object -ExpandProperty Name # ForEach-Object { $_.Name }
         return $tags
     }
 
@@ -3493,7 +3494,12 @@ Function global:Execute-PipAction {
                 Write-PipLog $action.Name ' ' $package.Package
 
                 $name = $package.Package
-                $version = if ($package.Version) { $package.Version } else { $package.Latest }
+                $version = if ($dataModel.Columns.Contains('Latest') -and
+                    (-not ([string]::IsNullOrWhiteSpace($package.Latest)))) {
+                        $package.Latest
+                    } else {
+                        $package.Installed
+                    }
                 $type = $package.Type
 
                 $pluginHookError = $false
