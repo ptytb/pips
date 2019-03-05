@@ -111,7 +111,7 @@ $Global:FuncRPCSpellCheck = {
                 if (-not [string]::IsNullOrEmpty($t.Result)) {
                     $result = $t.Result | ConvertFrom-Json
                     $Global:SuggestionsWorking = $false
-                    & $Global:FuncRPCSpellCheck_Callback $result
+                    $null = & $Global:FuncRPCSpellCheck_Callback $result
                 }
         	});
             [void]$tr.ContinueWith($continuation3);
@@ -629,29 +629,56 @@ Function Get-PythonOtherPackages {
     return ,$otherLibs
 }
 
-Function Get-CondaPackages() {
-    $condaPackages = New-Object System.Collections.ArrayList
+Function Get-CondaPackagesHelper([bool] $outdatedOnly) {
     $conda_exe = Get-CurrentInterpreter 'CondaExe' -Executable
+    $arguments = New-Object System.Collections.ArrayList
 
-    if ($conda_exe) {
-        $arguments = New-Object System.Collections.ArrayList
+    if ($outdatedOnly) {
+        $null = $arguments.Add('search')
+        $null = $arguments.Add('--outdated')
+        $null = $arguments.Add((Get-PipsSetting 'CondaChannels' -AsArgs -First))
+    } else {
         $null = $arguments.Add('list')
-        $null = $arguments.Add('--json')
         $null = $arguments.Add('--no-pip')
         $null = $arguments.Add('--show-channel-urls')
-        $null = $arguments.Add('--prefix')
-        $null = $arguments.Add((Get-CurrentInterpreter 'Path'))
+    }
 
-        # This one sounds nice but could give versions older than installed
-        # conda update --dry-run --json --all
+    $null = $arguments.Add('--json')
+    $null = $arguments.Add('--prefix')
+    $null = $arguments.Add((Get-CurrentInterpreter 'Path'))
 
-        # This one sounds nice but could give versions older than installed
-        # conda search --outdated
+    $items = & $conda_exe $arguments | ConvertFrom-Json
+    return ,$items
+}
 
-        $items = & $conda_exe $arguments | ConvertFrom-Json
+Function Get-CondaPackages([bool] $outdatedOnly) {
+    $condaPackages = New-Object System.Collections.ArrayList
+    $items = Get-CondaPackagesHelper $false
+    $installed = @{}
 
-        foreach ($item in $items) {
-            $null = $condaPackages.Add([PSCustomObject] @{Type='conda'; Package=$item.name; Installed=$item.version})
+    foreach ($item in $items) {
+        if (-not $outdatedOnly) {
+            $null = $condaPackages.Add([PSCustomObject] @{Type='conda'; Package=$item.name; 'Installed'=$item.version})
+        } else {
+            $null = $installed.Add($item.name, $item.version)
+        }
+    }
+
+    if ($outdatedOnly) {
+        $items = Get-CondaPackagesHelper $outdatedOnly
+        $items.PSObject.Properties | ForEach-Object {
+            $name = $_.Name
+            $archives = $_.Value
+
+            if (($archives.Count -eq 0) -or (-not $installed.Contains($name))) {
+                return
+            }
+
+            foreach ($archive in $archives) {
+                $null = $condaPackages.Add([PSCustomObject] @{Type='conda'; Package=$name;
+                    'Latest'=$archive.version;
+                    'Installed'=$installed[$name]; })
+            }
         }
     }
 
@@ -1646,7 +1673,7 @@ Function global:Download-PythonPackageDetails ($packageName) {
     if (-not [string]::IsNullOrEmpty($json)) {
         $info = $json | ConvertFrom-Json
         if ($info -ne $null) {
-               $Global:PyPiPackageJsonCache.Add($packageName, $info)
+               $null = $Global:PyPiPackageJsonCache.Add($packageName, $info)
         }
     }
 }
@@ -3195,7 +3222,7 @@ Function Get-SearchResults($request) {
         $pipCount = $pipPackages.Count
     }
     if ($conda_exe) {
-        $condaPackages = Get-CondaPackages
+        $condaPackages = Get-CondaPackages $outdatedOnly
         Add-PackagesToTable $condaPackages 'conda'
         $condaCount = $condaPackages.Count
     }
@@ -3656,7 +3683,7 @@ Function Show-ConsoleWindow([bool] $show) {
 '
 
     $consolePtr = [Console.Window]::GetConsoleWindow()
-    $value = if ($show) { 2 } else { 0 }
+    $value = if ($show) { 1 } else { 0 }
     [Console.Window]::ShowWindow($consolePtr, $value)
 }
 
