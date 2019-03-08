@@ -2580,10 +2580,10 @@ Function Generate-Form {
         $logView.ScrollToCaret()
     }
 
-    # write-host ($global:logView | Get-Member -MemberType Event)
-    # Register-ObjectEvent -InputObject $global:logView -EventName Invoke -Action {
-    #     Write-Host '>>>>>>>>> Heeeeey'
-    # }
+    $logView.Add_LinkClicked({
+        param($Sender, $EventArgs)
+        Open-LinkInBrowser $EventArgs.LinkText
+    })
 
     $FuncHighlightLogFragment = {
         if ($Script:dataModel.Rows.Count -eq 0) {
