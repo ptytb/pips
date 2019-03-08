@@ -1542,8 +1542,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         # & $FuncShowToolTip "$text" "Packages with similar names found in the index.`n`nDid you mean:`n`n$candidatesToolTipText"
 
 
-        $null = Write-PipLog "Suggestions for '$($result.Request)': $($result.Candidates)" -UpdateLastLine -Background ([System.Drawing.Color]::LightSeaGreen)
-        # $null = Write-PipLog 'cb=' $cb.Text 'res="' $result.Request '""'
+        $null = Write-PipLog "Suggestions for '$($result.Request)': $($result.Candidates)" -UpdateLastLine -Background ([System.Drawing.Color]::LightSkyBlue)
 
         $global:SuggestionsWorking = $false
 
@@ -3835,35 +3834,22 @@ Function Get-AsciiTree($name,
                        $dangling = (New-Object 'System.Collections.Generic.Stack[int]'),
                        $isExtra = $false,
                        $loopTracking = (New-Object 'System.Collections.Generic.HashSet[string]')) {
-    # $output = & pip.exe show $name 2>&1
-    #
-    # if ([string]::IsNullOrEmpty($output)) {
-    #     return
-    # }
-    #
-    # $reqs = $output[$output.Count - 1]
-    #
-    # if ([string]::IsNullOrEmpty($reqs) -or -not $reqs.StartsWith('Requires:')) {
-    #     return
-    # }
-    #
-    # $n = "Requires:".Length
-    # $children = $reqs.Substring($n).Split(', ', [System.StringSplitOptions]::RemoveEmptyEntries)
 
-    $children = $distributionInfo."$name"."deps".PSObject.Properties.Name  # dep name list from JSON from pip
-    if ($children -eq $null) {
+    if (($distributionInfo -eq $null) -or ($distributionInfo.PSObject.Properties.Name -notcontains $name)) {
         $children = @()
     } else {
-        $children = @($children)
-    }
+        $children = @($distributionInfo."$name"."deps" |
+            ForEach-Object { $_.PSObject.Properties } |
+            Select-Object -ExpandProperty Name)  # dep name list from JSON from pip
 
-    $extras = @($distributionInfo."$name"."extras")
-    if (($extras -ne $null) -and ($extras.Length -gt 0)) {
-        $children = @($children; $extras)
-    }
+        $extras = @($distributionInfo."$name"."extras")
+        if (($extras -ne $null) -and ($extras.Length -gt 0)) {
+            $children = @($children; $extras)
+        }
 
-    if ($children.Length -gt 1) {
-        $children = @($children) | Sort-Object
+        if ($children.Length -gt 1) {
+            $children = @($children) | Sort-Object
+        }
     }
 
     # Write-PipLog "$name children: '$children' $($children.Length) sibl=$hasSibling"
@@ -4072,7 +4058,7 @@ Function Load-Plugins() {
             }.GetNewClosure(),
             ${function:Download-Data},
             {
-                Write-PipLog "$($instance.GetPluginName()) : $args" -Background ([Drawing.Color]::Blue)
+                Write-PipLog "$($instance.GetPluginName()) : $args" -Background ([Drawing.Color]::LightBlue)
             }.GetNewClosure(),
             ${function:Exists-File},
             ${function:Serialize},
