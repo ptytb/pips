@@ -21,6 +21,10 @@
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Net.WebClient")
 
 
+[PSObject].Assembly.GetType("System.Management.Automation.TypeAccelerators")::add(
+    'MaybeColor', [Nullable[System.Drawing.Color]])
+
+
 Function global:MakeEvent([hashtable] $properties) {
     [EventArgs] $EventArgs = [EventArgs]::Empty
     foreach ($p in $properties.GetEnumerator()) {
@@ -472,25 +476,44 @@ $global:_WritePipLogBacklog = [System.Collections.Generic.List[string]]::new()
 
 $WritePipLogDelegate = New-RunspacedDelegate ([EventHandler] {
     param($Sender, $EventArgs)
-    $null = & $global:FuncWriteLog $EventArgs.Lines $EventArgs.UpdateLastLine $EventArgs.NoNewline
+    $Arguments = $EventArgs.Arguments
+    $null = & $global:FuncWriteLog @Arguments
 })
 
-Function global:Write-PipLog([switch] $UpdateLastLine, [switch] $NoNewline) {
+Function global:Write-PipLog {
+    param(
+        [Parameter(ValueFromRemainingArguments=$true, Position=1)]
+        [AllowEmptyCollection()]
+        [AllowNull()]
+        [object[]] $Lines = @(),
+        [switch] $UpdateLastLine,
+        [switch] $NoNewline,
+        [Parameter(Mandatory=$false)]
+        [MaybeColor] $Background,
+        [Parameter(Mandatory=$false)]
+        [MaybeColor] $Foreground
+    )
+
     if ($global:logView -eq $null) {
-        [void] $global:_WritePipLogBacklog.Add($args -join ' ')
+        [void] $global:_WritePipLogBacklog.Add($Lines -join ' ')
         return
     }
 
-    # https://docs.microsoft.com/en-us/dotnet/api/system.eventhandler?view=netframework-4.7.2
+    $arguments = @{
+        Lines=$Lines;
+        UpdateLastLine=([bool] $PSBoundParameters['UpdateLastLine']);
+        NoNewline=([bool] $PSBoundParameters['NoNewline']);
+        Background=$Background;
+        Foreground=$Foreground;
+    }
+
     if ($global:logView.InvokeRequired) {
         $EventArgs = MakeEvent @{
-            Lines=$args;
-            UpdateLastLine=([bool] $PSBoundParameters['UpdateLastLine']);
-            NoNewline=([bool] $PSBoundParameters['NoNewline']);
+            Arguments=$arguments
         }
         $null = $global:logView.BeginInvoke($WritePipLogDelegate, ($global:logView, $EventArgs))
     } else {
-        $null = & $global:FuncWriteLog $args $UpdateLastLine $NoNewline
+        $null = & $global:FuncWriteLog @arguments
     }
 }
 
@@ -1519,15 +1542,15 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         # & $FuncShowToolTip "$text" "Packages with similar names found in the index.`n`nDid you mean:`n`n$candidatesToolTipText"
 
 
-        $null = Write-PipLog "Suggestions for '$($result.Request)': $($result.Candidates)" -UpdateLastLine
+        $null = Write-PipLog "Suggestions for '$($result.Request)': $($result.Candidates)" -UpdateLastLine -Background ([System.Drawing.Color]::LightSeaGreen)
         # $null = Write-PipLog 'cb=' $cb.Text 'res="' $result.Request '""'
 
-        # if ($cb.Text -ne $result.Request) {
-        #     $null = & $FuncRPCSpellCheck $cb.Text 1
-        # }
-
         $global:SuggestionsWorking = $false
-    })
+
+        if ($cb.Text -ne $result.Request) {
+            $null = & $FuncRPCSpellCheck $cb.Text 1
+        }
+    }.GetNewClosure())
 
     $cb.add_TextChanged({
         param($cb)
@@ -2262,7 +2285,9 @@ Some packages may generate garbage or show windows, don't panic.
 
                 foreach ($cacheFolder in $paths) {
                     $stats = Get-ChildItem -Recurse $cacheFolder | Measure-Object -Property Length -Sum
-                    Write-PipLog ("`nCache at {0}`nFiles: {1}`nSize: {2} MB" -f $cacheFolder,$stats.Count,[math]::Round($stats.Sum / 1048576, 2))
+                    if ($stats) {
+                        Write-PipLog ("`nCache at {0}`nFiles: {1}`nSize: {2} MB" -f $cacheFolder,$stats.Count,[math]::Round($stats.Sum / 1048576, 2))
+                    }
                 }
             };
         };
@@ -2562,22 +2587,45 @@ Function Generate-Form {
     }
     Remove-Variable -Scope Global _WritePipLogBacklog
     $global:FuncWriteLog = {
-        param($lines, [bool] $UpdateLastLine, [bool] $NoNewline)
+        param(
+            [Parameter(Mandatory)] [AllowEmptyCollection()] [object[]] $Lines = @(),
+            [Parameter(Mandatory)] [switch] $UpdateLastLine,
+            [Parameter(Mandatory)] [switch] $NoNewline,
+            [Parameter(Mandatory)] [AllowNull()] [MaybeColor] $Background,
+            [Parameter(Mandatory)] [AllowNull()] [MaybeColor] $Foreground
+        )
 
         $logView = $global:logView
+
+        $logFrom = $logView.TextLength
+
         if ($UpdateLastLine) {
-            $text = $lines -join ' '
+            $text = $Lines -join ' '
             $logView.Select($logView.GetFirstCharIndexFromLine($logView.Lines.Count), $logView.Text.Length);
             $logView.SelectedText = $text
-            return
+            $logTo = $logView.TextLength
+        } else {
+            foreach ($obj in $Lines) {
+                $logView.AppendText("$obj")
+            }
+
+            $logTo = $logView.TextLength
+
+            if (-not $NoNewline) {
+                $logView.AppendText("`n")
+            }
+            $logView.ScrollToCaret()
         }
-        foreach ($obj in $lines) {
-            $logView.AppendText("$obj")
+
+        if ($Background -or $Foreground) {
+            $logView.Select($logFrom, $logTo)
+            if ($Background) {
+                $logView.SelectionBackColor = $Background
+            }
+            if ($Foreground) {
+                $logView.SelectionColor = $Foreground
+            }
         }
-        if (-not $NoNewline) {
-            $logView.AppendText("`n")
-        }
-        $logView.ScrollToCaret()
     }
 
     $logView.Add_LinkClicked({
@@ -3550,10 +3598,10 @@ Function Check-PipDependencies {
     $result = $result -join "`n"
 
     if ($result -match 'No broken requirements found') {
-        Write-PipLog "OK"
+        Write-PipLog "OK" -Background ([Drawing.Color]::LightGreen)
         Write-PipLog $result
     } else {
-        Write-PipLog "NOT OK"
+        Write-PipLog "NOT OK" -Background ([Drawing.Color]::LightSalmon)
         Write-PipLog $result
     }
 }
@@ -4024,7 +4072,7 @@ Function Load-Plugins() {
             }.GetNewClosure(),
             ${function:Download-Data},
             {
-                Write-PipLog "$($instance.GetPluginName()) : $args"
+                Write-PipLog "$($instance.GetPluginName()) : $args" -Background ([Drawing.Color]::Blue)
             }.GetNewClosure(),
             ${function:Exists-File},
             ${function:Serialize},
