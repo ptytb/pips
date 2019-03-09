@@ -472,13 +472,20 @@ Function Convert-Base64ToICO($base64Text) {
 }
 
 
-$global:_WritePipLogBacklog = [System.Collections.Generic.List[string]]::new()
+$global:_WritePipLogBacklog = [System.Collections.Generic.List[hashtable]]::new()
 
 $WritePipLogDelegate = New-RunspacedDelegate ([EventHandler] {
     param($Sender, $EventArgs)
     $Arguments = $EventArgs.Arguments
     $null = & $global:FuncWriteLog @Arguments
 })
+
+Function global:EnsureColor($color) {
+    if ($color -and ($color.GetType() -eq [string])) {
+        $color = [System.Drawing.Color]::FromKnownColor($color)
+    }
+    return [MaybeColor] $color
+}
 
 Function global:Write-PipLog {
     param(
@@ -494,17 +501,17 @@ Function global:Write-PipLog {
         [MaybeColor] $Foreground
     )
 
-    if ($global:logView -eq $null) {
-        [void] $global:_WritePipLogBacklog.Add($Lines -join ' ')
-        return
-    }
-
     $arguments = @{
         Lines=$Lines;
         UpdateLastLine=([bool] $PSBoundParameters['UpdateLastLine']);
         NoNewline=([bool] $PSBoundParameters['NoNewline']);
-        Background=$Background;
-        Foreground=$Foreground;
+        Background=(EnsureColor $Background);
+        Foreground=(EnsureColor $Foreground);
+    }
+
+    if ($global:logView -eq $null) {
+        [void] $global:_WritePipLogBacklog.Add($arguments)
+        return
     }
 
     if ($global:logView.InvokeRequired) {
@@ -1645,7 +1652,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
     $null = $form.ShowDialog()
 }
 
-Function Request-UserString($message, $title, $default, $completionItems = $null) {
+Function global:Request-UserString($message, $title, $default, $completionItems = $null, [ref] $ControlKeysState) {
     $Form                            = New-Object system.Windows.Forms.Form
     $Form.ClientSize                 = '421,247'
     $Form.text                       = $title
@@ -1700,6 +1707,14 @@ Function Request-UserString($message, $title, $default, $completionItems = $null
     $result = $Form.ShowDialog()
 
     if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+
+        if ($ControlKeysState) {
+            $ControlKeysState.Value = @{
+                ShiftKey=(Test-KeyPress -Keys ShiftKey);
+                ControlKey=(Test-KeyPress -Keys ControlKey);
+            }
+        }
+
         return $TextBox1.Text
     } else {
         return $null
@@ -2579,12 +2594,14 @@ Function Generate-Form {
     $logView.ReadOnly = $true
     $logView.Multiline = $true
     $logView.Font = New-Object System.Drawing.Font("Consolas", 11)
+
+    $logView.add_HandleCreated({
+        param($Sender)
+        $null = [SearchDialogHook]::new($Sender)
+    })
+
     $form.Controls.Add($logView)
-    foreach ($line in $global:_WritePipLogBacklog) {
-        [void] $logView.AppendText($line)
-        [void] $logView.AppendText("`n")
-    }
-    Remove-Variable -Scope Global _WritePipLogBacklog
+
     $global:FuncWriteLog = {
         param(
             [Parameter(Mandatory)] [AllowEmptyCollection()] [object[]] $Lines = @(),
@@ -2716,6 +2733,11 @@ Function Generate-Form {
             }
         }
     }.GetNewClosure())
+
+    foreach ($arguments in $global:_WritePipLogBacklog) {
+        Write-PipLog @arguments
+    }
+    Remove-Variable -Scope Global _WritePipLogBacklog
 
     return ,$form
 }
@@ -2991,6 +3013,11 @@ class DocView {
         $this.docView.Text = $content
         $this.formDoc.Controls.Add($this.docView)
 
+        $this.docView.add_HandleCreated({
+            param($Sender)
+            $null = [SearchDialogHook]::new($Sender)
+        })
+
         $jumpToWord = ({
                 param($clickedIndex)
 
@@ -3164,6 +3191,78 @@ class DocView {
                 $this.docView.SelectionFont  = $fontUnderline
             }
         })
+    }
+
+}
+
+class SearchDialogHook {
+
+    [string] $_query = $null
+    [bool] $_reverse = $false
+
+    SearchDialogHook([System.Windows.Forms.RichTextBox] $richTextBox) {
+        $self = $this
+
+        $richTextBox.add_KeyDown({
+            param([System.Windows.Forms.RichTextBox] $Sender)
+
+            switch ($_.KeyCode) {
+                'F' {
+                        $controlKeysState = $null
+                        $query = Request-UserString @"
+Enter text for searching
+
+Hold Shift to search backwards
+
+You can hit (N)ext or (P)revious to skim over the matches
+"@ 'Search text' '' $null ([ref] $controlKeysState)
+
+                        if (-not $query) {
+                            return
+                        }
+
+                        $reverse = $controlKeysState.ShiftKey
+                        $self._query = $query
+                        $self._reverse = $reverse
+
+                        $self.Search($Sender, $reverse)
+                }
+
+                'N' {
+                    $self.Search($Sender, $self._reverse)
+                }
+
+                'P' {
+                    $self.Search($Sender, -not ($self._reverse))
+                }
+            }
+        }.GetNewClosure())
+
+    }
+
+    Search($Sender, [bool] $reverse) {
+        $query = $this._query
+
+        $searchOptions = [System.Windows.Forms.RichTextBoxFinds]::None
+        if ($reverse) {
+            $searchOptions = $searchOptions -bor ([System.Windows.Forms.RichTextBoxFinds]::Reverse)
+        }
+
+        if ($query) {
+            $offset = if ($reverse) { -1 } else { 1 }
+
+            if ($reverse) {
+                $start = 0
+                $end = $Sender.SelectionStart + $offset
+            } else {
+                $start = $Sender.SelectionStart + $offset
+                $end = $Sender.TextLength
+            }
+
+            if (($start -ge 0) -and ($end -le $Sender.TextLength)) {
+                [int] $found = $Sender.Find($query, $start, $end, $searchOptions)
+            }
+        }
     }
 
 }
@@ -4082,7 +4181,7 @@ Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
        Set-PSDebug -Off
     } else {
        Set-StrictMode -Version latest
-       Set-PSDebug -Strict
+       Set-PSDebug -Strict -Trace 0  # -Trace ∈ (0, 1=lines, 2=lines+vars+calls)
     }
 
     if ($HideConsole) {
