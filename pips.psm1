@@ -1767,7 +1767,8 @@ Function Highlight-PythonPackages {
 }
 
 Function global:Open-LinkInBrowser($url) {
-    if ($url -match '^https?://') {
+    if ((-not [string]::IsNullOrWhiteSpace($url)) -and ($url -match '^https?://')) {
+        $url = [System.Web.HttpUtility]::UrlEncode($url)
         Start-Process -FilePath $url
     }
 }
