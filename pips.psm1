@@ -1768,7 +1768,7 @@ Function Highlight-PythonPackages {
 
 Function global:Open-LinkInBrowser($url) {
     if ((-not [string]::IsNullOrWhiteSpace($url)) -and ($url -match '^https?://')) {
-        $url = [System.Web.HttpUtility]::UrlEncode($url)
+        $url = [System.Uri]::EscapeUriString($url)
         Start-Process -FilePath $url
     }
 }
@@ -2337,6 +2337,7 @@ Function global:Show-CurrentPackageInBrowser() {
 
         if ($packageHomepageFromPlugin) {
             Open-LinkInBrowser "$packageHomepageFromPlugin"
+            return
         } elseif ($row.Type -eq 'conda') {
             $url = $anaconda_url
         } elseif ($row.Type -eq 'git') {
