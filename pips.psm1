@@ -548,33 +548,6 @@ Function NewLine-TopLayout() {
 Function Add-Button ($name, $handler) {
     $button = New-Object Windows.Forms.Button
     $button.Text = $name
-    # $button.Add_Click({
-    #     [System.Windows.Forms.MessageBox]::Show("will now download", 'there', [System.Windows.Forms.MessageBoxButtons]::OK)
-    #     $url = 'http://localhost:8000'
-    #     $wc = New-Object System.Net.WebClient
-    #     $wc.Headers["User-Agent"] = "Mozilla/5.0 (compatible; MSIE 6.0;)"
-    #     $wc.Encoding = [System.Text.Encoding]::UTF8
-    #
-    #     $wc.Add_DownloadStringCompleted({
-    #         param([object]$sender, [System.Net.DownloadStringCompletedEventArgs] $e)
-    #         [string]$result = $null
-    #
-    #         if ((-not $e.Cancelled) -and ($e.Error -eq $null))
-    #         {
-    #             $result = $e.Result
-    #         }
-    #
-    #         if ($result -eq $null) {
-    #             [System.Windows.Forms.MessageBox]::Show('Failed to Connect to website.')
-    #             return
-    #         }
-    #
-    #         [System.Windows.Forms.MessageBox]::Show("dl ok`n'$result'", 'wc', [System.Windows.Forms.MessageBoxButtons]::OK)
-    #     })
-    #
-    #     $json = $wc.DownloadStringAsync($url)
-    #     # [System.Windows.Forms.MessageBox]::Show("$json", '', [System.Windows.Forms.MessageBoxButtons]::OK)
-    #     })
     $button.Add_Click({ [void] $handler.Invoke( @($Script:button) ) }.GetNewClosure())
     Add-TopWidget $button
     return $button
