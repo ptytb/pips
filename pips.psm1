@@ -3352,6 +3352,26 @@ Function Get-CondaSearchResults($request) {
     $totalCount = 0
     $channels = Get-PipsSetting 'CondaChannels'
 
+    Function EnsureProperties {
+        param($Object, $QueryNameLabel, $Separator = ', ')
+
+        if (($Object -eq $null) -or ($Object -isnot [PSCustomObject])) {
+            return [string]::Empty
+        }
+
+        $result = [System.Collections.Generic.List[string]]::new()
+
+        foreach ($NameLabel in $QueryNameLabel.GetEnumerator()) {
+            ($PropertyName, $Label) = ($NameLabel.Key, $NameLabel.Value)
+
+            if ($Object.PSObject.Properties.Name -contains $PropertyName) {
+                $null = $result.Add([string]::Concat($Label, ': ', $Object."$PropertyName"))
+            }
+        }
+
+        return $result -join $Separator
+    }
+
     foreach ($channel in $channels) {
         Write-PipLog "Searching on channel: $channel ... " -NoNewline
 
@@ -3367,7 +3387,17 @@ Function Get-CondaSearchResults($request) {
                 $row.Select = $false
                 $row.Package = $name
                 $row.Installed = $package.version
-                $row.Description = "channel: $channel, arch: $($package.arch), build: $($package.build), date: $($package.date), license: $($package.license_family)"
+
+                $packageDetails = EnsureProperties $package @{
+                    channel='Channel';
+                    arch='Architecture';
+                    build='Build';
+                    date='Date';
+                    license_family='License';
+                }
+
+                $row.Description = "channel: $channel, $packageDetails"
+
                 $row.Type = 'conda'
                 $row.Status = ''
                 $dataModel.Rows.Add($row)
