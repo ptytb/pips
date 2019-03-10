@@ -3173,9 +3173,11 @@ class SearchDialogHook {
 
     [string] $_query = $null
     [bool] $_reverse = $false
+    [System.Collections.Generic.List[string]] $_history
 
     SearchDialogHook([System.Windows.Forms.RichTextBox] $richTextBox) {
         $self = $this
+        $self._history = [System.Collections.Generic.List[string]]::new()
 
         $richTextBox.add_KeyDown({
             param([System.Windows.Forms.RichTextBox] $Sender)
@@ -3189,7 +3191,7 @@ Enter text for searching
 Hold Shift to search backwards
 
 You can hit (N)ext or (P)revious to skim over the matches
-"@ 'Search text' '' $null ([ref] $controlKeysState)
+"@ 'Search text' $self._query $self._history ([ref] $controlKeysState)
 
                         if (-not $query) {
                             return
@@ -3198,6 +3200,7 @@ You can hit (N)ext or (P)revious to skim over the matches
                         $reverse = $controlKeysState.ShiftKey
                         $self._query = $query
                         $self._reverse = $reverse
+                        $self._history.Add($query)
 
                         $self.Search($Sender, $reverse)
                 }
