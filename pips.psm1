@@ -2587,14 +2587,32 @@ Function Generate-Form {
 
         $logView = $global:logView
 
-        $logFrom = $logView.TextLength
-
         if ($UpdateLastLine) {
-            $text = $Lines -join ' '
-            $logView.Select($logView.GetFirstCharIndexFromLine($logView.Lines.Count), $logView.Text.Length);
+            $text = ($Lines -join ' ') -replace "`r|`n",''
+
+            $cr = $lastLineCharIndex = $logView.Find("`r", 0, $logView.TextLength,
+                [System.Windows.Forms.RichTextBoxFinds]::Reverse)
+
+            $lf = $lastLineCharIndex = $logView.Find("`n", 0, $logView.TextLength,
+                [System.Windows.Forms.RichTextBoxFinds]::Reverse)
+
+            $lastLineCharIndex = [Math]::Max($cr, $lf)
+
+            if ($lastLineCharIndex -eq -1) {
+                $lastLineCharIndex = 0
+            } else {
+                ++$lastLineCharIndex
+            }
+
+            $lastLineLength = $logView.TextLength - $lastLineCharIndex
+            $logView.Select($lastLineCharIndex, $lastLineLength);
             $logView.SelectedText = $text
+
+            $logFrom = $lastLineCharIndex
             $logTo = $logView.TextLength
         } else {
+            $logFrom = $logView.TextLength
+
             foreach ($obj in $Lines) {
                 $logView.AppendText("$obj")
             }
