@@ -7,7 +7,7 @@ class Irvine {
     static hidden [string] $PluginName = 'Irvine'
     static hidden [string] $IndexUrl = 'https://www.lfd.uci.edu/~gohlke/pythonlibs/'
     static hidden [string] $PluginDescription = @"
-Provides search, install and local caching for packages published at Christoph Gohlke's page: https://www.lfd.uci.edu/~gohlke/pythonlibs/, Laboratory for Fluorescence Dynamics, University of California, Irvine.
+Provides searching, installing and local caching for packages published at Christoph Gohlke's page: https://www.lfd.uci.edu/~gohlke/pythonlibs/, Laboratory for Fluorescence Dynamics, University of California, Irvine.
 "@
     static hidden [string] $InputPackageType = 'wheel_irvine'
     static hidden [string] $OutputPackageType = 'wheel'
