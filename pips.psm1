@@ -3364,7 +3364,8 @@ Function Get-CondaSearchResults($request) {
         foreach ($NameLabel in $QueryNameLabel.GetEnumerator()) {
             ($PropertyName, $Label) = ($NameLabel.Key, $NameLabel.Value)
 
-            if ($Object.PSObject.Properties.Name -contains $PropertyName) {
+            if (($Object.PSObject.Properties.Name -contains $PropertyName) -and
+                (-not ([string]::IsNullOrWhiteSpace($Object."$PropertyName")))) {
                 $null = $result.Add([string]::Concat($Label, ': ', $Object."$PropertyName"))
             }
         }
@@ -3388,15 +3389,13 @@ Function Get-CondaSearchResults($request) {
                 $row.Package = $name
                 $row.Installed = $package.version
 
-                $packageDetails = EnsureProperties $package @{
+                $row.Description = EnsureProperties $package @{
                     channel='Channel';
                     arch='Architecture';
                     build='Build';
                     date='Date';
                     license_family='License';
                 }
-
-                $row.Description = "channel: $channel, $packageDetails"
 
                 $row.Type = 'conda'
                 $row.Status = ''
