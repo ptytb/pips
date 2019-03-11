@@ -33,6 +33,13 @@ Function global:MakeEvent([hashtable] $properties) {
     return $EventArgs
 }
 
+Function global:HasUpperChars([string] $text) {
+    return [char[]] $text | ForEach-Object `
+        { $HasUpperChars = $false } `
+        { $HasUpperChars = $HasUpperChars -or [char]::IsUpper($_) } `
+        { $HasUpperChars }
+}
+
 
 $global:WM_CHAR = [int] 0x0102
 $global:VK_BACKSPACE = [int] 0x08
@@ -3192,6 +3199,7 @@ class SearchDialogHook {
 
     [string] $_query = $null
     [bool] $_reverse = $false
+    [bool] $_caseSensitive = $false
     [System.Collections.Generic.List[string]] $_history
 
     SearchDialogHook([System.Windows.Forms.RichTextBox] $richTextBox) {
@@ -3220,6 +3228,7 @@ You can hit (N)ext or (P)revious to skim over the matches
                         $self._query = $query
                         $self._reverse = $reverse
                         $self._history.Add($query)
+                        $self._caseSensitive = HasUpperChars $query
 
                         $self.Search($Sender, $reverse)
                 }
@@ -3240,6 +3249,11 @@ You can hit (N)ext or (P)revious to skim over the matches
         $query = $this._query
 
         $searchOptions = [System.Windows.Forms.RichTextBoxFinds]::None
+
+        if ($this._caseSensitive) {
+            $searchOptions = $searchOptions -bor ([System.Windows.Forms.RichTextBoxFinds]::MatchCase)
+        }
+
         if ($reverse) {
             $searchOptions = $searchOptions -bor ([System.Windows.Forms.RichTextBoxFinds]::Reverse)
         }
