@@ -1533,6 +1533,8 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         return $true
     }
 
+    $cbRef = [ref] $cb
+
     $global:FuncRPCSpellCheck_Callback = New-RunspacedDelegate ([Action[System.Threading.Tasks.Task[string]]] {
         param([System.Threading.Tasks.Task[string]] $task)
 
@@ -1556,7 +1558,9 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
 
         $global:SuggestionsWorking = $false
 
-        if ($cb.Text -ne $result.Request) {
+        $cb = $cbRef.Value
+
+        if (($cb -ne $null) -and ($cb.Text -ne $result.Request)) {
             $null = & $FuncRPCSpellCheck $cb.Text 1
         }
     }.GetNewClosure())
@@ -1622,8 +1626,8 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
     }.GetNewClosure())
 
     $form.Add_Closing({
-        [System.GC]::Collect()
-    })
+        $cbRef.Value = $null
+    }.GetNewClosure())
 
     $install = New-Object System.Windows.Forms.Button
     $install.Text = "Install"
