@@ -45,6 +45,8 @@ pips.cmd
 
 | Keys                             | Action                                                                     |
 | -------------------------------- | -------------------------------------------------------------------------- |
+| / (in Log Pane or PyDoc browser)             | Open search text  dialog                                                              |
+| HJKL, ^B, ^F, g, G             | Vim-style navigation in Log pane and PyDoc browser                                                              |
 | Enter or Space                   | Toggle package selection                                                   |
 | F1 .. F12                        | Choose a current action, in the same order it appears in the dropdown list |
 | Shift+Enter (on package table)   | Execute action for selected packages                                       |
@@ -55,7 +57,6 @@ pips.cmd
 | Shift+Mouse Hover                | Fetch package details for a tooltip                                        |
 | Ctrl-C (on interpreter combobox) | Copy full python executable path                                           |
 | Delete (on interpreter combobox) | Remove virtual env entry added by user, with confirmation                  |
-| F (in Log Pane or PyDoc browser)             | Toggle search                                                              |
 
 
 ## typosquatting check (still work in progress)
