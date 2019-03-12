@@ -51,11 +51,11 @@ pips.cmd
 | Shift+Enter (install window)     | Fuzzy name search                                                          |
 | Ctrl+Enter or Double click       | Open package home page in browser                                          |
 | Escape                           | Clear filter, or Switch between filter and package table                   |
-| Enter (on Filter)                | Focus on packages editable                                                 | 
+| Enter (on Filter)                | Focus on packages editable                                                 |
 | Shift+Mouse Hover                | Fetch package details for a tooltip                                        |
 | Ctrl-C (on interpreter combobox) | Copy full python executable path                                           |
 | Delete (on interpreter combobox) | Remove virtual env entry added by user, with confirmation                  |
-| / (in PyDoc browser)             | Toggle search                                                              |
+| F (in Log Pane or PyDoc browser)             | Toggle search                                                              |
 
 
 ## typosquatting check (still work in progress)
@@ -75,7 +75,7 @@ This is being achieved by using the following algorithms:
 	- Average time interval before the next release
 	- Average number of downloads per release
 3. Search through the index
-   
+
    - Search for reverse dependencies using *Adjacency matrix*
 
 
@@ -91,7 +91,7 @@ $bktree = [BKTree]::new()
 $simple = Invoke-WebRequest -Uri 'https://pypi.python.org/simple/'
 foreach ($link in $simple.Links) {
 	$bktree.add($link.innerText)
-}  
+}
 $bktree.SaveArrays('known-packages-bktree.bin')
 ```
 
