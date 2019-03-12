@@ -331,7 +331,7 @@ Add-Type -TypeDefinition @"
 
 
 $global:packageTypes = [System.Collections.ArrayList]::new()
-$global:packageTypes.AddRange(@('pip', 'conda', 'git', 'wheel'))
+$global:packageTypes.AddRange(@('pip', 'conda', 'git', 'wheel', 'https'))
 
 
 $iconBase64_DownArrow = @'
@@ -824,6 +824,7 @@ $actionCommands.sdist   = $actionCommands.pip
 $actionCommands.builtin = $actionCommands.pip
 $actionCommands.other   = $actionCommands.pip
 $actionCommands.git     = $actionCommands.pip
+$actionCommands.https   = $actionCommands.pip
 
 Function Copy-AsRequirementsTxt($list) {
     $requirements = New-Object System.Text.StringBuilder
@@ -1404,6 +1405,8 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
     }.GetNewClosure()
 
     $FuncAddInstallSource = {
+        # TODO: split this into two functions: detect type and add
+
         param($package, [bool] $force)
 
         $link = Validate-GitLink $package
@@ -1415,6 +1418,16 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
             $row = $dataModel.NewRow()
             $row.Package = $link
             $row.Type = 'git'
+            $row.Status = 'Pending'
+            $row.Select = $true
+            $dataModel.Rows.InsertAt($row, 0)
+            return $true
+        }
+
+        if ($package -match '^https://') {
+            $row = $dataModel.NewRow()
+            $row.Package = $package
+            $row.Type = 'https'
             $row.Status = 'Pending'
             $row.Select = $true
             $dataModel.Rows.InsertAt($row, 0)
