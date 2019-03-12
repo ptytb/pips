@@ -2656,8 +2656,6 @@ Function Generate-Form {
             }
         }
 
-        $null = $SendMessage.Invoke($logView.Handle, $WM_VSCROLL, $SB_PAGEBOTTOM, 0)
-
         if ($Background -or $Foreground) {
             $logView.Select($logFrom, $logTo)
             if ($Background) {
@@ -2667,6 +2665,10 @@ Function Generate-Form {
                 $logView.SelectionColor = $Foreground
             }
         }
+
+        $textLength = $logView.TextLength
+        $logView.Select($textLength, $textLength)
+        $null = $SendMessage.Invoke($logView.Handle, $WM_VSCROLL, $SB_PAGEBOTTOM, 0)
     }
 
     $logView.Add_LinkClicked({
@@ -3338,7 +3340,20 @@ class TextBoxNavigationHook {
                 $null = $SendMessage.Invoke($Sender.Handle, $WM_VSCROLL, $SB_PAGEUP, 0)
                 $_.Handled = $true
             }
-            if (($_.KeyCode -eq '-') -and $_.Control) {
+            if (($_.KeyCode -eq 'OemMinus') -and $_.Control) {
+                if ($richTextBox.ZoomFactor -gt 0.1) {
+                    $richTextBox.ZoomFactor -= $richTextBox.ZoomFactor * 0.1
+                }
+                $_.Handled = $true
+            }
+            if (($_.KeyCode -eq 'Oemplus') -and $_.Control) {
+                if ($richTextBox.ZoomFactor -lt 10.0) {
+                    $richTextBox.ZoomFactor += $richTextBox.ZoomFactor * 0.1
+                }
+                $_.Handled = $true
+            }
+            if (($_.KeyCode -eq 'D8') -and $_.Control) {
+                $richTextBox.ZoomFactor = 1.0
                 $_.Handled = $true
             }
         }.GetNewClosure())
