@@ -42,7 +42,17 @@ Function global:HasUpperChars([string] $text) {
 
 
 $global:WM_CHAR = [int] 0x0102
+$global:WM_SCROLL = [int] 276
+$global:WM_VSCROLL = [int] 277
 $global:VK_BACKSPACE = [int] 0x08
+$global:SB_LINEUP = [int] 0x00
+$global:SB_LINEDOWN = [int] 0x01
+$global:SB_LINELEFT = [int] 0x00
+$global:SB_LINERIGHT = [int] 0x01
+$global:SB_PAGEUP = [int] 0x02
+$global:SB_PAGEDOWN = [int] 0x03
+$global:SB_PAGETOP = [int] 0x06
+$global:SB_PAGEBOTTOM = [int] 0x07
 $MemberDefinition='
 [DllImport("User32.dll")]public static extern int SendMessage(IntPtr hWnd, int uMsg, int wParam, int lParam);
 '
@@ -2593,6 +2603,7 @@ Function Generate-Form {
     $logView.add_HandleCreated({
         param($Sender)
         $null = [SearchDialogHook]::new($Sender)
+        $null = [TextBoxNavigationHook]::new($Sender)
     })
 
     $form.Controls.Add($logView)
@@ -2643,8 +2654,9 @@ Function Generate-Form {
             if (-not $NoNewline) {
                 $logView.AppendText("`n")
             }
-            $logView.ScrollToCaret()
         }
+
+        $null = $SendMessage.Invoke($logView.Handle, $WM_VSCROLL, $SB_PAGEBOTTOM, 0)
 
         if ($Background -or $Foreground) {
             $logView.Select($logFrom, $logTo)
@@ -3029,6 +3041,7 @@ class DocView {
         $this.docView.add_HandleCreated({
             param($Sender)
             $null = [SearchDialogHook]::new($Sender)
+            $null = [TextBoxNavigationHook]::new($Sender)
         })
 
         $jumpToWord = ({
@@ -3061,26 +3074,15 @@ class DocView {
                 }
             }.GetNewClosure())
 
-        $this.formDoc.add_KeyDown({
-                if ($_.KeyCode -eq 'Escape') {
-                    $self.formDoc.Close()
-                }
-                if ($_.KeyCode -eq 'Enter') {
-                    $charIndex = $self.docView.SelectionStart
-                    [void] $jumpToWord.Invoke($charIndex)
-                }
-                if ($_.KeyCode -eq 'Space') {
-                    [System.Windows.Forms.SendKeys]::Send('{PGDN}')
-                }
-                if (($_.KeyCode -eq 'F') -and $_.Control) {
-                    [System.Windows.Forms.SendKeys]::Send('{PGDN}')
-                    $_.Handled = $true
-                }
-                if (($_.KeyCode -eq 'B') -and $_.Control) {
-                    [System.Windows.Forms.SendKeys]::Send('{PGUP}')
-                    $_.Handled = $true
-                }
-            }.GetNewClosure())
+        $this.docView.add_KeyDown({
+            if ($_.KeyCode -eq 'Escape') {
+                $self.formDoc.Close()
+            }
+            if ($_.KeyCode -eq 'Enter') {
+                $charIndex = $self.docView.SelectionStart
+                [void] $jumpToWord.Invoke($charIndex)
+            }
+        }.GetNewClosure())
 
         $this.docView.add_LinkClicked({
                 Open-LinkInBrowser $_.LinkText
@@ -3223,7 +3225,7 @@ class SearchDialogHook {
             param([System.Windows.Forms.RichTextBox] $Sender)
 
             switch ($_.KeyCode) {
-                'F' {
+                ([System.Windows.Forms.Keys]::OemQuestion) {
                         $controlKeysState = $null
                         $query = Request-UserString @"
 Enter text for searching
@@ -3279,13 +3281,67 @@ You can hit (N)ext or (P)revious to skim over the matches
                 $end = $Sender.SelectionStart + $offset
             } else {
                 $start = $Sender.SelectionStart + $offset
-                $end = $Sender.TextLength
+                $end = $Sender.TextLength - 1
             }
 
-            if (($start -ge 0) -and ($end -le $Sender.TextLength)) {
+            Function InRange { param($_) ($_ -ge 0) -and ($_ -lt ($Sender.TextLength - 1)) }
+
+            if (InRange($start) -and InRange($end)) {
                 [int] $found = $Sender.Find($query, $start, $end, $searchOptions)
             }
         }
+    }
+
+}
+
+class TextBoxNavigationHook {
+
+    TextBoxNavigationHook([System.Windows.Forms.RichTextBox] $richTextBox) {
+        $richTextBox.add_KeyDown({
+            param($Sender)
+            if ($_.KeyCode -eq 'H') {
+                $null = $SendMessage.Invoke($Sender.Handle, $WM_SCROLL, $SB_LINELEFT, 0)
+                $_.Handled = $true
+            }
+            if ($_.KeyCode -eq 'J') {
+                $null = $SendMessage.Invoke($Sender.Handle, $WM_VSCROLL, $SB_LINEDOWN, 0)
+                $_.Handled = $true
+            }
+            if ($_.KeyCode -eq 'K') {
+                $null = $SendMessage.Invoke($Sender.Handle, $WM_VSCROLL, $SB_LINEUP, 0)
+                $_.Handled = $true
+            }
+            if ($_.KeyCode -eq 'L') {
+                $null = $SendMessage.Invoke($Sender.Handle, $WM_SCROLL, $SB_LINERIGHT, 0)
+                $_.Handled = $true
+            }
+            if (($_.KeyCode -eq 'G') -and (-not $_.Shift)) {
+                $null = $SendMessage.Invoke($Sender.Handle, $WM_VSCROLL, $SB_PAGETOP, 0)
+                $richTextBox.Select(0, 0)
+                $_.Handled = $true
+            }
+            if (($_.KeyCode -eq 'G') -and $_.Shift) {
+                $null = $SendMessage.Invoke($Sender.Handle, $WM_VSCROLL, $SB_PAGEBOTTOM, 0)
+                $textLength = $richTextBox.TextLength
+                $richTextBox.Select($textLength, $textLength)
+                $_.Handled = $true
+            }
+            if ($_.KeyCode -eq 'Space') {
+                $null = $SendMessage.Invoke($Sender.Handle, $WM_VSCROLL, $SB_PAGEDOWN, 0)
+                $_.Handled = $true
+            }
+            if (($_.KeyCode -eq 'F') -and $_.Control) {
+                $null = $SendMessage.Invoke($Sender.Handle, $WM_VSCROLL, $SB_PAGEDOWN, 0)
+                $_.Handled = $true
+            }
+            if (($_.KeyCode -eq 'B') -and $_.Control) {
+                $null = $SendMessage.Invoke($Sender.Handle, $WM_VSCROLL, $SB_PAGEUP, 0)
+                $_.Handled = $true
+            }
+            if (($_.KeyCode -eq '-') -and $_.Control) {
+                $_.Handled = $true
+            }
+        }.GetNewClosure())
     }
 
 }
