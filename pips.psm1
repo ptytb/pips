@@ -33,7 +33,7 @@ Function global:MakeEvent([hashtable] $properties) {
     foreach ($p in $properties.GetEnumerator()) {
         Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name $p.Key -Value $p.Value -Force
     }
-    return $EventArgs
+    return ,$EventArgs
 }
 
 Function global:HasUpperChars([string] $text) {
@@ -489,8 +489,10 @@ $WritePipLogDelegate = New-RunspacedDelegate ([EventHandler] {
 })
 
 Function global:EnsureColor($color) {
-    if ($color -and ($color.GetType() -eq [string])) {
+    if (($color -is [string]) -and (-not [string]::IsNullOrWhiteSpace($color))) {
         $color = [System.Drawing.Color]::FromKnownColor($color)
+    } elseif ($color -isnot [System.Drawing.Color]) {
+        $color = $null
     }
     return [MaybeColor] $color
 }
@@ -2333,9 +2335,15 @@ Some packages may generate garbage or show windows, don't panic.
             Persistent=$true;
             MenuText = "Test async process";
             Code = {
-                # 1/0
                 $process = [ProcessWithPipedIO]::new('ipconfig', @('/all'))
-                $process.Start()
+                $task = $process.Start()
+                $continuation = New-RunspacedDelegate([Action[System.Threading.Tasks.Task[int]]] {
+                    param([System.Threading.Tasks.Task[int]] $task)
+                    $exitCode = $task.Result
+                    Write-PipLog "Exited with code $exitCode" -Background DarkGreen -Foreground White
+                })
+                $task.ContinueWith($continuation)
+                [System.GC]::KeepAlive($continuation)
             };
         };
     )
@@ -3419,6 +3427,10 @@ class ProcessWithPipedIO {
 
         $this._process = $process
         $this._taskCompletionSource = $taskCompletionSource
+
+        [System.GC]::KeepAlive($this)
+        [System.GC]::KeepAlive($this._process)
+        [System.GC]::KeepAlive($this._taskCompletionSource)
     }
 
     [System.Threading.Tasks.Task[int]] Start() {
