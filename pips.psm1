@@ -2690,10 +2690,10 @@ Function Generate-Form {
 
         $textLength = $logView.TextLength
         $logView.Select($textLength, $textLength)
-        $null = $SendMessage.Invoke($logView.Handle, $WM_VSCROLL, $SB_PAGEBOTTOM, 0)
 
         $null = $SendMessage.Invoke($logView.Handle, $WM_SETREDRAW, 1, 0)
         $null = $SendMessage.Invoke($logView.Handle, $EM_SETEVENTMASK, 0, $eventMask)
+        $null = $SendMessage.Invoke($logView.Handle, $WM_VSCROLL, $SB_PAGEBOTTOM, 0)
     }
 
     $logView.Add_LinkClicked({
