@@ -2324,8 +2324,9 @@ Some packages may generate garbage or show windows, don't panic.
             Persistent=$true;
             MenuText = "Test async process";
             Code = {
-                $process = [ProcessWithPipedIO]::new('ipconfig', @('/all'))
-                $process.Start()
+                1/0
+                # $process = [ProcessWithPipedIO]::new('ipconfig', @('/all'))
+                # $process.Start()
             };
         };
     )
@@ -4371,23 +4372,42 @@ Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
        Set-StrictMode -Version latest
        Set-PSDebug -Strict -Trace 0  # -Trace ∈ (0, 1=lines, 2=lines+vars+calls)
 
+       $ignoredExceptions = @(
+           [System.Management.Automation.MethodInvocationException]
+       )
+
        $appExceptionHandler = {
-            param($Exception)
+            param($Exception, $ScriptStackTrace = $null)
+
+            if ($Exception.GetType() -in $ignoredExceptions) {
+                return
+            }
+
             $color = Get-Random -Maximum 16
             $color = @{
                 BackgroundColor=$color;
                 ForegroundColor=(15 - $color);
             }
+
             Write-Host ('=' * 70) @color
+            Write-Host $Exception.GetType() @color
+            Write-Host ('-' * 70) @color
             Write-Host $Exception.Message @color
             Write-Host ('-' * 70) @color
-            Write-Host $Error[0].ScriptStackTrace @color
-            Write-Host ('-' * 70) @color
+
+            if ($Exception -is [System.Management.Automation.RuntimeException]) {
+                $ScriptStackTrace = $Exception.ErrorRecord.ScriptStackTrace
+                if (-not [string]::IsNullOrWhiteSpace($ScriptStackTrace)) {
+                    Write-Host $ScriptStackTrace @color
+                    Write-Host ('-' * 70) @color
+                }
+            }
+
             Write-Host $Exception.StackTrace @color
             Write-Host ('=' * 70) @color
 
             Show-ConsoleWindow $true
-       }
+       }.GetNewClosure()
 
        $firstChanceExceptionHandler = New-RunspacedDelegate ([ System.EventHandler`1[System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs]] {
             param($Sender, $EventArgs)
