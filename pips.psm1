@@ -82,7 +82,7 @@ Import-Module -Global .\PSRunspacedDelegate\PSRunspacedDelegate
 
 $startServer = New-RunspacedDelegate ( [Func[Object]] {
     Write-Host Start server
-    Start-Process -WindowStyle Normal -FilePath powershell -ArgumentList "-ExecutionPolicy Bypass $PSScriptRoot\pips-spelling-server.ps1"
+    Start-Process -WindowStyle Hidden -FilePath powershell -ArgumentList "-ExecutionPolicy Bypass $PSScriptRoot\pips-spelling-server.ps1"
     Write-Host Server started.
 });
 $task = [System.Threading.Tasks.Task[Object]]::new($startServer);
@@ -4386,7 +4386,9 @@ Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
            [System.Management.Automation.MethodInvocationException],
            [System.Management.Automation.ParameterBindingException],
            [System.Management.Automation.ItemNotFoundException],
-           [System.Management.Automation.ValidationMetadataException]
+           [System.Management.Automation.ValidationMetadataException],
+           [System.Management.Automation.DriveNotFoundException],
+           [System.Management.Automation.CommandNotFoundException]
        )
 
        $appExceptionHandler = {
