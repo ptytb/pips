@@ -322,18 +322,14 @@ $interpreters = $null
 $global:autoCompleteIndex = $null
 $Global:interpretersComboBox = $null
 
-Add-Type -TypeDefinition @"
-   public enum InstallAutoCompleteMode
-   {
-      Name,
-      Version,
-      Directory,
-      GitTag,
-      WheelFile,
-      None
-   }
-"@
-
+enum InstallAutoCompleteMode {
+  Name;
+  Version;
+  Directory;
+  GitTag;
+  WheelFile;
+  None
+}
 
 $global:packageTypes = [System.Collections.ArrayList]::new()
 $global:packageTypes.AddRange(@('pip', 'conda', 'git', 'wheel', 'https'))
@@ -843,9 +839,9 @@ Function Copy-AsRequirementsTxt($list) {
 $actionItemCount = 0
 Function Make-PipActionItem($name, $code, $validator, $takesList = $false) {
     $action = New-Object psobject -Property @{Name=$name; TakesList=$takesList; Id=(++$Script:actionItemCount);}
-    $action | Add-Member -Type ScriptMethod -Name ToString -Value { "$($this.Name) [F$($this.Id)]" } -Force
-    $action | Add-Member -Type ScriptMethod -Name Execute  -Value $code -Force
-    $action | Add-Member -Type ScriptMethod -Name Validate -Value $validator -Force
+    $action | Add-Member -MemberType ScriptMethod -Name ToString -Value { "$($this.Name) [F$($this.Id)]" } -Force
+    $action | Add-Member -MemberType ScriptMethod -Name Execute  -Value $code -Force
+    $action | Add-Member -MemberType ScriptMethod -Name Validate -Value $validator -Force
     return $action
 }
 
@@ -980,7 +976,7 @@ Function Get-InterpreterRecord($path, $items, $user = $false) {
         User                 = $user;
         EnvironmentVariables = $null;
     }
-    $action | Add-Member -Type ScriptMethod -Name ToString -Value {
+    $action | Add-Member -MemberType ScriptMethod -Name ToString -Value {
         "{2} [{0}] {1}" -f $this.Arch, $this.PythonExe, $this.Version
     } -Force
 
@@ -1039,7 +1035,7 @@ Function Add-ComboBoxInterpreters {
 
     foreach ($interpreter in $Global:settings.envs) {
         if ($interpreter.User) {
-            $interpreter | Add-Member -Type ScriptMethod -Name ToString -Value {
+            $interpreter | Add-Member -MemberType ScriptMethod -Name ToString -Value {
                 "{2} [{0}] {1}" -f $this.Arch, $this.PythonExe, $this.Version
             } -Force
             [void]$interpreters.Add($interpreter)
@@ -1127,7 +1123,7 @@ Function ConvertFrom-RegexGroupsToObject($groups) {
 
     foreach ($group in $groups) {
         if (-not [string]::IsNullOrEmpty($group.Value) -and $group.Name -ne "0") {
-            $gitLinkInfo | Add-Member NoteProperty "$($group.Name)" "$($group.Value)"
+            $gitLinkInfo | Add-Member -MemberType NoteProperty -Name "$($group.Name)" -Value "$($group.Value)"
         }
     }
 
@@ -1233,7 +1229,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
     $cb = New-Object System.Windows.Forms.TextBox
     # $cb = New-Object System.Windows.Forms.ComboBox
 
-    $form | Add-Member -Type NoteProperty -Name 'currentInstallAutoCompleteMode' -Value [InstallAutoCompleteMode]::None
+    $form | Add-Member -MemberType NoteProperty -Name 'currentInstallAutoCompleteMode' -Value 'None'
 
     $autoCompleteIndex = $global:autoCompleteIndex
     $FuncGuessAutoCompleteMode = {
