@@ -2620,8 +2620,8 @@ Function Generate-Form {
             [Parameter(Mandatory)] [AllowEmptyCollection()] [object[]] $Lines = @(),
             [Parameter(Mandatory)] [switch] $UpdateLastLine,
             [Parameter(Mandatory)] [switch] $NoNewline,
-            [Parameter(Mandatory)] [AllowNull()] [MaybeColor] $Background,
-            [Parameter(Mandatory)] [AllowNull()] [MaybeColor] $Foreground
+            [Parameter(Mandatory)] [AllowNull()] [MaybeColor] $Background = $null,
+            [Parameter(Mandatory)] [AllowNull()] [MaybeColor] $Foreground = $null
         )
 
         $logView = $global:logView
