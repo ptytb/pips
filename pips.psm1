@@ -505,10 +505,8 @@ Function global:Write-PipLog {
         [object[]] $Lines = @(),
         [switch] $UpdateLastLine,
         [switch] $NoNewline,
-        [Parameter(Mandatory=$false)]
-        [MaybeColor] $Background,
-        [Parameter(Mandatory=$false)]
-        [MaybeColor] $Foreground
+        [Parameter(Mandatory=$false)] [AllowNull()] $Background = $null,
+        [Parameter(Mandatory=$false)] [AllowNull()] $Foreground = $null
     )
 
     $arguments = @{
@@ -2339,15 +2337,16 @@ Some packages may generate garbage or show windows, don't panic.
                 $task = $process.Start()
                 $continuation = New-RunspacedDelegate([Action[System.Threading.Tasks.Task[int]]] {
                     param([System.Threading.Tasks.Task[int]] $task)
-                    if ($task.IsCompleted) {
+                    if ($task.IsCompleted -and (-not $task.IsFaulted)) {
                         $exitCode = $task.Result
                         Write-PipLog "Exited with code $exitCode" -Background DarkGreen -Foreground White
                     } else {
-                        Write-PipLog "Failed with code $exitCode" -Background DarkRed -Foreground White
+                        $message = $task.Exception.InnerException
+                        Write-PipLog "Failed: $message" -Background DarkRed -Foreground White
                     }
                 })
-                $task.ContinueWith($continuation)
                 [System.GC]::KeepAlive($continuation)
+                [System.GC]::KeepAlive($task.ContinueWith($continuation))
             };
         };
     )
@@ -3445,7 +3444,7 @@ class ProcessWithPipedIO {
             $this._process.BeginErrorReadLine()
 
         } catch {
-            $this._taskCompletionSource.SetException($_)
+            $this._taskCompletionSource.SetException($_.Exception)
         }
 
         return $this._taskCompletionSource.Task
