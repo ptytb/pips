@@ -142,19 +142,26 @@ $Global:FuncRPCSpellCheck = {
 }
 
 
-Function global:Get-Bin($command, $all = $false) {
-    $commands = Get-Command -All -ErrorAction SilentlyContinue $command
-    $found = $null
+Function global:Get-Bin($command, [switch] $All) {
+    $arguments = @{
+        All=$All
+    }
+    $commands = Get-Command @arguments -ErrorAction SilentlyContinue -CommandType Application -Name $command
     if ($commands) {
-        # $commands = $commands | ForEach-Object { $_.Source }
         $commands = $commands | Select-Object -ExpandProperty Source
         if ($all) {
-            $found = $commands
+            $found = @($commands)
         } else {
-            $found = $commands | Select-Object -Index 0
+            $found = $commands
+        }
+    } else {
+        if ($all) {
+            $found = @()
+        } else {
+            $found = $null
         }
     }
-    return $found
+    return ,$found
 }
 
 Function global:Guess-EnvPath ($path, $fileName, [switch] $directory, [switch] $Executable) {
@@ -989,11 +996,14 @@ Function Get-InterpreterRecord($path, $items, $user = $false) {
 Function Find-Interpreters {
     $items = New-Object System.Collections.ArrayList
 
-    $list = @((Get-Bin 'python' $true); (dir $env:SystemDrive\Python*) | foreach { "$_\python.exe" })
-    foreach ($path in $list) {
-        if (-not [string]::IsNullOrEmpty($path)) {
-            Get-InterpreterRecord (Split-Path -Parent $path) $items
-        }
+    $pythons_in_path = Get-Bin 'python' -All
+    foreach ($path in $pythons_in_path) {
+        Get-InterpreterRecord (Split-Path -Parent $path) $items
+    }
+
+    $pythons_in_system_drive_root = @(Get-ChildItem $env:SystemDrive\Python* | ForEach-Object { $_.FullName })
+    foreach ($path in $pythons_in_system_drive_root) {
+        Get-InterpreterRecord $path $items
     }
 
     $local_user_pythons = "$env:LOCALAPPDATA\Programs\Python"
@@ -4234,7 +4244,7 @@ Function Save-PipsSettings {
     $userInterpreterRecords = $interpreters | Where-Object { $_.User }
     $settings."envs" = @($userInterpreterRecords)
     try {
-        $settings | ConvertTo-Json -Depth 10 | Out-File "$settingsPath\settings.json"
+        $settings | ConvertTo-Json -Depth 25 | Out-File "$settingsPath\settings.json"
     } catch {
     }
 }
@@ -4402,7 +4412,8 @@ Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
             Write-Host $Exception.Message @color
             Write-Host ('-' * 70) @color
 
-            if ($Exception -is [System.Management.Automation.RuntimeException]) {
+            if (($Exception -is [System.Management.Automation.RuntimeException]) -or
+                ($Exception.GetType().BaseType -eq [System.Management.Automation.RuntimeException])) {
                 $ScriptStackTrace = $Exception.ErrorRecord.ScriptStackTrace
                 if (-not [string]::IsNullOrWhiteSpace($ScriptStackTrace)) {
                     Write-Host $ScriptStackTrace @color
