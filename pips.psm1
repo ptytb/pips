@@ -41,6 +41,9 @@ Function global:HasUpperChars([string] $text) {
 }
 
 
+$global:WM_USER = [int] 0x0400
+$global:WM_SETREDRAW = [int] 0x0B
+$global:EM_SETEVENTMASK = [int] ($WM_USER + 69);
 $global:WM_CHAR = [int] 0x0102
 $global:WM_SCROLL = [int] 276
 $global:WM_VSCROLL = [int] 277
@@ -2335,6 +2338,14 @@ Some packages may generate garbage or show windows, don't panic.
                 Open-LinkInBrowser "https://github.com/ptytb/pips/issues/new?title=$title"
             };
         };
+        @{
+            Persistent=$true;
+            MenuText = "Test async process";
+            Code = {
+                $process = [ProcessWithPipedIO]::new('ipconfig', @('/all'))
+                $process.Start()
+            };
+        };
     )
 
     $menuArray = [System.Collections.ArrayList]::new()
@@ -2623,6 +2634,9 @@ Function Generate-Form {
 
         $logView = $global:logView
 
+        $null = $SendMessage.Invoke($logView.Handle, $WM_SETREDRAW, 0, 0)
+        $eventMask = $SendMessage.Invoke($logView.Handle, $EM_SETEVENTMASK, 0, 0)
+
         if ($UpdateLastLine) {
             $text = ($Lines -join ' ') -replace "`r|`n",''
 
@@ -2673,6 +2687,9 @@ Function Generate-Form {
         $textLength = $logView.TextLength
         $logView.Select($textLength, $textLength)
         $null = $SendMessage.Invoke($logView.Handle, $WM_VSCROLL, $SB_PAGEBOTTOM, 0)
+
+        $null = $SendMessage.Invoke($logView.Handle, $WM_SETREDRAW, 1, 0)
+        $null = $SendMessage.Invoke($logView.Handle, $EM_SETEVENTMASK, 0, $eventMask)
     }
 
     $logView.Add_LinkClicked({
@@ -3364,6 +3381,68 @@ class TextBoxNavigationHook {
     }
 
 }
+
+
+class ProcessWithPipedIO {
+    hidden [System.Diagnostics.Process] $_process
+    hidden [System.Threading.Tasks.TaskCompletionSource[int]] $_taskCompletionSource  # Keeps the exit code of a process
+
+    ProcessWithPipedIO($Command, $Arguments) {
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+
+        $startInfo.FileName = $Command
+        $startInfo.Arguments = $Arguments
+
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+
+        $startInfo.RedirectStandardInput = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+
+        $process = [System.Diagnostics.Process]::new()
+        $process.StartInfo = $startInfo
+        $process.EnableRaisingEvents = $true
+
+        $OutputCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
+            param($Sender, $EventArgs)
+            Write-PipLog "$($EventArgs.Data)" -Background LightBlue
+        })
+
+        $ErrorCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
+            param($Sender, $EventArgs)
+            Write-PipLog "$($EventArgs.Data)" -Background LightPink
+        })
+
+        $taskCompletionSource = [System.Threading.Tasks.TaskCompletionSource[int]]::new()
+
+        $ExitedCallback = New-RunspacedDelegate ([EventHandler] {
+            param($Sender, $EventArgs)
+            $taskCompletionSource.SetResult($process.ExitCode)
+        }.GetNewClosure())
+
+        $process.add_OutputDataReceived($OutputCallback)
+        $process.add_ErrorDataReceived($ErrorCallback)
+        $process.add_Exited($ExitedCallback)
+
+        $this._process = $process
+        $this._taskCompletionSource = $taskCompletionSource
+    }
+
+    [System.Threading.Tasks.Task[int]] Start() {
+        $null = $this._process.Start()
+
+        $this._process.BeginOutputReadLine()
+        $this._process.BeginErrorReadLine()
+
+        return $this._taskCompletionSource.Task
+    }
+
+    Kill() {
+        $this._process.Kill()
+    }
+}
+
 
 Function global:Show-DocView($packageName, $SetContent = $null, $Highlight = $null, [switch] $NoDefaultHighlighting) {
     if (-not $SetContent) {
