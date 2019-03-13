@@ -3307,9 +3307,9 @@ You can hit (N)ext or (P)revious to skim over the matches
                 $end = $Sender.TextLength - 1
             }
 
-            Function InRange { param($_) ($_ -ge 0) -and ($_ -lt ($Sender.TextLength - 1)) }
+            Function InRange { param($_) ($_ -ge 0) -and ($_ -le ($Sender.TextLength - 1)) }
 
-            if (InRange($start) -and InRange($end)) {
+            if (($start -le $end) -and (InRange($start)) -and (InRange($end))) {
                 [int] $found = $Sender.Find($query, $start, $end, $searchOptions)
             }
         }
