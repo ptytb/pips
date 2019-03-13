@@ -20,6 +20,9 @@
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Net")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Net.WebClient")
 
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Management")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Management.Automation")
+
 
 [PSObject].Assembly.GetType("System.Management.Automation.TypeAccelerators")::add(
     'MaybeColor', [Nullable[System.Drawing.Color]])
@@ -833,9 +836,9 @@ Function Copy-AsRequirementsTxt($list) {
 $actionItemCount = 0
 Function Make-PipActionItem($name, $code, $validator, $takesList = $false) {
     $action = New-Object psobject -Property @{Name=$name; TakesList=$takesList; Id=(++$Script:actionItemCount);}
-    $action | Add-Member ScriptMethod ToString { "$($this.Name) [F$($this.Id)]" } -Force
-    $action | Add-Member ScriptMethod Execute  $code
-    $action | Add-Member ScriptMethod Validate $validator
+    $action | Add-Member -Type ScriptMethod -Name ToString -Value { "$($this.Name) [F$($this.Id)]" } -Force
+    $action | Add-Member -Type ScriptMethod -Name Execute  -Value $code -Force
+    $action | Add-Member -Type ScriptMethod -Name Validate -Value $validator -Force
     return $action
 }
 
@@ -970,7 +973,7 @@ Function Get-InterpreterRecord($path, $items, $user = $false) {
         User                 = $user;
         EnvironmentVariables = $null;
     }
-    $action | Add-Member ScriptMethod ToString {
+    $action | Add-Member -Type ScriptMethod -Name ToString -Value {
         "{2} [{0}] {1}" -f $this.Arch, $this.PythonExe, $this.Version
     } -Force
 
@@ -1026,7 +1029,7 @@ Function Add-ComboBoxInterpreters {
 
     foreach ($interpreter in $Global:settings.envs) {
         if ($interpreter.User) {
-            $interpreter | Add-Member ScriptMethod ToString {
+            $interpreter | Add-Member -Type ScriptMethod -Name ToString -Value {
                 "{2} [{0}] {1}" -f $this.Arch, $this.PythonExe, $this.Version
             } -Force
             [void]$interpreters.Add($interpreter)
@@ -2324,9 +2327,9 @@ Some packages may generate garbage or show windows, don't panic.
             Persistent=$true;
             MenuText = "Test async process";
             Code = {
-                1/0
-                # $process = [ProcessWithPipedIO]::new('ipconfig', @('/all'))
-                # $process.Start()
+                # 1/0
+                $process = [ProcessWithPipedIO]::new('ipconfig', @('/all'))
+                $process.Start()
             };
         };
     )
@@ -4373,7 +4376,11 @@ Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
        Set-PSDebug -Strict -Trace 0  # -Trace ∈ (0, 1=lines, 2=lines+vars+calls)
 
        $ignoredExceptions = @(
-           [System.Management.Automation.MethodInvocationException]
+           [System.IO.FileNotFoundException],
+           [System.Management.Automation.MethodInvocationException],
+           [System.Management.Automation.ParameterBindingException],
+           [System.Management.Automation.ItemNotFoundException],
+           [System.Management.Automation.ValidationMetadataException]
        )
 
        $appExceptionHandler = {
