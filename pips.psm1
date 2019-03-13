@@ -77,24 +77,6 @@ if ($pips_pipe_instance) {
 Import-Module -Global .\PSRunspacedDelegate\PSRunspacedDelegate
 
 
-Function global:WrapStackTraceLog($func) {
-    try {
-        # return $func.Invoke($args)
-        return (& $func $args)
-    } catch {
-        Write-Host ('=' * 70)
-        Write-Host $_.Exception.Message
-        Write-Host ('-' * 70)
-        Write-Host $_.ScriptStackTrace
-        Write-Host ('-' * 70)
-        Write-Host "$StackTrace"
-        Write-Host ('=' * 70)
-        Show-ConsoleWindow $true
-    }
-    return $null
-}
-
-
 $startServer = New-RunspacedDelegate ( [Func[Object]] {
     Write-Host Start server
     Start-Process -WindowStyle Normal -FilePath powershell -ArgumentList "-ExecutionPolicy Bypass $PSScriptRoot\pips-spelling-server.ps1"
@@ -4228,7 +4210,7 @@ Function global:Get-DependencyAsciiGraph($name) {
     return $asciiTree
 }
 
-Function Show-ConsoleWindow([bool] $show) {
+Function global:Show-ConsoleWindow([bool] $show) {
     Add-Type -Name Window -Namespace Console -MemberDefinition '
     [DllImport("Kernel32.dll")]
     public static extern IntPtr GetConsoleWindow();
@@ -4388,6 +4370,37 @@ Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
     } else {
        Set-StrictMode -Version latest
        Set-PSDebug -Strict -Trace 0  # -Trace ∈ (0, 1=lines, 2=lines+vars+calls)
+
+       $appExceptionHandler = {
+            param($Exception)
+            $color = Get-Random -Maximum 16
+            $color = @{
+                BackgroundColor=$color;
+                ForegroundColor=(15 - $color);
+            }
+            Write-Host ('=' * 70) @color
+            Write-Host $Exception.Message @color
+            Write-Host ('-' * 70) @color
+            Write-Host $Error[0].ScriptStackTrace @color
+            Write-Host ('-' * 70) @color
+            Write-Host $Exception.StackTrace @color
+            Write-Host ('=' * 70) @color
+
+            Show-ConsoleWindow $true
+       }
+
+       $firstChanceExceptionHandler = New-RunspacedDelegate ([ System.EventHandler`1[System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs]] {
+            param($Sender, $EventArgs)
+            $null = $appExceptionHandler.Invoke($EventArgs.Exception)
+       }.GetNewClosure())
+
+       $unhandledExceptionHandler = New-RunspacedDelegate ([UnhandledExceptionEventHandler] {
+            param($Sender, $EventArgs)
+            $null = $appExceptionHandler.Invoke($EventArgs.Exception)
+       }.GetNewClosure())
+
+       [System.AppDomain]::CurrentDomain.Add_FirstChanceException($firstChanceExceptionHandler)
+       [System.AppDomain]::CurrentDomain.Add_UnhandledException($unhandledExceptionHandler)
     }
 
     if ($HideConsole) {
@@ -4418,6 +4431,5 @@ Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
     $form.Activate()
 
     $appContext = New-Object System.Windows.Forms.ApplicationContext
-    $null = WrapStackTraceLog({ [System.Windows.Forms.Application]::Run($appContext) }.GetNewClosure())
-
+    $null = [System.Windows.Forms.Application]::Run($appContext)
 }
