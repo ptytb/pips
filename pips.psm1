@@ -498,6 +498,7 @@ Function global:EnsureColor($color) {
 }
 
 Function global:Write-PipLog {
+    [CmdletBinding()]
     param(
         [Parameter(ValueFromRemainingArguments=$true, Position=1)]
         [AllowEmptyCollection()]
@@ -526,7 +527,7 @@ Function global:Write-PipLog {
         $EventArgs = MakeEvent @{
             Arguments=$arguments
         }
-        $null = $global:logView.BeginInvoke($WritePipLogDelegate, ($global:logView, $EventArgs))
+        $null = $global:logView.Invoke($WritePipLogDelegate, ($global:logView, $EventArgs))
     } else {
         $null = & $global:FuncWriteLog @arguments
     }
@@ -2628,11 +2629,11 @@ Function Generate-Form {
 
     $global:FuncWriteLog = {
         param(
-            [Parameter(Mandatory)] [AllowEmptyCollection()] [object[]] $Lines = @(),
-            [Parameter(Mandatory)] [switch] $UpdateLastLine,
-            [Parameter(Mandatory)] [switch] $NoNewline,
-            [Parameter(Mandatory)] [AllowNull()] [MaybeColor] $Background = $null,
-            [Parameter(Mandatory)] [AllowNull()] [MaybeColor] $Foreground = $null
+            [object[]] $Lines,
+            [bool] $UpdateLastLine,
+            [bool] $NoNewline,
+            [MaybeColor] $Background,
+            [MaybeColor] $Foreground
         )
 
         $logView = $global:logView
@@ -2677,12 +2678,12 @@ Function Generate-Form {
             }
         }
 
-        if ($Background -or $Foreground) {
+        if (($Background -ne $null) -or ($Foreground -ne $null)) {
             $logView.Select($logFrom, $logTo)
-            if ($Background) {
+            if ($Background -ne $null) {
                 $logView.SelectionBackColor = $Background
             }
-            if ($Foreground) {
+            if ($Foreground -ne $null) {
                 $logView.SelectionColor = $Foreground
             }
         }
