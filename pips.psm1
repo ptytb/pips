@@ -2339,8 +2339,12 @@ Some packages may generate garbage or show windows, don't panic.
                 $task = $process.Start()
                 $continuation = New-RunspacedDelegate([Action[System.Threading.Tasks.Task[int]]] {
                     param([System.Threading.Tasks.Task[int]] $task)
-                    $exitCode = $task.Result
-                    Write-PipLog "Exited with code $exitCode" -Background DarkGreen -Foreground White
+                    if ($task.IsCompleted) {
+                        $exitCode = $task.Result
+                        Write-PipLog "Exited with code $exitCode" -Background DarkGreen -Foreground White
+                    } else {
+                        Write-PipLog "Failed with code $exitCode" -Background DarkRed -Foreground White
+                    }
                 })
                 $task.ContinueWith($continuation)
                 [System.GC]::KeepAlive($continuation)
@@ -3434,10 +3438,15 @@ class ProcessWithPipedIO {
     }
 
     [System.Threading.Tasks.Task[int]] Start() {
-        $null = $this._process.Start()
+        try {
+            $null = $this._process.Start()
 
-        $this._process.BeginOutputReadLine()
-        $this._process.BeginErrorReadLine()
+            $this._process.BeginOutputReadLine()
+            $this._process.BeginErrorReadLine()
+
+        } catch {
+            $this._taskCompletionSource.SetException($_)
+        }
 
         return $this._taskCompletionSource.Task
     }
