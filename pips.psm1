@@ -2678,11 +2678,11 @@ Function Generate-Form {
         $null = $SendMessage.Invoke($logView.Handle, $WM_VSCROLL, $SB_PAGEBOTTOM, 0)
     }.GetNewClosure()
 
-    $WritePipLogDelegate = New-RunspacedDelegate ([EventHandler] {
+    $WritePipLogDelegate = [EventHandler] {
         param($Sender, $EventArgs)
         $Arguments = $EventArgs.Arguments
         $null = & $FuncWriteLog @Arguments
-    }.GetNewClosure())
+    }.GetNewClosure()
 
     ${function:global:WriteLog} = {
         [CmdletBinding()]
@@ -3496,15 +3496,20 @@ class ProcessWithPipedIO {
         $this._worker.WorkerSupportsCancellation = $true
 
         $self = $this
-        $this._worker.add_DoWork([System.ComponentModel.DoWorkEventHandler] {
+        $delegate = New-RunspacedDelegate ([System.ComponentModel.DoWorkEventHandler] {
             $null = $self.Start()
         }.GetNewClosure())
+        $this._worker.add_DoWork($delegate)
 
         $this._worker.RunWorkerAsync()
         return $this._taskCompletionSource.Task
     }
 
     Kill() {
+        if ($this._worker) {
+            $this._worker.CancelAsync()
+            $this._worker = $null
+        }
         $this._process.Kill()
     }
 }
