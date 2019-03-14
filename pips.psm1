@@ -2934,9 +2934,10 @@ Function Generate-FormEnvironmentVariables($interpreterRecord) {
             -Name 'EnvironmentVariables' `
             -Value $newVars
 
+        [string[]] $StartupScript = @($TextBox1.Lines)
         $interpreterRecord | Add-Member -Force NoteProperty `
             -Name 'StartupScript' `
-            -Value $TextBox1.Lines
+            -Value $StartupScript
     }.GetNewClosure()
 
     $FuncUpdateActivateScript = {
@@ -3018,7 +3019,9 @@ Function Generate-FormEnvironmentVariables($interpreterRecord) {
             $DataGridView1.DataSource.Rows.Add($row)
         }
 
-    $TextBox1.Lines = $interpreterRecord.StartupScript
+    if ($interpreterRecord.PSObject.Properties.Name -contains 'StartupScript') {
+        $TextBox1.Text = $interpreterRecord.StartupScript -join [System.Environment]::NewLine
+    }
 
     $result = $Form.ShowDialog()
 
