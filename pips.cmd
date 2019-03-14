@@ -6,7 +6,8 @@ if not DEFINED IS_MINIMIZED set IS_MINIMIZED=1 && start "" /min "%~dpnx0" %* && 
 rem Set-Execution policy is required, otherwise won't be able to run any scripts at all.
 rem Get-Help about_Execution_Policies
 rem Start-Main possible options: -HideConsole -Debug
-powershell -Sta -NoProfile -NonInteractive -NoLogo -Command "Set-ExecutionPolicy -Scope Process Bypass; Import-Module .\pips; Start-Main -Debug"
+rem -Mta will eventually make the app crash even if has started normally
+powershell -Sta -NoProfile -NonInteractive -NoLogo -WindowStyle Normal -Command "Set-ExecutionPolicy -Scope Process Bypass; Import-Module .\pips; Start-Main -Debug"
 
 if %errorlevel% neq 0 (
 	pause

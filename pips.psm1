@@ -216,7 +216,7 @@ Function global:Get-CurrentInterpreter($item, [switch] $Executable) {
 
 Function global:Delete-CurrentInterpreter() {
     if (-not (Get-CurrentInterpreter 'User')) {
-        Write-PipLog 'Can only delete venv which was added manually with env:Open or env:Create.'
+        WriteLog 'Can only delete venv which was added manually with env:Open or env:Create.'
         return
     }
 
@@ -234,10 +234,10 @@ Function global:Delete-CurrentInterpreter() {
             Remove-Item -Path $path -Recurse -Force
         } catch { }
         if (Exists-Directory $path) {
-            Write-PipLog "Cannot delete '$path'"
+            WriteLog "Cannot delete '$path'"
             $failedToRemove = $true
         } else {
-            Write-PipLog "Removed $($stats.Count) items."
+            WriteLog "Removed $($stats.Count) items."
         }
     }
 
@@ -246,10 +246,10 @@ Function global:Delete-CurrentInterpreter() {
         $Script:trackDuplicateInterpreters.Remove($path)
         $interpretersComboBox.DataSource = $null
         $interpretersComboBox.DataSource = $interpreters
-        Write-PipLog "Removed venv '${path}' from list."
+        WriteLog "Removed venv '${path}' from list."
 
         $interpretersComboBox.SelectedIndex = 0
-        Write-PipLog "Switching to '$(Get-CurrentInterpreter 'Path')'"
+        WriteLog "Switching to '$(Get-CurrentInterpreter 'Path')'"
     }
 }
 
@@ -324,7 +324,6 @@ $lastWidgetTop = 5
 $widgetLineHeight = 23
 $dataGridView = $null
 $inputFilter = $null
-$global:logView = $null
 $actionsModel = $null
 $isolatedCheckBox = $null
 $header = ("Select", "Package", "Installed", "Latest", "Type", "Status")
@@ -494,14 +493,6 @@ Function Convert-Base64ToICO($base64Text) {
 }
 
 
-$global:_WritePipLogBacklog = [System.Collections.Generic.List[hashtable]]::new()
-
-$WritePipLogDelegate = New-RunspacedDelegate ([EventHandler] {
-    param($Sender, $EventArgs)
-    $Arguments = $EventArgs.Arguments
-    $null = & $global:FuncWriteLog @Arguments
-})
-
 Function global:EnsureColor($color) {
     if (($color -is [string]) -and (-not [string]::IsNullOrWhiteSpace($color))) {
         $color = [System.Drawing.Color]::FromKnownColor($color)
@@ -511,7 +502,9 @@ Function global:EnsureColor($color) {
     return [MaybeColor] $color
 }
 
-Function global:Write-PipLog {
+$global:_WritePipLogBacklog = [System.Collections.Generic.List[hashtable]]::new()
+
+Function global:WriteLog {
     [CmdletBinding()]
     param(
         [Parameter(ValueFromRemainingArguments=$true, Position=1)]
@@ -532,24 +525,7 @@ Function global:Write-PipLog {
         Foreground=(EnsureColor $Foreground);
     }
 
-    if ($global:logView -eq $null) {
-        [void] $global:_WritePipLogBacklog.Add($arguments)
-        return
-    }
-
-    if ($global:logView.InvokeRequired) {
-        $EventArgs = MakeEvent @{
-            Arguments=$arguments
-        }
-        $null = $global:logView.Invoke($WritePipLogDelegate, ($global:logView, $EventArgs))
-    } else {
-        $null = & $global:FuncWriteLog @arguments
-    }
-}
-
-
-Function global:Clear-PipLog() {
-    $global:logView.Clear()
+    [void] $global:_WritePipLogBacklog.Add($arguments)
 }
 
 Function Add-TopWidget($widget, $span=1) {
@@ -848,7 +824,7 @@ Function Copy-AsRequirementsTxt($list) {
         $null = $requirements.AppendLine("$($item.Package)==$($item.Installed)")
     }
     Set-Clipboard $requirements.ToString()
-    Write-PipLog "Copied $($list.Count) items to clipboard."
+    WriteLog "Copied $($list.Count) items to clipboard."
 }
 
 $actionItemCount = 0
@@ -928,7 +904,7 @@ x = Package doesn't exist in index
 "
 
     & $Add (Make-PipActionItem 'Dependency tree' `
-        { param($list); $Script:PIPTREE_LEGEND; Get-DependencyAsciiGraph $list; Write-PipLog "`n" }.GetNewClosure() `
+        { param($list); $Script:PIPTREE_LEGEND; Get-DependencyAsciiGraph $list; WriteLog "`n" }.GetNewClosure() `
         { param($pkg,$out); $out -match '.*' } )
 
     & $Add (Make-PipActionItem 'Reverse dependencies' `
@@ -1093,7 +1069,7 @@ Function Toggle-VirtualEnv ($state) {
     $pipEnvDeactivate = Guess-EnvPath 'deactivate.bat'
 
     if ($pipEnvActivate -eq $null -or $pipEnvDeactivate -eq $null) {
-        Write-PipLog 'virtualenv not found. Run me from where "pip -m virtualenv env" command has been executed.'
+        WriteLog 'virtualenv not found. Run me from where "pip -m virtualenv env" command has been executed.'
         return
     }
 
@@ -1102,11 +1078,11 @@ Function Toggle-VirtualEnv ($state) {
         $env:_OLD_VIRTUAL_PYTHONHOME = "$env:PYTHONHOME"
         $env:_OLD_VIRTUAL_PATH = "$env:PATH"
 
-        Write-PipLog ('Activating: ' + $pipEnvActivate)
+        WriteLog ('Activating: ' + $pipEnvActivate)
         . $pipEnvActivate
     }
     else {
-        Write-PipLog ('Deactivating: "' + $pipEnvDeactivate + '" and unsetting environment')
+        WriteLog ('Deactivating: "' + $pipEnvDeactivate + '" and unsetting environment')
 
         &$pipEnvDeactivate
 
@@ -1128,9 +1104,9 @@ Function Toggle-VirtualEnv ($state) {
         }
     }
 
-    #Write-PipLog "PROMPT=" $env:PROMPT
-    #Write-PipLog "PYTHONHOME=" $env:PYTHONHOME
-    #Write-PipLog "PATH=" $env:PATH
+    #WriteLog "PROMPT=" $env:PROMPT
+    #WriteLog "PYTHONHOME=" $env:PYTHONHOME
+    #WriteLog "PATH=" $env:PATH
 }
 
 Function ConvertFrom-RegexGroupsToObject($groups) {
@@ -1554,7 +1530,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         # & $FuncShowToolTip "$text" "Packages with similar names found in the index.`n`nDid you mean:`n`n$candidatesToolTipText"
 
 
-        $null = Write-PipLog "Suggestions for '$($result.Request)': $($result.Candidates)" -UpdateLastLine -Background ([System.Drawing.Color]::LightSkyBlue)
+        $null = WriteLog "Suggestions for '$($result.Request)': $($result.Candidates)" -UpdateLastLine -Background ([System.Drawing.Color]::LightSkyBlue)
 
         $global:SuggestionsWorking = $false
 
@@ -1618,7 +1594,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
                    return
                 }
             } else {
-                Write-PipLog -UpdateLastLine `
+                WriteLog -UpdateLastLine `
                     "Searching for similar package names. Wait for ~5 sec..."
                 $null = & $FuncRPCSpellCheck $cb.Text 2
             }
@@ -1649,7 +1625,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
 
     $form.Size = New-Object Drawing.Point 365,160
     $form.SizeGripStyle = [System.Windows.Forms.SizeGripStyle]::Hide
-    $form.FormBorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedSingle
     $form.Text = 'Install packages | [Shift+Enter] fuzzy name search'
     $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
     $form.MinimizeBox = $false
@@ -1665,7 +1641,7 @@ Function global:Request-UserString($message, $title, $default, $completionItems 
     $Form.text                       = $title
     $Form.TopMost                    = $false
     $Form.SizeGripStyle = [System.Windows.Forms.SizeGripStyle]::Hide
-    $Form.FormBorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    $Form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedSingle
     $Form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
     $Form.MinimizeBox = $false
     $Form.MaximizeBox = $false
@@ -1738,11 +1714,11 @@ Function Generate-FormSearch {
         return
     }
 
-    Write-PipLog "Searching for $input"
-    Write-PipLog 'Double click or [Ctrl+Enter] a table row to open a package home page in browser'
+    WriteLog "Searching for $input"
+    WriteLog 'Double click or [Ctrl+Enter] a table row to open a package home page in browser'
     $stats = Get-SearchResults $input
-    Write-PipLog "Found $($stats.Total) packages: $($stats.PipCount) pip, $($stats.CondaCount) conda, $($stats.GithubCount) github, $($stats.PluginCount) from plugins. Total $($dataModel.Rows.Count) packages in list."
-    Write-PipLog
+    WriteLog "Found $($stats.Total) packages: $($stats.PipCount) pip, $($stats.CondaCount) conda, $($stats.GithubCount) github, $($stats.PluginCount) from plugins. Total $($dataModel.Rows.Count) packages in list."
+    WriteLog
 }
 
 Function Init-PackageGridViewProperties() {
@@ -1955,7 +1931,7 @@ Function global:Set-ActiveInterpreterWithPath($path) {
     for ($i = 0; $i -lt $Script:interpreters.Count; $i++) {
         if ($Script:interpreters[$i].Path -eq $path) {
             $Global:interpretersComboBox.SelectedIndex = $i
-            Write-PipLog "Switching to env '$path'"
+            WriteLog "Switching to env '$path'"
             break
         }
     }
@@ -2077,9 +2053,9 @@ Function Add-CreateEnvButtonMenu {
 
             $rule = Get-NetFirewallRule -DisplayName "$ruleName" -ErrorAction SilentlyContinue
             if ($rule) {
-                Write-PipLog "Firewall rule '$ruleName' was successfully created."
+                WriteLog "Firewall rule '$ruleName' was successfully created."
             } else {
-                Write-PipLog "Error while creating firewall rule '$ruleName'."
+                WriteLog "Error while creating firewall rule '$ruleName'."
             }
         }
     }
@@ -2096,9 +2072,9 @@ Function Add-CreateEnvButtonMenu {
                 "New python environment with active version $($FuncGetPythonInfo.Invoke()) will be created"
             if ($path -eq $null) { return }
         }
-        Write-PipLog "$($tool.MenuText), please wait..."
+        WriteLog "$($tool.MenuText), please wait..."
         $output = $tool.Code.Invoke( @($path) )
-        Write-PipLog ($output -join "`n")
+        WriteLog ($output -join "`n")
 
         [void] $FuncUpdateInterpreters.Invoke($path)
     }.GetNewClosure()
@@ -2137,7 +2113,7 @@ Function Add-EnvToolButtonMenu {
                     Generate-FormEnvironmentVariables $interpreter
                 } else {
                     $path = $interpreter.Path
-                    Write-PipLog "WARNING: Editing global variables for global interpreter $path"
+                    WriteLog "WARNING: Editing global variables for global interpreter $path"
                     & rundll32 sysdm.cpl,EditEnvironmentVariables
                 }
             };
@@ -2168,7 +2144,7 @@ Function Add-EnvToolButtonMenu {
 Function global:Get-PyDocTopics() {
     $pythonExe = Get-CurrentInterpreter 'PythonExe'
     if ([string]::IsNullOrEmpty($pythonExe)) {
-        Write-PipLog 'No python executable found.'
+        WriteLog 'No python executable found.'
         return
     }
     $pyCode = "import pydoc; print('\n'.join(pydoc.Helper.topics.keys()))"
@@ -2183,7 +2159,7 @@ Function global:Get-PyDocTopics() {
 Function global:Get-PyDocApropos($request) {
     $pythonExe = Get-CurrentInterpreter 'PythonExe'
     if ([string]::IsNullOrEmpty($pythonExe)) {
-        Write-PipLog 'No python executable found.'
+        WriteLog 'No python executable found.'
         return
     }
     $request = $request -replace '''',''
@@ -2236,14 +2212,14 @@ Some packages may generate garbage or show windows, don't panic.
                 if (-not $input) {
                     return
                 }
-                Write-PipLog "Searching apropos for $input"
+                WriteLog "Searching apropos for $input"
                 $apropos = Get-PyDocApropos $input
                 if ($apropos -and $apropos.Count -gt 0) {
-                    Write-PipLog "Found $($apropos.Count) topics"
+                    WriteLog "Found $($apropos.Count) topics"
                     $docView = Show-DocView -SetContent ($apropos -join "`n") -Highlight $Script:pyRegexNameChain -NoDefaultHighlighting
                     $docView.Show()
                 } else {
-                    Write-PipLog 'Nothing found.'
+                    WriteLog 'Nothing found.'
                 }
             };
         };
@@ -2262,7 +2238,7 @@ Some packages may generate garbage or show windows, don't panic.
                     "$($env:LOCALAPPDATA)\py.ini",
                     $fileLines,
                     $Utf8NoBomEncoding)
-                Write-PipLog "$bits bit Python $version - is now default, use py.exe to launch"
+                WriteLog "$bits bit Python $version - is now default, use py.exe to launch"
             };
         };
         @{
@@ -2295,7 +2271,7 @@ Some packages may generate garbage or show windows, don't panic.
                         $cacheFolder = & (Get-CurrentInterpreter 'PythonExe') -c $getCacheFolderScript_a10
                     }
                     if ([string]::IsNullOrWhiteSpace($cacheFolder)) {
-                        Write-PipLog "Could not determine $type cache location."
+                        WriteLog "Could not determine $type cache location."
                         continue
                     }
                     [void] $paths.Add($cacheFolder)
@@ -2308,7 +2284,7 @@ Some packages may generate garbage or show windows, don't panic.
                 foreach ($cacheFolder in $paths) {
                     $stats = Get-ChildItem -Recurse $cacheFolder | Measure-Object -Property Length -Sum
                     if ($stats) {
-                        Write-PipLog ("`nCache at {0}`nFiles: {1}`nSize: {2} MB" -f $cacheFolder,$stats.Count,[math]::Round($stats.Sum / 1048576, 2))
+                        WriteLog ("`nCache at {0}`nFiles: {1}`nSize: {2} MB" -f $cacheFolder,$stats.Count,[math]::Round($stats.Sum / 1048576, 2))
                     }
                 }
             };
@@ -2317,7 +2293,7 @@ Some packages may generate garbage or show windows, don't panic.
             Persistent=$true;
             MenuText = 'Clear log';
             Code = {
-                Clear-PipLog
+                ClearLog
             };
         };
         @{
@@ -2340,15 +2316,15 @@ Some packages may generate garbage or show windows, don't panic.
             MenuText = "Test async process";
             Code = {
                 $process = [ProcessWithPipedIO]::new('ipconfig', @('/all'))
-                $task = $process.Start()
+                $task = $process.StartInBackground()
                 $continuation = New-RunspacedDelegate([Action[System.Threading.Tasks.Task[int]]] {
                     param([System.Threading.Tasks.Task[int]] $task)
                     if ($task.IsCompleted -and (-not $task.IsFaulted)) {
                         $exitCode = $task.Result
-                        Write-PipLog "Exited with code $exitCode" -Background DarkGreen -Foreground White
+                        WriteLog "Exited with code $exitCode" -Background DarkGreen -Foreground White
                     } else {
                         $message = $task.Exception.InnerException
-                        Write-PipLog "Failed: $message" -Background DarkRed -Foreground White
+                        WriteLog "Failed: $message" -Background DarkRed -Foreground White
                     }
                 })
                 [System.GC]::KeepAlive($continuation)
@@ -2409,6 +2385,8 @@ Function Generate-Form {
     $form = New-Object Windows.Forms.Form
     $form.Text = "pips - python package browser"
     $form.Size = New-Object Drawing.Point 1125, 840
+    $form.SizeGripStyle = [System.Windows.Forms.SizeGripStyle]::Show
+    $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::Sizable
     $form.StartPosition = 'CenterScreen'
     $form.Topmost = $false
     $form.KeyPreview = $true
@@ -2528,11 +2506,11 @@ Function Generate-Form {
             Get-InterpreterRecord $path $interpreters -user $true
             if (($interpreters.Count -gt $oldCount) -or ($trackDuplicateInterpreters.Contains($path))) {
                 if ($interpreters.Count -gt $oldCount) {
-                    Write-PipLog "Added virtual environment location: $path"
+                    WriteLog "Added virtual environment location: $path"
                 }
                 Set-ActiveInterpreterWithPath $path
             } else {
-                Write-PipLog "No python found in $path"
+                WriteLog "No python found in $path"
             }
         }
     }
@@ -2547,7 +2525,7 @@ Function Generate-Form {
             if (($_.KeyCode -eq 'C') -and $_.Control) {
                 $python_exe = Get-CurrentInterpreter 'PythonExe'
                 Set-Clipboard $python_exe
-                Write-PipLog "Copied to clipboard: $python_exe"
+                WriteLog "Copied to clipboard: $python_exe"
             }
             if ($_.KeyCode -eq 'Delete') {
                 Delete-CurrentInterpreter
@@ -2619,7 +2597,6 @@ Function Generate-Form {
     $form.Controls.Add($dataGridView)
 
     $logView = New-Object System.Windows.Forms.RichTextBox
-    $global:logView = $logView
     $logView.Location = New-Object Drawing.Point 7,520
     $logView.Size = New-Object Drawing.Point 800,270
     $logView.ReadOnly = $true
@@ -2634,7 +2611,7 @@ Function Generate-Form {
 
     $form.Controls.Add($logView)
 
-    $global:FuncWriteLog = {
+    $FuncWriteLog = {
         param(
             [object[]] $Lines,
             [bool] $UpdateLastLine,
@@ -2642,8 +2619,6 @@ Function Generate-Form {
             [MaybeColor] $Background,
             [MaybeColor] $Foreground
         )
-
-        $logView = $global:logView
 
         $null = $SendMessage.Invoke($logView.Handle, $WM_SETREDRAW, 0, 0)
         $eventMask = $SendMessage.Invoke($logView.Handle, $EM_SETEVENTMASK, 0, 0)
@@ -2701,7 +2676,52 @@ Function Generate-Form {
         $null = $SendMessage.Invoke($logView.Handle, $WM_SETREDRAW, 1, 0)
         $null = $SendMessage.Invoke($logView.Handle, $EM_SETEVENTMASK, 0, $eventMask)
         $null = $SendMessage.Invoke($logView.Handle, $WM_VSCROLL, $SB_PAGEBOTTOM, 0)
-    }
+    }.GetNewClosure()
+
+    $WritePipLogDelegate = New-RunspacedDelegate ([EventHandler] {
+        param($Sender, $EventArgs)
+        $Arguments = $EventArgs.Arguments
+        $null = & $FuncWriteLog @Arguments
+    }.GetNewClosure())
+
+    ${function:global:WriteLog} = {
+        [CmdletBinding()]
+        param(
+            [Parameter(ValueFromRemainingArguments=$true, Position=1)]
+            [AllowEmptyCollection()]
+            [AllowNull()]
+            [object[]] $Lines = @(),
+            [switch] $UpdateLastLine,
+            [switch] $NoNewline,
+            [Parameter(Mandatory=$false)] [AllowNull()] $Background = $null,
+            [Parameter(Mandatory=$false)] [AllowNull()] $Foreground = $null
+        )
+
+        $arguments = @{
+            Lines=$Lines;
+            UpdateLastLine=([bool] $PSBoundParameters['UpdateLastLine']);
+            NoNewline=([bool] $PSBoundParameters['NoNewline']);
+            Background=(EnsureColor $Background);
+            Foreground=(EnsureColor $Foreground);
+        }
+
+        if ($logView.InvokeRequired) {
+            $EventArgs = MakeEvent @{
+                Arguments=$arguments
+            }
+            $null = $logView.Invoke($WritePipLogDelegate, ($logView, $EventArgs))
+        } else {
+            $null = & $FuncWriteLog @arguments
+        }
+    }.GetNewClosure()
+
+    ${function:global:ClearLog} = {
+        $logView.Clear()
+    }.GetNewClosure()
+
+    ${function:global:GetLogLength} = {
+        return $logView.TextLength
+    }.GetNewClosure()
 
     $logView.Add_LinkClicked({
         param($Sender, $EventArgs)
@@ -2719,15 +2739,15 @@ Function Generate-Form {
         }
         $row = $viewRow.DataBoundItem.Row
 
-        $global:logView.SelectAll()
-        $global:logView.SelectionBackColor = $global:logView.BackColor
+        $logView.SelectAll()
+        $logView.SelectionBackColor = $logView.BackColor
 
         if (Get-Member -inputobject $row -name "LogTo" -Membertype Properties) {
-            $global:logView.Select($row.LogFrom, $row.LogTo)
-            $global:logView.SelectionBackColor = [Drawing.Color]::Yellow
-            $global:logView.ScrollToCaret()
+            $logView.Select($row.LogFrom, $row.LogTo)
+            $logView.SelectionBackColor = [Drawing.Color]::Yellow
+            $logView.ScrollToCaret()
         }
-    }
+    }.GetNewClosure()
 
     $dataGridView.Add_CellMouseClick({ & $FuncHighlightLogFragment }.GetNewClosure())
     $dataGridView.Add_SelectionChanged({ & $FuncHighlightLogFragment }.GetNewClosure())
@@ -2739,20 +2759,22 @@ Function Generate-Form {
         }.GetNewClosure())
     $form.Add_Load({ $Script:formLoaded = $true })
 
+    $lastWidgetTop = $Script:lastWidgetTop
+
     $FuncResizeForm = {
         $dataGridView.Width = $form.ClientSize.Width - 15
         $dataGridView.Height = $form.ClientSize.Height / 2
         $logView.Top = $dataGridView.Bottom + 15
         $logView.Width = $form.ClientSize.Width - 15
         $logView.Height = $form.ClientSize.Height - $dataGridView.Bottom - $lastWidgetTop
-    }
+    }.GetNewClosure()
 
     $null = & $FuncResizeForm
     $form.Add_Resize({ & $FuncResizeForm }.GetNewClosure())
     $form.Add_Shown({
-        Write-PipLog "`n" 'Hold Shift and hover the rows to fetch the detailed package info form PyPi'
+        WriteLog "`n" 'Hold Shift and hover the rows to fetch the detailed package info form PyPi'
         $form.BringToFront()
-        })
+    })
 
     $FunctionalKeys = (1..12 | ForEach-Object { "F$_" })
 
@@ -2796,7 +2818,7 @@ Function Generate-Form {
     }.GetNewClosure())
 
     foreach ($arguments in $global:_WritePipLogBacklog) {
-        Write-PipLog @arguments
+        WriteLog @arguments
     }
     Remove-Variable -Scope Global _WritePipLogBacklog
 
@@ -2809,7 +2831,7 @@ Function Generate-FormEnvironmentVariables($interpreterRecord) {
     $Form.Text                       = "Environment Variables"
     $Form.TopMost                    = $false
     $Form.SizeGripStyle = [System.Windows.Forms.SizeGripStyle]::Hide
-    $Form.FormBorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    $Form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedSingle
     $Form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
     $Form.MinimizeBox = $false
     $Form.MaximizeBox = $false
@@ -3399,6 +3421,7 @@ class TextBoxNavigationHook {
 class ProcessWithPipedIO {
     hidden [System.Diagnostics.Process] $_process
     hidden [System.Threading.Tasks.TaskCompletionSource[int]] $_taskCompletionSource  # Keeps the exit code of a process
+    hidden [System.ComponentModel.BackgroundWorker] $_worker
 
     ProcessWithPipedIO($Command, $Arguments) {
         $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
@@ -3419,12 +3442,12 @@ class ProcessWithPipedIO {
 
         $OutputCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
             param($Sender, $EventArgs)
-            Write-PipLog "$($EventArgs.Data)" -Background LightBlue
+            WriteLog "$($EventArgs.Data)" -Background LightBlue
         })
 
         $ErrorCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
             param($Sender, $EventArgs)
-            Write-PipLog "$($EventArgs.Data)" -Background LightPink
+            WriteLog "$($EventArgs.Data)" -Background LightPink
         })
 
         $taskCompletionSource = [System.Threading.Tasks.TaskCompletionSource[int]]::new()
@@ -3464,6 +3487,20 @@ class ProcessWithPipedIO {
         return $this._taskCompletionSource.Task
     }
 
+    [System.Threading.Tasks.Task[int]] StartInBackground() {
+        $this._worker = [System.ComponentModel.BackgroundWorker]::new()
+        $this._worker.WorkerReportsProgress = $false
+        $this._worker.WorkerSupportsCancellation = $true
+
+        $self = $this
+        $this._worker.add_DoWork([System.ComponentModel.DoWorkEventHandler] {
+            $null = $self.Start()
+        }.GetNewClosure())
+
+        $this._worker.RunWorkerAsync()
+        return $this._taskCompletionSource.Task
+    }
+
     Kill() {
         $this._process.Kill()
     }
@@ -3488,7 +3525,7 @@ Function global:Show-DocView($packageName, $SetContent = $null, $Highlight = $nu
 
 Function Write-PipPackageCounter {
     $count = $dataModel.Rows.Count
-    Write-PipLog "Now $count packages in the list."
+    WriteLog "Now $count packages in the list."
 }
 
 Function Store-CheckedPipSearchResults() {
@@ -3510,7 +3547,7 @@ Function Store-CheckedPipSearchResults() {
 Function Get-PipSearchResults($request) {
     $pip_exe = Get-CurrentInterpreter 'PipExe' -Executable
     if (-not $pip_exe) {
-        Write-PipLog 'pip is not found!'
+        WriteLog 'pip is not found!'
         return 0
     }
 
@@ -3544,7 +3581,7 @@ Function Get-PipSearchResults($request) {
 Function Get-CondaSearchResults($request) {
     $conda_exe = Get-CurrentInterpreter 'CondaExe' -Executable
     if (-not $conda_exe) {
-        Write-PipLog 'conda is not found!'
+        WriteLog 'conda is not found!'
         return 0
     }
     $arch = Get-CurrentInterpreter 'Arch'
@@ -3577,7 +3614,7 @@ Function Get-CondaSearchResults($request) {
     }
 
     foreach ($channel in $channels) {
-        Write-PipLog "Searching on channel: $channel ... " -NoNewline
+        WriteLog "Searching on channel: $channel ... " -NoNewline
 
         $items = & $conda_exe search -c $channel --json $request | ConvertFrom-Json
 
@@ -3607,7 +3644,7 @@ Function Get-CondaSearchResults($request) {
             }
         }
 
-        Write-PipLog "$count packages."
+        WriteLog "$count packages."
         $totalCount += $count
     }
 
@@ -3723,26 +3760,26 @@ Function Get-SearchResults($request) {
 }
 
  Function Get-PythonPackages($outdatedOnly = $true) {
-    Write-PipLog
-    Write-PipLog 'Updating package list... '
+    WriteLog
+    WriteLog 'Updating package list... '
 
     $python_exe = Get-CurrentInterpreter 'PythonExe' -Executable
     $pip_exe = Get-CurrentInterpreter 'PipExe' -Executable
     $conda_exe = Get-CurrentInterpreter 'CondaExe' -Executable
 
     if ($python_exe) {
-        Write-PipLog (& $python_exe --version 2>&1)
+        WriteLog (& $python_exe --version 2>&1)
     } else {
-        Write-PipLog 'Python is not found!'
+        WriteLog 'Python is not found!'
     }
 
     if ($pip_exe) {
-        Write-PipLog (& $pip_exe --version 2>&1)
+        WriteLog (& $pip_exe --version 2>&1)
     } else {
-        Write-PipLog 'pip is not found!'
+        WriteLog 'pip is not found!'
     }
 
-    Write-PipLog
+    WriteLog
 
     Clear-Rows
     Init-PackageUpdateColumns $dataModel
@@ -3831,12 +3868,12 @@ Function Get-SearchResults($request) {
     $Script:outdatedOnly = $outdatedOnly
     Highlight-PythonPackages
 
-    Write-PipLog 'Package list updated.'
-    Write-PipLog 'Double click or [Ctrl+Enter] a table row to open PyPi, Anaconda.com or github.com in browser'
+    WriteLog 'Package list updated.'
+    WriteLog 'Double click or [Ctrl+Enter] a table row to open PyPi, Anaconda.com or github.com in browser'
 
     $count = $dataModel.Rows.Count
-    Write-PipLog "Total $count packages: $builtinCount builtin, $pipCount pip, $condaCount conda, $otherCount other"
-    Write-PipLog
+    WriteLog "Total $count packages: $builtinCount builtin, $pipCount pip, $condaCount conda, $otherCount other"
+    WriteLog
 }
 
 Function Select-VisiblePipPackages($value) {
@@ -3917,11 +3954,11 @@ Function Set-SelectedRow($selectedRow) {
 }
 
 Function Check-PipDependencies {
-    Write-PipLog 'Checking dependencies...'
+    WriteLog 'Checking dependencies...'
 
     $pip_exe = Get-CurrentInterpreter 'PipExe' -Executable
     if (-not $pip_exe) {
-        Write-PipLog 'pip is not found!'
+        WriteLog 'pip is not found!'
         return
     }
 
@@ -3929,11 +3966,11 @@ Function Check-PipDependencies {
     $result = $result -join "`n"
 
     if ($result -match 'No broken requirements found') {
-        Write-PipLog "OK" -Background ([Drawing.Color]::LightGreen)
-        Write-PipLog $result
+        WriteLog "OK" -Background ([Drawing.Color]::LightGreen)
+        WriteLog $result
     } else {
-        Write-PipLog "NOT OK" -Background ([Drawing.Color]::LightSalmon)
-        Write-PipLog $result
+        WriteLog "NOT OK" -Background ([Drawing.Color]::LightSalmon)
+        WriteLog $result
     }
 }
 
@@ -3966,10 +4003,10 @@ Function global:Execute-PipAction {
                 Set-SelectedRow $dataModel.Rows[$i]
                 [System.Windows.Forms.Application]::DoEvents()
 
-                Write-PipLog ""
-                $logFrom = $global:logView.TextLength
+                WriteLog ""
+                $logFrom = GetLogLength
                 $dataModel.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $logFrom
-                Write-PipLog $action.Name ' ' $package.Package
+                WriteLog $action.Name ' ' $package.Package
 
                 $name = $package.Package
                 $version = if ($dataModel.Columns.Contains('Latest') -and
@@ -3988,7 +4025,7 @@ Function global:Execute-PipAction {
                                                       ([ref] $pluginHookError))
 
                     if ($pluginHookError) {
-                        Write-PipLog "Interrupted because of an error produced by plugin $($plugin.GetPluginName())"
+                        WriteLog "Interrupted because of an error produced by plugin $($plugin.GetPluginName())"
                         break
                     }
 
@@ -4006,8 +4043,8 @@ Function global:Execute-PipAction {
                     $result = ''
                 }
 
-                Write-PipLog $result
-                $logTo = $global:logView.TextLength - $logFrom
+                WriteLog $result
+                $logTo = (GetLogLength) - $logFrom
                 $dataModel.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
 
                 $dataModel.Columns['Status'].ReadOnly = $false
@@ -4035,15 +4072,15 @@ Function global:Execute-PipAction {
     }
 
     if (($tasksOkay -eq 0) -and ($tasksFailed -eq 0)) {
-        Write-PipLog 'Nothing is selected.'
+        WriteLog 'Nothing is selected.'
     } else {
-        Write-PipLog ''
-        Write-PipLog '----'
-        Write-PipLog "All tasks finished, $tasksOkay ok, $tasksFailed failed."
-        Write-PipLog 'Select a row to highlight the relevant log piece'
-        Write-PipLog 'Double click or [Ctrl+Enter] a table row to open PyPi, Anaconda.com or github.com in browser'
-        Write-PipLog '----'
-        Write-PipLog ''
+        WriteLog ''
+        WriteLog '----'
+        WriteLog "All tasks finished, $tasksOkay ok, $tasksFailed failed."
+        WriteLog 'Select a row to highlight the relevant log piece'
+        WriteLog 'Double click or [Ctrl+Enter] a table row to open PyPi, Anaconda.com or github.com in browser'
+        WriteLog '----'
+        WriteLog ''
     }
 }
 
@@ -4184,7 +4221,7 @@ Function Get-AsciiTree($name,
         }
     }
 
-    # Write-PipLog "$name children: '$children' $($children.Length) sibl=$hasSibling"
+    # WriteLog "$name children: '$children' $($children.Length) sibl=$hasSibling"
     $hasChildren = $children.Length -gt 0
     $isLooped = $loopTracking.Contains($name)
 
@@ -4375,7 +4412,7 @@ Function Load-Plugins() {
     $PipsRoot = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('.\')
     $plugins = Get-ChildItem "$PipsRoot\external-repository-providers" -Directory -Depth 0
     foreach ($plugin in $plugins) {
-        Write-PipLog "Loading plugin $($plugin.Name)"
+        WriteLog "Loading plugin $($plugin.Name)"
         Import-Module "$($plugin.FullName)"
         $instance = & (Get-Module $plugin.Name).ExportedFunctions.NewPluginInstance
         $pluginConfigPath = "$($env:LOCALAPPDATA)\pips\plugins\$($instance.GetPluginName())"
@@ -4390,7 +4427,7 @@ Function Load-Plugins() {
             }.GetNewClosure(),
             ${function:Download-Data},
             {
-                Write-PipLog "$($instance.GetPluginName()) : $args" -Background ([Drawing.Color]::LightBlue)
+                WriteLog "$($instance.GetPluginName()) : $args" -Background ([Drawing.Color]::LightBlue)
             }.GetNewClosure(),
             ${function:Exists-File},
             ${function:Serialize},
@@ -4401,7 +4438,7 @@ Function Load-Plugins() {
             ${function:Prepare-PackageAutoCompletion})
         [void] $global:plugins.Add($instance)
         [void] $global:packageTypes.AddRange($instance.GetSupportedPackageTypes())
-        Write-PipLog $instance.GetDescription()
+        WriteLog $instance.GetDescription()
     }
 }
 
@@ -4425,7 +4462,8 @@ Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
            [System.Management.Automation.DriveNotFoundException],
            [System.Management.Automation.CommandNotFoundException],
            [System.NotSupportedException],
-           [System.ArgumentException]
+           [System.ArgumentException],
+           [System.Management.Automation.PSNotSupportedException]
        )
 
        $exceptionsWithScriptBacktrace = @(
