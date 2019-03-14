@@ -3442,11 +3442,6 @@ class ProcessWithPipedIO {
     }
 
     [System.Threading.Tasks.Task[int]] Start() {
-        trap [System.Management.Automation.PipelineClosedException] {
-            Write-PipLog 'Task pipe has been closed.' -Background DarkRed
-            $this._taskCompletionSource.SetException($_.Exception)
-        }
-
         try {
             $started = $this._process.Start()
 
@@ -3687,6 +3682,7 @@ Function global:Get-GithubRepoTags($gitLinkInfo, $ContinueWith = $null) {
                 return
             }
         }.GetNewClosure()
+        return
     }
 
     $json = Download-String $url
