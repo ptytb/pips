@@ -276,7 +276,10 @@ Function global:Get-PipsSetting($name, [switch] $AsArgs, [switch] $First) {
 
 Function global:Exists-File($path, [string] $Mask) {
     if ($Mask) {
-        $candidates = Get-ChildItem -Path $path -Filter $Mask -Depth 0 -File | Select-Object -First 1
+        $candidates = $null
+        try {
+            $candidates = Get-ChildItem -Path $path -Filter $Mask -Depth 0 -File -ErrorAction Stop | Select-Object -First 1
+        } catch { }
         return ($candidates -ne $null)
     }
     return [System.IO.File]::Exists($path)
