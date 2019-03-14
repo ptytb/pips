@@ -43,6 +43,17 @@ Function global:HasUpperChars([string] $text) {
         { $HasUpperChars }
 }
 
+Function global:Sort-Versions {
+    param($MaybeVersions, [switch] $Descending)
+    [version] $none = [version]::new()
+    [version] $version = [version]::new()
+    $predicate = {
+        $success = [version]::TryParse(($_ -replace '[^\d.]',''), [ref] $version)
+        if ($success) { [version] $version } else { $none }
+    }.GetNewClosure()
+    return $MaybeVersions | Sort-Object -Property @{ Expression=$predicate; Descending=$Descending } @args
+}
+
 
 $global:WM_USER = [int] 0x0400
 $global:WM_SETREDRAW = [int] 0x0B
@@ -443,7 +454,7 @@ Function global:Download-String($url, $ContinueWith = $null) {
             }.GetNewClosure())
             $wc.Add_DownloadStringCompleted($delegate)
 
-            $result = $wc.DownloadStringAsync((New-Object System.Uri ($URL)))
+            $result = $wc.DownloadStringAsync($url)
         } else {
             $result = $wc.DownloadString($url)
         }
@@ -1315,38 +1326,29 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
 
             ([InstallAutoCompleteMode]::Version) {
                 $packageName = $text -replace '==.*',''
-                $completions_format = "{0}=={1}"
+                $completions_format = '{0}=={1}'
 
-                if (-not $global:PyPiPackageJsonCache.ContainsKey($packageName)) {
-                    $download = New-RunspacedDelegate ([Func[System.Collections.ArrayList]] {
-                        $null = Download-PythonPackageDetails $packageName
-                        $releases = $global:PyPiPackageJsonCache[$packageName].'releases' | Get-Member -Type Properties | ForEach-Object { $_.Name }
-                        return ,$releases
-                    }.GetNewClosure())
-                    $task = [System.Threading.Tasks.Task[System.Collections.ArrayList]]::new($download);
+                # if (-not $global:PyPiPackBeginageJsonCache.ContainsKey($packageName)) {
+                #     $null = Download-PythonPackageDetails $packageName
+                #     $releases = $global:PyPiPackageJsonCache[$packageName].'releases' | Get-Member -Type Properties | ForEach-Object { $_.Name }
+                #     return ,$releases
+                # }
 
-                    $continuation = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task[System.Collections.ArrayList]]] {
-                        param([System.Threading.Tasks.Task] $task)
-                        $releases = $task.Result
-                        if ($releases -and $releases.Count) {
-                            [EventArgs] $EventArgs = [EventArgs]::Empty
-                            Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'PackageName' -Value $packageName -Force
-                            Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'CompletionsFormat' -Value $completions_format -Force
-                            Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'Items' -Value $releases -Force
-                            $null = $cb.Invoke($FuncAfterDownload, ($cb, $EventArgs))
-                        }
-                    }.GetNewClosure())
+                $jsonUrl = "https://pypi.python.org/pypi/$packageName/json"
+                $null = Download-String $jsonUrl -ContinueWith {
+                    param($json)
 
-                    $task.ContinueWith($continuation)
-                    $task.Start()
-                } else {
-                    $releases = $global:PyPiPackageJsonCache[$packageName].'releases' | Get-Member -Type Properties | ForEach-Object { $_.Name }
-                    [EventArgs] $EventArgs = [EventArgs]::Empty
-                    Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'PackageName' -Value $packageName -Force
-                    Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'CompletionsFormat' -Value $completions_format -Force
-                    Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name 'Items' -Value $releases -Force
-                    $null = $cb.Invoke($FuncAfterDownload, ($cb, $EventArgs))
-                }
+                    $info = ConvertFrom-Json -InputObject $json
+                    $releases = @($info.'releases'.PSObject.Properties | Select-Object -ExpandProperty Name)
+                    # $releases = Sort-Versions $releases
+
+                    $EventArgs = MakeEvent @{
+                        PackageName=$packageName;
+                        CompletionsFormat=$completions_format;
+                        Items=$releases;
+                    }
+                    $null = $cb.BeginInvoke($FuncAfterDownload, ($cb, $EventArgs))
+                }.GetNewClosure()
             }
 
             ([InstallAutoCompleteMode]::GitTag) {
@@ -4418,7 +4420,15 @@ Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
            [System.Management.Automation.ItemNotFoundException],
            [System.Management.Automation.ValidationMetadataException],
            [System.Management.Automation.DriveNotFoundException],
-           [System.Management.Automation.CommandNotFoundException]
+           [System.Management.Automation.CommandNotFoundException],
+           [System.NotSupportedException],
+           [System.ArgumentException]
+       )
+
+       $exceptionsWithScriptBacktrace = @(
+           [System.Management.Automation.RuntimeException],
+           [System.Management.Automation.PSInvalidCastException],
+           [System.Management.Automation.PipelineStoppedException]
        )
 
        $appExceptionHandler = {
@@ -4440,8 +4450,8 @@ Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
             Write-Host $Exception.Message @color
             Write-Host ('-' * 70) @color
 
-            if (($Exception -is [System.Management.Automation.RuntimeException]) -or
-                ($Exception.GetType().BaseType -eq [System.Management.Automation.RuntimeException])) {
+            if (($Exception.GetType() -in $exceptionsWithScriptBacktrace) -or
+                ($Exception.GetType().BaseType -in $exceptionsWithScriptBacktrace)) {
                 $ScriptStackTrace = $Exception.ErrorRecord.ScriptStackTrace
                 if (-not [string]::IsNullOrWhiteSpace($ScriptStackTrace)) {
                     Write-Host $ScriptStackTrace @color
