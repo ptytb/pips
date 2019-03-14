@@ -557,7 +557,7 @@ Function NewLine-TopLayout() {
 Function Add-Button ($name, $handler) {
     $button = New-Object Windows.Forms.Button
     $button.Text = $name
-    $button.Add_Click({ [void] $handler.Invoke( @($Script:button) ) }.GetNewClosure())
+    $button.Add_Click([System.EventHandler] $handler)
     Add-TopWidget $button
     return $button
 }
@@ -597,8 +597,8 @@ Function Add-ButtonMenu ($text, $tools, $onclick) {
         $menuStrip.add_ItemClicked({
             foreach ($tool in $tools) {
                 if ($tool.MenuText -eq $_.ClickedItem) {
-                    $Script:menuStrip.Hide()
-                    [void] $Script:onclick.Invoke( @($tool) )
+                    $menuStrip.Hide()
+                    [void] $onclick.Invoke( @($tool) )
                 }
             }
         }.GetNewClosure())
@@ -607,7 +607,7 @@ Function Add-ButtonMenu ($text, $tools, $onclick) {
         $menuStrip.Show($Script:form.PointToScreen($point))
     }.GetNewClosure()
 
-    $button = Add-Button $text ($handler)
+    $button = Add-Button $text $handler
     $button.ImageAlign = [System.Drawing.ContentAlignment]::MiddleRight
     $button.Image = Convert-Base64ToBMP $iconBase64_DownArrow
 }
@@ -1204,8 +1204,8 @@ Function global:Prepare-PackageAutoCompletion {
         [void] $autoCompleteIndex.Add($item)
     }
     # only needed bktree here to load package names
-    Remove-Variable bktree
-    Remove-Module bktree
+    Remove-Variable bktree -ErrorAction SilentlyContinue
+    Remove-Module bktree -ErrorAction SilentlyContinue
 
     foreach ($plugin in $global:plugins) {
         [void] $autoCompleteIndex.AddRange($plugin.GetAllPackageNames())
@@ -2575,6 +2575,7 @@ Function Generate-Form {
             }
         }
     }.GetNewClosure())
+
     $form.add_KeyDown({
         if ($_.KeyCode -eq 'Escape') {
             $dataGridToolTip.Hide($dataGridView)
@@ -2601,6 +2602,7 @@ Function Generate-Form {
             $_.Handled = $false
         }
     }.GetNewClosure())
+
     Init-PackageGridViewProperties
 
     $dataModel = New-Object System.Data.DataTable
@@ -2747,8 +2749,10 @@ Function Generate-Form {
         $form.BringToFront()
         })
 
+    $FunctionalKeys = (1..12 | ForEach-Object { "F$_" })
+
     $form.add_KeyDown({
-        if ($_.KeyCode -in (1..12 | ForEach-Object { "F$_" })) {  # Handle F1..F12 functional keys
+        if ($_.KeyCode -in $FunctionalKeys) {  # Handle F1..F12 functional keys
             $n = [int]("$($_.KeyCode)" -replace 'F','') - 1
             if ($n -lt $Script:actionListComboBox.DataSource.Count) {
                 $Script:actionListComboBox.SelectedIndex = $n
@@ -3438,8 +3442,17 @@ class ProcessWithPipedIO {
     }
 
     [System.Threading.Tasks.Task[int]] Start() {
+        trap [System.Management.Automation.PipelineClosedException] {
+            Write-PipLog 'Task pipe has been closed.' -Background DarkRed
+            $this._taskCompletionSource.SetException($_.Exception)
+        }
+
         try {
-            $null = $this._process.Start()
+            $started = $this._process.Start()
+
+            if (-not $started) {
+                throw [Exception]::new("Failed to start process $($this._process.StartInfo.FileName)")
+            }
 
             $this._process.BeginOutputReadLine()
             $this._process.BeginErrorReadLine()
