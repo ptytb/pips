@@ -3492,9 +3492,6 @@ class ProcessWithPipedIO {
     hidden [System.Windows.Forms.Timer] $_timer
 
     ProcessWithPipedIO($Command, $Arguments) {
-        $this._processOutput = [System.Collections.Generic.List[string]]::new()
-        $this._processError = [System.Collections.Generic.List[string]]::new()
-
         $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
 
         $startInfo.FileName = $Command
@@ -3527,11 +3524,6 @@ class ProcessWithPipedIO {
 
         $ExitedCallback = New-RunspacedDelegate ([EventHandler] {
             param($Sender, $EventArgs)
-            if ($self._timer) {
-                $self._timer.Stop()
-                $self.FlushBuffersToLog()
-                $self._timer = $null
-            }
             $taskCompletionSource.SetResult($process.ExitCode)
         }.GetNewClosure())
 
@@ -3566,15 +3558,28 @@ class ProcessWithPipedIO {
     }
 
     [System.Threading.Tasks.Task[int]] StartWithLogging([bool] $LogOutput, [bool] $LogErrors) {
+        if ($LogOutput) {
+            $this._processOutput = [System.Collections.Generic.List[string]]::new()
+        }
+        if ($LogErrors) {
+            $this._processError = [System.Collections.Generic.List[string]]::new()
+        }
+
         $null = $this.Start()
 
         $self = $this
         $delegate = ([EventHandler] {
-            $self.FlushBuffersToLog()
+            param($Sender)
+            $count = $self.FlushBuffersToLog()
+
+            if ($self._process.HasExited -and ($count -eq 0)) {
+                $Sender.Stop()
+                $self._timer = $null
+            }
         }.GetNewClosure())
 
         $this._timer = [System.Windows.Forms.Timer]::new()
-        $this._timer.Interval = 1
+        $this._timer.Interval = 25
         $this._timer.add_Tick($delegate)
         $this._timer.Start()
 
@@ -3585,17 +3590,23 @@ class ProcessWithPipedIO {
         $this._process.Kill()
     }
 
-    hidden _FlushBufferToLog($container, $color) {
-        if ($container.Count -gt 0) {
-            $lines = $container.ToArray() -join [Environment]::NewLine
-            $container.Clear()
-            WriteLog $lines -Background $color
+    hidden [int] _FlushContainerToLog($container, $color) {
+        $count = 0
+        if ($container) {
+            $count = $container.Count
+            if ($count -gt 0) {
+                $lines = $container.ToArray() -join [Environment]::NewLine
+                $container.Clear()
+                WriteLog $lines -Background $color
+            }
         }
+        return $count
     }
 
-    FlushBuffersToLog () {
-        $this._FlushBufferToLog($this._processOutput, 'LightBlue')
-        $this._FlushBufferToLog($this._processError, 'LightSalmon')
+    [int] FlushBuffersToLog () {
+        $outLines = $this._FlushContainerToLog($this._processOutput, 'LightBlue')
+        $errLines = $this._FlushContainerToLog($this._processError, 'LightSalmon')
+        return $outLines + $errLines
     }
 }
 
