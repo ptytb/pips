@@ -77,6 +77,32 @@ $API = Add-Type -MemberDefinition $MemberDefinition -Name 'WinAPI_SendMessage' -
 ${global:SendMessage} = $API::SendMessage
 
 
+$null = Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+public class RichTextBoxEx : System.Windows.Forms.RichTextBox
+{
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
+    static extern IntPtr LoadLibrary(string lpFileName);
+
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            CreateParams prams = base.CreateParams;
+            if (LoadLibrary("msftedit.dll") != IntPtr.Zero)
+            {
+                prams.ClassName = "RICHEDIT50W";
+            }
+            return prams;
+        }
+    }
+}
+'@ -ReferencedAssemblies 'System.Windows.Forms.dll'
+$global:RichTextBox_t = [RichTextBoxEx]
+
+
 $pips_pipe_instance = [System.IO.Directory]::GetFiles("\\.\\pipe\\") | Where-Object { $_ -match 'pips_spelling_server'}
 if ($pips_pipe_instance) {
     [System.Windows.Forms.MessageBox]::Show(
@@ -2596,7 +2622,7 @@ Function Generate-Form {
 
     $form.Controls.Add($dataGridView)
 
-    $logView = New-Object System.Windows.Forms.RichTextBox
+    $logView = $global:RichTextBox_t::new()
     $logView.Location = New-Object Drawing.Point 7,520
     $logView.Size = New-Object Drawing.Point 800,270
     $logView.ReadOnly = $true
@@ -2607,6 +2633,9 @@ Function Generate-Form {
         param($Sender)
         $null = [SearchDialogHook]::new($Sender)
         $null = [TextBoxNavigationHook]::new($Sender)
+
+        # $EM_SETEDITSTYLEEX = $WM_USER + 275
+        # $SendMessage.Invoke($Sender.Handle, $EM_SETEDITSTYLEEX, 0, 0);
     })
 
     $form.Controls.Add($logView)
@@ -3086,7 +3115,7 @@ class DocView {
 
         $this.formDoc.Icon = $Script:form.Icon
 
-        $this.docView = New-Object System.Windows.Forms.RichTextBox
+        $this.docView = $global:RichTextBox_t::new()
         $this.docView.Location = New-Object Drawing.Point 7,7
         $this.docView.Size = New-Object Drawing.Point 800,810
         $this.docView.ReadOnly = $true
@@ -3425,6 +3454,8 @@ class ProcessWithPipedIO {
     hidden [System.Diagnostics.Process] $_process
     hidden [System.Threading.Tasks.TaskCompletionSource[int]] $_taskCompletionSource  # Keeps the exit code of a process
     hidden [System.ComponentModel.BackgroundWorker] $_worker
+    hidden [System.Collections.Generic.List[string]] $_processOutput
+    hidden [System.Collections.Generic.List[string]] $_processError
 
     ProcessWithPipedIO($Command, $Arguments) {
         $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
@@ -3443,15 +3474,17 @@ class ProcessWithPipedIO {
         $process.StartInfo = $startInfo
         $process.EnableRaisingEvents = $true
 
+        $self = $this
+
         $OutputCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
             param($Sender, $EventArgs)
-            WriteLog "$($EventArgs.Data)" -Background LightBlue
-        })
+            $null = $self._processOutput.Add($EventArgs.Data)
+        }.GetNewClosure())
 
         $ErrorCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
             param($Sender, $EventArgs)
-            WriteLog "$($EventArgs.Data)" -Background LightPink
-        })
+            $null = $self._processError.Add($EventArgs.Data)
+        }.GetNewClosure())
 
         $taskCompletionSource = [System.Threading.Tasks.TaskCompletionSource[int]]::new()
 
@@ -3498,10 +3531,15 @@ class ProcessWithPipedIO {
         $self = $this
         $delegate = New-RunspacedDelegate ([System.ComponentModel.DoWorkEventHandler] {
             $null = $self.Start()
+
+            while ($true) {}
+            WriteLog "$($EventArgs.Data)" -Background LightBlue
+            WriteLog "$($EventArgs.Data)" -Background LightPink
+
         }.GetNewClosure())
         $this._worker.add_DoWork($delegate)
 
-        $this._worker.RunWorkerAsync()
+        # $this._worker.RunWorkerAsync()
         return $this._taskCompletionSource.Task
     }
 
