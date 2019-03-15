@@ -88,6 +88,24 @@ Function global:Recode($src, $dst, $text, [switch] $BOM, [switch] $AsBytes) {
     return ,$res
 }
 
+Function global:ApplyAsync([System.Collections.Generic.IEnumerable[object]] $Enumerable, $Function) {
+    $enumerator = $Enumerable.GetEnumerator()
+    $delegate = ([Action[System.Threading.Tasks.Task[Tuple[object, object, Action[object]]]]] {
+        param($task)
+        $enumerator, $delegate, $function = $task.Result.Item1, $task.Result.Item2, $task.Result.Item3
+        $gotOne = $enumerator.MoveNext()
+        if ($gotOne) {
+            $element = $enumerator.Current
+            $null = $task.ContinueWith((New-RunspacedDelegate($delegate)))
+            $null = $function.Invoke($element)
+        }
+    })
+    $coldStart = [System.Threading.Tasks.TaskCompletionSource[Tuple[object, object, Action[object]]]]::new();
+    $null = $coldStart.Task.ContinueWith((New-RunspacedDelegate($delegate)))
+    $coldStart.SetResult([Tuple[object, object, Action[object]]]::new($enumerator, $delegate, $Function))
+    return $coldStart.Task
+}
+
 
 $global:WM_USER = [int] 0x0400
 $global:WM_SETREDRAW = [int] 0x0B
@@ -2841,7 +2859,7 @@ Function Generate-Form {
 
     $FunctionalKeys = (1..12 | ForEach-Object { "F$_" })
 
-    $form.add_KeyDown({
+    $form.add_KeyUp({
         if ($_.KeyCode -in $FunctionalKeys) {  # Handle F1..F12 functional keys
             $n = [int]("$($_.KeyCode)" -replace 'F','') - 1
             if ($n -lt $Script:actionListComboBox.DataSource.Count) {
@@ -4092,99 +4110,43 @@ Function global:Select-PipAction($actionName) {
 Function global:Execute-PipAction {
     $action = $Script:actionsModel[$actionListComboBox.SelectedIndex]
 
-    if ($action.TakesList) {
-        $checkedList = New-Object System.Collections.ArrayList
-    }
-
     $tasksOkay = 0
     $tasksFailed = 0
 
+    $queue = [System.Collections.Generic.List[object]]::new()
+
     for ($i = 0; $i -lt $dataModel.Rows.Count; $i++) {
        if ($dataModel.Rows[$i].Select -eq $true) {
-            $package = $dataModel.Rows[$i]
-
-            if (-not $action.TakesList) {
-                Set-SelectedRow $dataModel.Rows[$i]
-                [System.Windows.Forms.Application]::DoEvents()
-
-                WriteLog ""
-                $logFrom = GetLogLength
-                $dataModel.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $logFrom
-                WriteLog $action.Name ' ' $package.Package
-
-                $name = $package.Package
-                $version = if ($dataModel.Columns.Contains('Latest') -and
-                    (-not ([string]::IsNullOrWhiteSpace($package.Latest)))) {
-                        $package.Latest
-                    } else {
-                        $package.Installed
-                    }
-                $type = $package.Type
-
-                $pluginHookError = $false
-                foreach ($plugin in $global:plugins) {
-                    $info = $plugin.PackageActionHook($name, $version, $type,
-                                                      (Get-CurrentInterpreter 'Version'),
-                                                      (Get-CurrentInterpreter 'Bits'),
-                                                      ([ref] $pluginHookError))
-
-                    if ($pluginHookError) {
-                        WriteLog "Interrupted because of an error produced by plugin $($plugin.GetPluginName())"
-                        break
-                    }
-
-                    if ($info) {
-                        $name = $info.Name
-                        $version = $info.Version
-                        $type = $info.Type
-                        break
-                    }
-                }
-
-                if (-not $pluginHookError) {
-                    $result = $action.Execute($name, $type, $version) -join "`n"
-                } else {
-                    $result = ''
-                }
-
-                WriteLog $result
-                $logTo = (GetLogLength) - $logFrom
-                $dataModel.Rows[$i] | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
-
-                $dataModel.Columns['Status'].ReadOnly = $false
-                if ($action.Validate([regex]::Escape($package.Package), $result)) {
-                    $dataModel.Rows[$i].Status = "OK"
-                    Set-Unchecked $i
-                    $tasksOkay++
-                } else {
-                    $dataModel.Rows[$i].Status = "Failed"
-                    $tasksFailed++
-                }
-                $dataModel.Columns['Status'].ReadOnly = $true
-
-                Set-SelectedRow $dataModel.Rows[$i]
-                [System.Windows.Forms.Application]::DoEvents()
-            } else {
-                $null = $checkedList.Add($package)
-            }
+            $null = $queue.Add($dataModel.Rows[$i])
        }
     }
 
-    if ($action.TakesList) {
-        $null = $action.Execute($checkedList)
-        return
-    }
+    $reportBatchResults = [Action[System.Threading.Tasks.Task]] {
+        if (($tasksOkay -eq 0) -and ($tasksFailed -eq 0)) {
+            WriteLog 'Nothing is selected.' -Background LightSalmon
+        } else {
+            WriteLog ''
+            WriteLog '----'
+            WriteLog "All tasks finished, $tasksOkay ok, $tasksFailed failed." -Background LightGreen
+            WriteLog 'Select a row to highlight the relevant log piece'
+            WriteLog 'Double click or [Ctrl+Enter] a table row to open PyPi, Anaconda.com or github.com in browser'
+            WriteLog '----'
+            WriteLog ''
+        }
+    }.GetNewClosure()
 
-    if (($tasksOkay -eq 0) -and ($tasksFailed -eq 0)) {
-        WriteLog 'Nothing is selected.'
+    if ($action.TakesList) {
+        $null = $action.Execute($queue.ToArray())
+        return
     } else {
-        WriteLog ''
-        WriteLog '----'
-        WriteLog "All tasks finished, $tasksOkay ok, $tasksFailed failed."
-        WriteLog 'Select a row to highlight the relevant log piece'
-        WriteLog 'Double click or [Ctrl+Enter] a table row to open PyPi, Anaconda.com or github.com in browser'
-        WriteLog '----'
-        WriteLog ''
+        $items = $queue.ToArray()
+        [System.GC]::KeepAlive($items)
+        $task = ApplyAsync $items ({
+            param($dataRow)
+            WriteLog $dataRow.Package $dataRow.Installed $dataRow.Type
+        })
+        [System.GC]::KeepAlive($task)
+        $task.ContinueWith((New-RunspacedDelegate($reportBatchResults)))
     }
 }
 
