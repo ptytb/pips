@@ -2378,8 +2378,8 @@ Some packages may generate garbage or show windows, don't panic.
             Persistent=$true;
             MenuText = "Test async process";
             Code = {
-                $process = [ProcessWithPipedIO]::new('ipconfig', @('/all'))
-                $task = $process.StartInBackground()
+                $process = [ProcessWithPipedIO]::new('cat', @('D:\work\pyfmt.txt'))
+                $task = $process.StartWithLogging($true, $true)
                 $continuation = New-RunspacedDelegate([Action[System.Threading.Tasks.Task[int]]] {
                     param([System.Threading.Tasks.Task[int]] $task)
                     if ($task.IsCompleted -and (-not $task.IsFaulted)) {
@@ -3487,11 +3487,14 @@ class TextBoxNavigationHook {
 class ProcessWithPipedIO {
     hidden [System.Diagnostics.Process] $_process
     hidden [System.Threading.Tasks.TaskCompletionSource[int]] $_taskCompletionSource  # Keeps the exit code of a process
-    hidden [System.ComponentModel.BackgroundWorker] $_worker
     hidden [System.Collections.Generic.List[string]] $_processOutput
     hidden [System.Collections.Generic.List[string]] $_processError
+    hidden [System.Windows.Forms.Timer] $_timer
 
     ProcessWithPipedIO($Command, $Arguments) {
+        $this._processOutput = [System.Collections.Generic.List[string]]::new()
+        $this._processError = [System.Collections.Generic.List[string]]::new()
+
         $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
 
         $startInfo.FileName = $Command
@@ -3524,6 +3527,11 @@ class ProcessWithPipedIO {
 
         $ExitedCallback = New-RunspacedDelegate ([EventHandler] {
             param($Sender, $EventArgs)
+            if ($self._timer) {
+                $self._timer.Stop()
+                $self.FlushBuffersToLog()
+                $self._timer = $null
+            }
             $taskCompletionSource.SetResult($process.ExitCode)
         }.GetNewClosure())
 
@@ -3557,32 +3565,37 @@ class ProcessWithPipedIO {
         return $this._taskCompletionSource.Task
     }
 
-    [System.Threading.Tasks.Task[int]] StartInBackground() {
-        $this._worker = [System.ComponentModel.BackgroundWorker]::new()
-        $this._worker.WorkerReportsProgress = $false
-        $this._worker.WorkerSupportsCancellation = $true
+    [System.Threading.Tasks.Task[int]] StartWithLogging([bool] $LogOutput, [bool] $LogErrors) {
+        $null = $this.Start()
 
         $self = $this
-        $delegate = New-RunspacedDelegate ([System.ComponentModel.DoWorkEventHandler] {
-            $null = $self.Start()
-
-            while ($true) {}
-            WriteLog "$($EventArgs.Data)" -Background LightBlue
-            WriteLog "$($EventArgs.Data)" -Background LightPink
-
+        $delegate = ([EventHandler] {
+            $self.FlushBuffersToLog()
         }.GetNewClosure())
-        $this._worker.add_DoWork($delegate)
 
-        # $this._worker.RunWorkerAsync()
+        $this._timer = [System.Windows.Forms.Timer]::new()
+        $this._timer.Interval = 1
+        $this._timer.add_Tick($delegate)
+        $this._timer.Start()
+
         return $this._taskCompletionSource.Task
     }
 
     Kill() {
-        if ($this._worker) {
-            $this._worker.CancelAsync()
-            $this._worker = $null
-        }
         $this._process.Kill()
+    }
+
+    hidden _FlushBufferToLog($container, $color) {
+        if ($container.Count -gt 0) {
+            $lines = $container.ToArray() -join [Environment]::NewLine
+            $container.Clear()
+            WriteLog $lines -Background $color
+        }
+    }
+
+    FlushBuffersToLog () {
+        $this._FlushBufferToLog($this._processOutput, 'LightBlue')
+        $this._FlushBufferToLog($this._processError, 'LightSalmon')
     }
 }
 
