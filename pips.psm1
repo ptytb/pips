@@ -2633,9 +2633,6 @@ Function Generate-Form {
         param($Sender)
         $null = [SearchDialogHook]::new($Sender)
         $null = [TextBoxNavigationHook]::new($Sender)
-
-        # $EM_SETEDITSTYLEEX = $WM_USER + 275
-        # $SendMessage.Invoke($Sender.Handle, $EM_SETEDITSTYLEEX, 0, 0);
     })
 
     $form.Controls.Add($logView)
