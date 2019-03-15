@@ -695,7 +695,7 @@ Function global:Get-PyDoc($request) {
         $output = & (Get-CurrentInterpreter 'PythonExe') -m pydoc ($requestNormalized).ToLower()
     }
 
-    $output = Recode ([Text.Encoding]::UTF8) ([Text.Encoding]::Unicode) "おください"
+    # $output = Recode ([Text.Encoding]::UTF8) ([Text.Encoding]::Unicode) $output
 
     return $output
 }
@@ -4524,8 +4524,8 @@ Function Load-Plugins() {
 }
 
 Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
-    $env:PYTHONIOENCODING="utf-8"
-    $env:LC_CTYPE="utf-8"
+    $env:PYTHONIOENCODING="UTF-16"
+    $env:LC_CTYPE="UTF-16"
 
     if (-not $Debug) {
        Set-StrictMode -Off
