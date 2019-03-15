@@ -54,6 +54,40 @@ Function global:Sort-Versions {
     return $MaybeVersions | Sort-Object -Property @{ Expression=$predicate; Descending=$Descending } @args
 }
 
+Function global:Recode($src, $dst, $text, [switch] $BOM, [switch] $AsBytes) {
+    if (-not $AsBytes) {
+        [byte[]] $bytes = $src.GetBytes($text)
+    } else {
+        [byte[]] $bytes = $text
+    }
+    [byte[]] $conv = [System.Text.Encoding]::Convert($src, $dst, $bytes)
+    if ($BOM) {
+        [System.Collections.Generic.List[byte]] $buffer = [System.Collections.Generic.List[byte]]::new()
+        $buffer.AddRange($conv)
+        switch ($dst)
+        {
+            ([System.Text.Encoding]::UTF8) {
+                # 0xEF,0xBB,0xBF
+                $buffer.Insert(0, 0xBF)
+                $buffer.Insert(0, 0xBB)
+                $buffer.Insert(0, 0xEF)
+            }
+            ([System.Text.Encoding]::Unicode) {
+                # 0xFE,0xFF big
+                # 0xFF,0xFE little
+                $buffer.Insert(0, 0xFE)
+                $buffer.Insert(0, 0xFF)
+            }
+        }
+        $conv = $buffer.ToArray()
+    }
+    if ($AsBytes) {
+        return ,$conv
+    }
+    [string] $res = $dst.GetString($conv, 0, $conv.Length)
+    return ,$res
+}
+
 
 $global:WM_USER = [int] 0x0400
 $global:WM_SETREDRAW = [int] 0x0B
@@ -660,6 +694,9 @@ Function global:Get-PyDoc($request) {
     if ("$output".StartsWith('No Python documentation found')) {
         $output = & (Get-CurrentInterpreter 'PythonExe') -m pydoc ($requestNormalized).ToLower()
     }
+
+    $output = Recode ([Text.Encoding]::UTF8) ([Text.Encoding]::Unicode) "おください"
+
     return $output
 }
 
@@ -4478,7 +4515,8 @@ Function Load-Plugins() {
             ${function:Get-PackageInfoFromWheelName},
             ${function:Test-CanInstallPackageTo},
             { param([string] $name) return $global:autoCompleteIndex.Contains($name) }.GetNewClosure(),
-            ${function:Prepare-PackageAutoCompletion})
+            ${function:Prepare-PackageAutoCompletion},
+            ${function:Recode})
         [void] $global:plugins.Add($instance)
         [void] $global:packageTypes.AddRange($instance.GetSupportedPackageTypes())
         WriteLog $instance.GetDescription()

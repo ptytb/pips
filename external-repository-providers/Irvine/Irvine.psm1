@@ -27,13 +27,14 @@ Provides searching, installing and local caching for packages published at Chris
     hidden [System.Func[string, string, System.Func[hashtable, bool]]] $TestCanInstallPackageTo
     hidden [System.Func[string, bool]] $TestPackageInIndex
     hidden [System.Action] $DeferredInit
+    hidden [System.Func[string, string]] $Recode
 
     Irvine() {
     }
 
     [void] Init($PluginConfigurationDirectory, $DownloadArchive, $DownloadString, $WriteLog,
         $FileExists, $Serialize, $Deserialize, $GetPackageInfoFromWheelName, $TestCanInstallPackageTo,
-        $TestPackageInIndex, $DeferredInit) {
+        $TestPackageInIndex, $DeferredInit, $Recode) {
 
         $this.PluginConfigurationDirectory = $PluginConfigurationDirectory
         $this.DownloadArchive = $DownloadArchive
@@ -46,6 +47,7 @@ Provides searching, installing and local caching for packages published at Chris
         $this.TestCanInstallPackageTo = $TestCanInstallPackageTo
         $this.TestPackageInIndex = $TestPackageInIndex
         $this.DeferredInit = $DeferredInit
+        $this.Recode = $Recode
 
         $this.LoadDatabase()
 
@@ -283,41 +285,6 @@ Index creaded: $($this.Database.databaseTimestamp)
     }
 
     hidden [string] TidyUpText([byte[]] $bytes) {
-
-        Function Recode($src, $dst, $text, [switch] $BOM, [switch] $AsBytes) {
-            if (-not $AsBytes) {
-                [byte[]] $bytes = $src.GetBytes($text)
-            } else {
-                [byte[]] $bytes = $text
-            }
-            [byte[]] $conv = [System.Text.Encoding]::Convert($src, $dst, $bytes)
-            if ($BOM) {
-                [System.Collections.Generic.List[byte]] $buffer = [System.Collections.Generic.List[byte]]::new()
-                $buffer.AddRange($conv)
-                switch ($dst)
-                {
-                    ([System.Text.Encoding]::UTF8) {
-                        # 0xEF,0xBB,0xBF
-                        $buffer.Insert(0, 0xBF)
-                        $buffer.Insert(0, 0xBB)
-                        $buffer.Insert(0, 0xEF)
-                    }
-                    ([System.Text.Encoding]::Unicode) {
-                        # 0xFE,0xFF big
-                        # 0xFF,0xFE little
-                        $buffer.Insert(0, 0xFE)
-                        $buffer.Insert(0, 0xFF)
-                    }
-                }
-                $conv = $buffer.ToArray()
-            }
-            if ($AsBytes) {
-                return ,$conv
-            }
-            [string] $res = $dst.GetString($conv, 0, $conv.Length)
-            return ,$res
-        }
-
         $text = [System.Text.Encoding]::UTF8.GetString($bytes)
 
         [regex]::Replace($text, '&[a-z]+;|&#x?\d+;', {
@@ -337,7 +304,7 @@ Index creaded: $($this.Database.databaseTimestamp)
         $CharHyphen = [char] 0x2011
         $text = $text.Replace($CharHyphen, '-')
 
-        $text = Recode ([System.Text.Encoding]::UTF8) ([System.Text.Encoding]::ASCII) $text
+        $text = $this.Recode.Invoke([System.Text.Encoding]::UTF8, [System.Text.Encoding]::ASCII, $text)
 
         return ,$text
     }
