@@ -88,21 +88,29 @@ Function global:Recode($src, $dst, $text, [switch] $BOM, [switch] $AsBytes) {
     return ,$res
 }
 
-Function global:ApplyAsync([System.Collections.Generic.IEnumerable[object]] $Enumerable, $Function) {
-    $enumerator = $Enumerable.GetEnumerator()
-    $delegate = ([Action[System.Threading.Tasks.Task[Tuple[object, object, Action[object]]]]] {
+Function global:ApplyAsync([object] $Queue, [Func[object, object]] $Function, [delegate] $Finally) {
+    $delegate = New-RunspacedDelegate([Action[System.Threading.Tasks.Task[Tuple[object, delegate, Func[object, object], delegate]]]] {
         param($task)
-        $enumerator, $delegate, $function = $task.Result.Item1, $task.Result.Item2, $task.Result.Item3
-        $gotOne = $enumerator.MoveNext()
-        if ($gotOne) {
-            $element = $enumerator.Current
-            $null = $task.ContinueWith((New-RunspacedDelegate($delegate)))
-            $null = $function.Invoke($element)
+        $queue, $delegate, $function = $task.Result.Item1, $task.Result.Item2, $task.Result.Item3
+        if ($queue.Count -gt 0) {
+            $element = $queue.Dequeue()
+
+            $taskFromFunction = $function.Invoke(@{
+                Element=$element;
+                ApplyAsyncContext=$task.Result;
+                ApplyAsyncContextType=($task.Result.GetType().ToString())
+            })
+
+            $null = $taskFromFunction.ContinueWith($delegate, [System.Threading.Tasks.TaskScheduler]::FromCurrentSynchronizationContext())
+        } else {
+            $finally = $task.Result.Item4
+            $null = $task.ContinueWith($finally, [System.Threading.Tasks.TaskScheduler]::FromCurrentSynchronizationContext())
         }
     })
-    $coldStart = [System.Threading.Tasks.TaskCompletionSource[Tuple[object, object, Action[object]]]]::new();
-    $null = $coldStart.Task.ContinueWith((New-RunspacedDelegate($delegate)))
-    $coldStart.SetResult([Tuple[object, object, Action[object]]]::new($enumerator, $delegate, $Function))
+
+    $coldStart = [System.Threading.Tasks.TaskCompletionSource[Tuple[object, delegate, Func[object, object], delegate]]]::new();
+    $null = $coldStart.Task.ContinueWith($delegate, [System.Threading.Tasks.TaskScheduler]::FromCurrentSynchronizationContext())
+    $coldStart.SetResult([Tuple[object, delegate, Func[object, object], delegate]]::new($Queue, $delegate, $Function, $Finally))
     return $coldStart.Task
 }
 
@@ -402,7 +410,7 @@ $lastWidgetTop = 5
 $widgetLineHeight = 23
 $dataGridView = $null
 $inputFilter = $null
-$actionsModel = $null
+$global:actionsModel = $null
 $isolatedCheckBox = $null
 $header = ("Select", "Package", "Installed", "Latest", "Type", "Status")
 $csv_header = ("Package", "Installed", "Latest", "Type", "Status")
@@ -992,7 +1000,7 @@ x = Package doesn't exist in index
         { param($pkg,$type); $actionCommands[$type].reverseDependencies.Invoke($pkg) } `
         { param($pkg,$out); $out -match '.*' } )
 
-    $Script:actionsModel = $actionsModel
+    $global:actionsModel = $actionsModel
 
     $actionListComboBox = New-Object System.Windows.Forms.ComboBox
     $actionListComboBox.DataSource = $actionsModel
@@ -2392,26 +2400,6 @@ Some packages may generate garbage or show windows, don't panic.
                 Open-LinkInBrowser "https://github.com/ptytb/pips/issues/new?title=$title"
             };
         };
-        @{
-            Persistent=$true;
-            MenuText = "Test async process";
-            Code = {
-                $process = [ProcessWithPipedIO]::new('cat', @('D:\work\pyfmt.txt'))
-                $task = $process.StartWithLogging($true, $true)
-                $continuation = New-RunspacedDelegate([Action[System.Threading.Tasks.Task[int]]] {
-                    param([System.Threading.Tasks.Task[int]] $task)
-                    if ($task.IsCompleted -and (-not $task.IsFaulted)) {
-                        $exitCode = $task.Result
-                        WriteLog "Exited with code $exitCode" -Background DarkGreen -Foreground White
-                    } else {
-                        $message = $task.Exception.InnerException
-                        WriteLog "Failed: $message" -Background DarkRed -Foreground White
-                    }
-                })
-                [System.GC]::KeepAlive($continuation)
-                [System.GC]::KeepAlive($task.ContinueWith($continuation))
-            };
-        };
     )
 
     $menuArray = [System.Collections.ArrayList]::new()
@@ -2683,126 +2671,132 @@ Function Generate-Form {
     $logView.ReadOnly = $true
     $logView.Multiline = $true
     $logView.Font = New-Object System.Drawing.Font("Consolas", 11)
+    $form.Controls.Add($logView)
 
     $logView.add_HandleCreated({
         param($Sender)
         $null = [SearchDialogHook]::new($Sender)
         $null = [TextBoxNavigationHook]::new($Sender)
-    })
 
-    $form.Controls.Add($logView)
+        $logView = $Sender
 
-    $FuncWriteLog = {
-        param(
-            [object[]] $Lines,
-            [bool] $UpdateLastLine,
-            [bool] $NoNewline,
-            [MaybeColor] $Background,
-            [MaybeColor] $Foreground
-        )
+        $FuncWriteLog = {
+            param(
+                [object[]] $Lines,
+                [bool] $UpdateLastLine,
+                [bool] $NoNewline,
+                [MaybeColor] $Background,
+                [MaybeColor] $Foreground
+            )
 
-        $null = $SendMessage.Invoke($logView.Handle, $WM_SETREDRAW, 0, 0)
-        $eventMask = $SendMessage.Invoke($logView.Handle, $EM_SETEVENTMASK, 0, 0)
+            $null = $SendMessage.Invoke($logView.Handle, $WM_SETREDRAW, 0, 0)
+            $eventMask = $SendMessage.Invoke($logView.Handle, $EM_SETEVENTMASK, 0, 0)
 
-        if ($UpdateLastLine) {
-            $text = ($Lines -join ' ') -replace "`r|`n",''
+            if ($UpdateLastLine) {
+                $text = ($Lines -join ' ') -replace "`r|`n",''
 
-            $cr = $lastLineCharIndex = $logView.Find("`r", 0, $logView.TextLength,
-                [System.Windows.Forms.RichTextBoxFinds]::Reverse)
+                $cr = $lastLineCharIndex = $logView.Find("`r", 0, $logView.TextLength,
+                    [System.Windows.Forms.RichTextBoxFinds]::Reverse)
 
-            $lf = $lastLineCharIndex = $logView.Find("`n", 0, $logView.TextLength,
-                [System.Windows.Forms.RichTextBoxFinds]::Reverse)
+                $lf = $lastLineCharIndex = $logView.Find("`n", 0, $logView.TextLength,
+                    [System.Windows.Forms.RichTextBoxFinds]::Reverse)
 
-            $lastLineCharIndex = [Math]::Max($cr, $lf)
+                $lastLineCharIndex = [Math]::Max($cr, $lf)
 
-            if ($lastLineCharIndex -eq -1) {
-                $lastLineCharIndex = 0
+                if ($lastLineCharIndex -eq -1) {
+                    $lastLineCharIndex = 0
+                } else {
+                    ++$lastLineCharIndex
+                }
+
+                $lastLineLength = $logView.TextLength - $lastLineCharIndex
+                $logView.Select($lastLineCharIndex, $lastLineLength);
+                $logView.SelectedText = $text
+
+                $logFrom = $lastLineCharIndex
+                $logTo = $logView.TextLength
             } else {
-                ++$lastLineCharIndex
+                $logFrom = $logView.TextLength
+
+                foreach ($obj in $Lines) {
+                    $logView.AppendText("$obj")
+                }
+
+                $logTo = $logView.TextLength
+
+                if (-not $NoNewline) {
+                    $logView.AppendText("`n")
+                }
             }
 
-            $lastLineLength = $logView.TextLength - $lastLineCharIndex
-            $logView.Select($lastLineCharIndex, $lastLineLength);
-            $logView.SelectedText = $text
-
-            $logFrom = $lastLineCharIndex
-            $logTo = $logView.TextLength
-        } else {
-            $logFrom = $logView.TextLength
-
-            foreach ($obj in $Lines) {
-                $logView.AppendText("$obj")
+            if (($Background -ne $null) -or ($Foreground -ne $null)) {
+                $logView.Select($logFrom, $logTo)
+                if ($Background -ne $null) {
+                    $logView.SelectionBackColor = $Background
+                }
+                if ($Foreground -ne $null) {
+                    $logView.SelectionColor = $Foreground
+                }
             }
 
-            $logTo = $logView.TextLength
+            $textLength = $logView.TextLength
+            $logView.Select($textLength, $textLength)
 
-            if (-not $NoNewline) {
-                $logView.AppendText("`n")
+            $null = $SendMessage.Invoke($logView.Handle, $WM_SETREDRAW, 1, 0)
+            $null = $SendMessage.Invoke($logView.Handle, $EM_SETEVENTMASK, 0, $eventMask)
+            $null = $SendMessage.Invoke($logView.Handle, $WM_VSCROLL, $SB_PAGEBOTTOM, 0)
+        }.GetNewClosure()
+
+        $WritePipLogDelegate = [EventHandler] {
+            param($Sender, $EventArgs)
+            $Arguments = $EventArgs.Arguments
+            $null = & $FuncWriteLog @Arguments
+        }.GetNewClosure()
+
+        ${function:global:WriteLog} = {
+            [CmdletBinding()]
+            param(
+                [Parameter(ValueFromRemainingArguments=$true, Position=1)]
+                [AllowEmptyCollection()]
+                [AllowNull()]
+                [object[]] $Lines = @(),
+                [switch] $UpdateLastLine,
+                [switch] $NoNewline,
+                [Parameter(Mandatory=$false)] [AllowNull()] $Background = $null,
+                [Parameter(Mandatory=$false)] [AllowNull()] $Foreground = $null
+            )
+
+            $arguments = @{
+                Lines=$Lines;
+                UpdateLastLine=([bool] $PSBoundParameters['UpdateLastLine']);
+                NoNewline=([bool] $PSBoundParameters['NoNewline']);
+                Background=(EnsureColor $Background);
+                Foreground=(EnsureColor $Foreground);
             }
+
+            if ($logView.InvokeRequired) {
+                $EventArgs = MakeEvent @{
+                    Arguments=$arguments
+                }
+                $null = $logView.Invoke($WritePipLogDelegate, ($logView, $EventArgs))
+            } else {
+                $null = & $FuncWriteLog @arguments
+            }
+        }.GetNewClosure()
+
+        ${function:global:ClearLog} = {
+            $logView.Clear()
+        }.GetNewClosure()
+
+        ${function:global:GetLogLength} = {
+            return $logView.TextLength
+        }.GetNewClosure()
+
+        foreach ($arguments in $global:_WritePipLogBacklog) {
+            WriteLog @arguments
         }
-
-        if (($Background -ne $null) -or ($Foreground -ne $null)) {
-            $logView.Select($logFrom, $logTo)
-            if ($Background -ne $null) {
-                $logView.SelectionBackColor = $Background
-            }
-            if ($Foreground -ne $null) {
-                $logView.SelectionColor = $Foreground
-            }
-        }
-
-        $textLength = $logView.TextLength
-        $logView.Select($textLength, $textLength)
-
-        $null = $SendMessage.Invoke($logView.Handle, $WM_SETREDRAW, 1, 0)
-        $null = $SendMessage.Invoke($logView.Handle, $EM_SETEVENTMASK, 0, $eventMask)
-        $null = $SendMessage.Invoke($logView.Handle, $WM_VSCROLL, $SB_PAGEBOTTOM, 0)
-    }.GetNewClosure()
-
-    $WritePipLogDelegate = [EventHandler] {
-        param($Sender, $EventArgs)
-        $Arguments = $EventArgs.Arguments
-        $null = & $FuncWriteLog @Arguments
-    }.GetNewClosure()
-
-    ${function:global:WriteLog} = {
-        [CmdletBinding()]
-        param(
-            [Parameter(ValueFromRemainingArguments=$true, Position=1)]
-            [AllowEmptyCollection()]
-            [AllowNull()]
-            [object[]] $Lines = @(),
-            [switch] $UpdateLastLine,
-            [switch] $NoNewline,
-            [Parameter(Mandatory=$false)] [AllowNull()] $Background = $null,
-            [Parameter(Mandatory=$false)] [AllowNull()] $Foreground = $null
-        )
-
-        $arguments = @{
-            Lines=$Lines;
-            UpdateLastLine=([bool] $PSBoundParameters['UpdateLastLine']);
-            NoNewline=([bool] $PSBoundParameters['NoNewline']);
-            Background=(EnsureColor $Background);
-            Foreground=(EnsureColor $Foreground);
-        }
-
-        if ($logView.InvokeRequired) {
-            $EventArgs = MakeEvent @{
-                Arguments=$arguments
-            }
-            $null = $logView.Invoke($WritePipLogDelegate, ($logView, $EventArgs))
-        } else {
-            $null = & $FuncWriteLog @arguments
-        }
-    }.GetNewClosure()
-
-    ${function:global:ClearLog} = {
-        $logView.Clear()
-    }.GetNewClosure()
-
-    ${function:global:GetLogLength} = {
-        return $logView.TextLength
-    }.GetNewClosure()
+        Remove-Variable -Scope Global _WritePipLogBacklog
+    })
 
     $logView.Add_LinkClicked({
         param($Sender, $EventArgs)
@@ -2897,11 +2891,6 @@ Function Generate-Form {
             }
         }
     }.GetNewClosure())
-
-    foreach ($arguments in $global:_WritePipLogBacklog) {
-        WriteLog @arguments
-    }
-    Remove-Variable -Scope Global _WritePipLogBacklog
 
     return ,$form
 }
@@ -4098,7 +4087,7 @@ Function Check-PipDependencies {
 
 Function global:Select-PipAction($actionName) {
     $n = 0
-    foreach ($item in $actionsModel) {
+    foreach ($item in $global:actionsModel) {
         if ($item.Name -eq $actionName) {
             $actionListComboBox.SelectedIndex = $n
             return
@@ -4108,20 +4097,20 @@ Function global:Select-PipAction($actionName) {
 }
 
 Function global:Execute-PipAction {
-    $action = $Script:actionsModel[$actionListComboBox.SelectedIndex]
+    $action = $global:actionsModel[$actionListComboBox.SelectedIndex]
 
     $tasksOkay = 0
     $tasksFailed = 0
 
-    $queue = [System.Collections.Generic.List[object]]::new()
+    $queue = [System.Collections.Generic.Queue[object]]::new()
 
     for ($i = 0; $i -lt $dataModel.Rows.Count; $i++) {
        if ($dataModel.Rows[$i].Select -eq $true) {
-            $null = $queue.Add($dataModel.Rows[$i])
+            $null = $queue.Enqueue($dataModel.Rows[$i])
        }
     }
 
-    $reportBatchResults = [Action[System.Threading.Tasks.Task]] {
+    $reportBatchResults = New-RunspacedDelegate([Action[System.Threading.Tasks.Task]] {
         if (($tasksOkay -eq 0) -and ($tasksFailed -eq 0)) {
             WriteLog 'Nothing is selected.' -Background LightSalmon
         } else {
@@ -4133,20 +4122,61 @@ Function global:Execute-PipAction {
             WriteLog '----'
             WriteLog ''
         }
-    }.GetNewClosure()
+    }.GetNewClosure())
 
     if ($action.TakesList) {
         $null = $action.Execute($queue.ToArray())
         return
     } else {
-        $items = $queue.ToArray()
-        [System.GC]::KeepAlive($items)
-        $task = ApplyAsync $items ({
-            param($dataRow)
-            WriteLog $dataRow.Package $dataRow.Installed $dataRow.Type
-        })
-        [System.GC]::KeepAlive($task)
-        $task.ContinueWith((New-RunspacedDelegate($reportBatchResults)))
+        $null = ApplyAsync $queue ([Func[object, object]] {
+            param($ElementContext)
+            $dataRow = $ElementContext.Element
+            $ApplyAsyncContext = $ElementContext.ApplyAsyncContext
+            $ApplyAsyncContextType = ([System.Type] "System.Threading.Tasks.TaskCompletionSource[$($ElementContext.ApplyAsyncContextType)]")
+
+            $name, $installed, $type = $dataRow.Package, $dataRow.Installed, $dataRow.Type
+
+            $logFrom = GetLogLength
+            $dataModel.Columns['Status'].ReadOnly = $false
+
+            WriteLog "$($action.Name) $name" -Background LightPink
+
+            $taskCompletionSource = $ApplyAsyncContextType::new()
+
+            $process = [ProcessWithPipedIO]::new('cat', @('D:\work\pyfmt-big.txt'))
+            $task = $process.StartWithLogging($true, $true)
+            $continuation = New-RunspacedDelegate([Action[System.Threading.Tasks.Task[int], object]] {
+                param([System.Threading.Tasks.Task[int]] $task, [object] $locals)
+
+                if ($task.IsCompleted -and (-not $task.IsFaulted)) {
+                    $exitCode = $task.Result
+                    WriteLog "Exited with code $exitCode" -Background DarkGreen -Foreground White
+                } else {
+                    $message = $task.Exception.InnerException
+                    WriteLog "Failed: $message" -Background DarkRed -Foreground White
+                }
+
+                $dataModel.Columns['Status'].ReadOnly = $true
+                $logTo = (GetLogLength) - $logFrom
+                $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
+
+                $null = $locals.taskCompletionSource.SetResult($locals.ApplyAsyncContext)
+            })
+
+            $null = $task.ContinueWith(
+                $continuation,
+                @{
+                    taskCompletionSource=$taskCompletionSource;
+                    ApplyAsyncContext=$ApplyAsyncContext;
+                    dataRow=$dataRow;
+                },
+                [System.Threading.Tasks.TaskScheduler]::FromCurrentSynchronizationContext())
+
+            return $taskCompletionSource.Task
+
+            # $result = $action.Execute($name, $type, $installed) -join "`n"
+
+        }.GetNewClosure()) $reportBatchResults
     }
 }
 
