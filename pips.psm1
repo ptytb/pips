@@ -3596,7 +3596,7 @@ class ProcessWithPipedIO {
         }.GetNewClosure())
 
         $this._timer = [System.Windows.Forms.Timer]::new()
-        $this._timer.Interval = 25
+        $this._timer.Interval = 75
         $this._timer.add_Tick($delegate)
         $this._timer.Start()
 
@@ -4148,9 +4148,6 @@ Function global:Execute-PipAction {
             Set-SelectedRow $dataRow
             $name, $installed, $type = $dataRow.Package, $dataRow.Installed, $dataRow.Type
 
-            $logFrom = GetLogLength
-            $global:dataModel.Columns['Status'].ReadOnly = $false
-
             WriteLog "$($action.Name) $name" -Background LightPink
 
             $taskCompletionSource = $ApplyAsyncContextType::new()
@@ -4169,8 +4166,10 @@ Function global:Execute-PipAction {
                     WriteLog "Failed: $message" -Background DarkRed -Foreground White
                 }
 
+                $global:dataModel.Columns['Status'].ReadOnly = $false
                 $global:dataModel.Columns['Status'].ReadOnly = $true
-                $logTo = (GetLogLength) - $logFrom
+                $logTo = (GetLogLength) - $locals.logFrom
+                $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $logTo
                 $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
 
                 $null = $locals.taskCompletionSource.SetResult($locals.ApplyAsyncContext)
@@ -4183,6 +4182,7 @@ Function global:Execute-PipAction {
                     ApplyAsyncContext=$ApplyAsyncContext;
                     dataRow=$dataRow;
                     process=$process;
+                    logFrom=(GetLogLength);
                 },
                 [System.Threading.Tasks.TaskScheduler]::FromCurrentSynchronizationContext())
 
