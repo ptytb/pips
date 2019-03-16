@@ -45,8 +45,9 @@ pips.cmd
 
 | Keys                             | Action                                                                     |
 | -------------------------------- | -------------------------------------------------------------------------- |
-| / (in Log Pane or PyDoc browser)             | Open search text  dialog                                                              |
-| HJKL, ^B, ^F, g, G             | Vim-style navigation in Log pane and PyDoc browser                                                              |
+| /              | Open search text dialog (in Log Pane or PyDoc browser)                                                             |
+| ^+, ^-, ^*              | Zoom document or reset to the original size (in Log Pane or PyDoc browser)                                                             |
+| HJKL, ^B, ^F, g, G             | Vim-style navigation (in Log Pane and PyDoc browser)                                                              |
 | Enter or Space                   | Toggle package selection                                                   |
 | F1 .. F12                        | Choose a current action, in the same order it appears in the dropdown list |
 | Shift+Enter (on package table)   | Execute action for selected packages                                       |
