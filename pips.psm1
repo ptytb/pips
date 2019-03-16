@@ -3523,35 +3523,19 @@ class ProcessWithPipedIO {
 
         $self = $this
 
-        $OutputCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
-            param($Sender, $EventArgs)
-            $null = $self._processOutput.Add($EventArgs.Data)
-        }.GetNewClosure())
-
-        $ErrorCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
-            param($Sender, $EventArgs)
-            $null = $self._processError.Add($EventArgs.Data)
-        }.GetNewClosure())
-
         $taskCompletionSource = [System.Threading.Tasks.TaskCompletionSource[int]]::new()
 
         $ExitedCallback = New-RunspacedDelegate ([EventHandler] {
             param($Sender, $EventArgs)
             if ($self._timer -eq $null) {
-                $self._taskCompletionSource.SetResult($self._process.ExitCode)
+                $null = $self._taskCompletionSource.TrySetResult($self._process.ExitCode)
             }
         }.GetNewClosure())
 
-        $process.add_OutputDataReceived($OutputCallback)
-        $process.add_ErrorDataReceived($ErrorCallback)
         $process.add_Exited($ExitedCallback)
 
         $this._process = $process
         $this._taskCompletionSource = $taskCompletionSource
-
-        [System.GC]::KeepAlive($this)
-        [System.GC]::KeepAlive($this._process)
-        [System.GC]::KeepAlive($this._taskCompletionSource)
     }
 
     [System.Threading.Tasks.Task[int]] Start() {
@@ -3573,24 +3557,40 @@ class ProcessWithPipedIO {
     }
 
     [System.Threading.Tasks.Task[int]] StartWithLogging([bool] $LogOutput, [bool] $LogErrors) {
+        $self = $this
+
         if ($LogOutput) {
             $this._processOutput = [System.Collections.Generic.List[string]]::new()
+
+            $OutputCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
+                param($Sender, $EventArgs)
+                $null = $self._processOutput.Add($EventArgs.Data)
+            }.GetNewClosure())
+
+            $this._process.add_OutputDataReceived($OutputCallback)
         }
+
         if ($LogErrors) {
             $this._processError = [System.Collections.Generic.List[string]]::new()
+
+            $ErrorCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
+                param($Sender, $EventArgs)
+                $null = $self._processError.Add($EventArgs.Data)
+            }.GetNewClosure())
+
+            $this._process.add_ErrorDataReceived($ErrorCallback)
         }
 
         $null = $this.Start()
 
-        $self = $this
-        $delegate = ([EventHandler] {
+        $delegate = New-RunspacedDelegate ([EventHandler] {
             param($Sender)
             $count = $self.FlushBuffersToLog()
 
             if ($self._process.HasExited -and ($count -eq 0)) {
                 $Sender.Stop()
+                $null = $self._taskCompletionSource.TrySetResult($self._process.ExitCode)
                 $self._timer = $null
-                $self._taskCompletionSource.SetResult($self._process.ExitCode)
             }
         }.GetNewClosure())
 
@@ -3619,7 +3619,7 @@ class ProcessWithPipedIO {
         return $count
     }
 
-    [int] FlushBuffersToLog () {
+    hidden [int] FlushBuffersToLog () {
         $outLines = $this._FlushContainerToLog($this._processOutput, 'LightBlue')
         $errLines = $this._FlushContainerToLog($this._processError, 'LightSalmon')
         return $outLines + $errLines
