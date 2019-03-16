@@ -408,9 +408,10 @@ $python_releases = 'https://www.python.org/downloads/windows/'
 $lastWidgetLeft = 5
 $lastWidgetTop = 5
 $widgetLineHeight = 23
-$dataGridView = $null
-$inputFilter = $null
+$global:dataGridView = $null
+$global:inputFilter = $null
 $global:actionsModel = $null
+$global:dataModel = $null  # [DataRow] keeps actual rows for the table of packages
 $isolatedCheckBox = $null
 $header = ("Select", "Package", "Installed", "Latest", "Type", "Status")
 $csv_header = ("Package", "Installed", "Latest", "Type", "Status")
@@ -698,7 +699,7 @@ Function Add-Label ($name) {
 
 Function Add-Input ($handler) {
     $input = New-Object Windows.Forms.TextBox
-    $input.Add_TextChanged({ [void] $handler.Invoke( @($Script:input) ) }.GetNewClosure())
+    $input.Add_TextChanged([EventHandler] $handler)
     Add-TopWidget $input
     return $input
 }
@@ -1260,8 +1261,8 @@ Function global:Validate-GitLink ($url, [switch] $AsObject) {
 
 Function global:Set-PackageListEditable ($enable) {
     @('Package'; 'Installed'; 'Latest'; 'Type'; 'Status') | ForEach-Object {
-        if ($dataModel.Columns.Contains($_)) {
-            $dataModel.Columns[$_].ReadOnly = -not $enable
+        if ($global:dataModel.Columns.Contains($_)) {
+            $global:dataModel.Columns[$_].ReadOnly = -not $enable
         }
     }
 }
@@ -1490,32 +1491,32 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
                 & $FuncShowToolTip "$package" "Repository '$link' is already in the list"
                 return $false
             }
-            $row = $dataModel.NewRow()
+            $row = $global:dataModel.NewRow()
             $row.Package = $link
             $row.Type = 'git'
             $row.Status = 'Pending'
             $row.Select = $true
-            $dataModel.Rows.InsertAt($row, 0)
+            $global:dataModel.Rows.InsertAt($row, 0)
             return $true
         }
 
         if ($package -match '^https://') {
-            $row = $dataModel.NewRow()
+            $row = $global:dataModel.NewRow()
             $row.Package = $package
             $row.Type = 'https'
             $row.Status = 'Pending'
             $row.Select = $true
-            $dataModel.Rows.InsertAt($row, 0)
+            $global:dataModel.Rows.InsertAt($row, 0)
             return $true
         }
 
         if (Exists-File $package -and $package.EndsWith('.whl')) {
-            $row = $dataModel.NewRow()
+            $row = $global:dataModel.NewRow()
             $row.Package = $package
             $row.Type = 'wheel'
             $row.Status = 'Pending'
             $row.Select = $true
-            $dataModel.Rows.InsertAt($row, 0)
+            $global:dataModel.Rows.InsertAt($row, 0)
             return $true
         }
 
@@ -1534,12 +1535,12 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
 
         $nAlreadyInList = Test-PackageInList $package
         if ($nAlreadyInList -ne -1) {
-            $oldRow = $dataModel.Rows[$nAlreadyInList]
+            $oldRow = $global:dataModel.Rows[$nAlreadyInList]
 
-            if (($dataModel.Columns.Contains('Latest')) -and
+            if (($global:dataModel.Columns.Contains('Latest')) -and
                 (-not ([string]::IsNullOrEmpty($oldRow.Latest)))) {
                 $oldVersion = $oldRow.Latest
-            } elseif (($dataModel.Columns.Contains('Installed')) -and
+            } elseif (($global:dataModel.Columns.Contains('Installed')) -and
                 (-not ([string]::IsNullOrEmpty($oldRow.Installed)))) {
                 $oldVersion = $oldRow.Installed
             } else {
@@ -1564,7 +1565,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
                 Set-PackageListEditable $true
             }
         } else {
-            $row = $dataModel.NewRow()
+            $row = $global:dataModel.NewRow()
         }
 
         $row.Select = $true
@@ -1590,7 +1591,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         $row.Status = 'Pending'
 
         if ($nAlreadyInList -eq -1) {
-            $dataModel.Rows.InsertAt($row, 0)
+            $global:dataModel.Rows.InsertAt($row, 0)
         } else {
             Set-PackageListEditable $false
         }
@@ -1806,7 +1807,7 @@ Function Generate-FormSearch {
     WriteLog "Searching for $input"
     WriteLog 'Double click or [Ctrl+Enter] a table row to open a package home page in browser'
     $stats = Get-SearchResults $input
-    WriteLog "Found $($stats.Total) packages: $($stats.PipCount) pip, $($stats.CondaCount) conda, $($stats.GithubCount) github, $($stats.PluginCount) from plugins. Total $($dataModel.Rows.Count) packages in list."
+    WriteLog "Found $($stats.Total) packages: $($stats.PipCount) pip, $($stats.CondaCount) conda, $($stats.GithubCount) github, $($stats.PluginCount) from plugins. Total $($global:dataModel.Rows.Count) packages in list."
     WriteLog
 }
 
@@ -1851,7 +1852,7 @@ Function Init-PackageSearchColumns($dataTable) {
     }
 }
 
-Function Highlight-PythonPackages {
+Function global:Highlight-PythonPackages {
     if (-not $outdatedOnly) {
         $dataGridView.BeginInit()
         foreach ($row in $dataGridView.Rows) {
@@ -1972,9 +1973,9 @@ Function global:Update-PythonPackageDetails {
         return
     }
 
-    $dataModel.Columns['Status'].ReadOnly = $false
+    $global:dataModel.Columns['Status'].ReadOnly = $false
     $cells['Status'].Value = 'Fetching...'
-    $dataModel.Columns['Status'].ReadOnly = $true
+    $global:dataModel.Columns['Status'].ReadOnly = $true
     $viewRow.DefaultCellStyle.BackColor = [Drawing.Color]::Gray
 
     Run-SubProcessWithCallback ({
@@ -2001,9 +2002,9 @@ Function global:Update-PythonPackageDetails {
         $viewRow = $Global:dataGridView.Rows[$message.Params.RowIndex]
         $viewRow.DefaultCellStyle.BackColor = [Drawing.Color]::Empty
         $row = $viewRow.DataBoundItem.Row
-        $Global:dataModel.Columns['Status'].ReadOnly = $false
+        $global:dataModel.Columns['Status'].ReadOnly = $false
         $row.Status = if ($okay) { 'OK' } else { 'Failed' }
-        $Global:dataModel.Columns['Status'].ReadOnly = $true
+        $global:dataModel.Columns['Status'].ReadOnly = $true
     }) @{PackageName=$packageName; RowIndex=$_.RowIndex; FuncNetWorkaround=$FuncSetWebClientWorkaround.ToString();}
 }
 
@@ -2490,14 +2491,14 @@ Function Generate-Form {
 
     $null = Add-Label "Filter results:"
 
-    $inputFilter = Add-Input {  # TextChanged Handler here
+    $global:inputFilter = Add-Input {  # TextChanged Handler here
         param($input)
 
         $selectedRow = $null
 
-        if ($Script:dataGridView.CurrentRow) {
+        if ($dataGridView.CurrentRow) {
             # Keep selection while filter is being changed
-            $selectedRow = $Script:dataGridView.CurrentRow.DataBoundItem.Row
+            $selectedRow = $dataGridView.CurrentRow.DataBoundItem.Row
         }
 
         $searchText = $input.Text -replace "'","''"
@@ -2525,7 +2526,7 @@ Function Generate-Form {
                 $subQueryDescription = Create-SearchSubQuery 'Description' $searchText 'AND'
             }
         }
-        $isInstallMode = $dataModel.Columns.Contains('Description')
+        $isInstallMode = $global:dataModel.Columns.Contains('Description')
         if ($isInstallMode) {
             $query = "($subQueryPackage) OR ($subQueryDescription)"
         } else {
@@ -2535,9 +2536,9 @@ Function Generate-Form {
         #Write-Host $query
 
         if ($searchText.Length -gt 0) {
-            $Script:dataModel.DefaultView.RowFilter = $query
+            $global:dataModel.DefaultView.RowFilter = $query
         } else {
-            $Script:dataModel.DefaultView.RowFilter = $null
+            $global:dataModel.DefaultView.RowFilter = $null
         }
 
         if ($selectedRow) {
@@ -2545,10 +2546,11 @@ Function Generate-Form {
         }
 
         Highlight-PythonPackages
-    }
-    $Script:inputFilter = $inputFilter
+    }.GetNewClosure()
+
+    $global:inputFilter = $global:inputFilter
     $toolTipFilter = New-Object System.Windows.Forms.ToolTip
-    $toolTipFilter.SetToolTip($inputFilter, "Esc to clear")
+    $toolTipFilter.SetToolTip($global:inputFilter, "Esc to clear")
 
     $searchMethodComboBox = New-Object System.Windows.Forms.ComboBox
     $searchMethods = New-Object System.Collections.ArrayList
@@ -2558,10 +2560,10 @@ Function Generate-Form {
     $null = $searchMethods.Add('Exact Match')
     $searchMethodComboBox.DataSource = $searchMethods
     $searchMethodComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-    $Script:searchMethodComboBox = $searchMethodComboBox
+    $global:searchMethodComboBox = $searchMethodComboBox
     Add-TopWidget($searchMethodComboBox)
     $searchMethodComboBox.add_SelectionChangeCommitted({
-        $flt = $Script:inputFilter
+        $flt = $global:inputFilter
         $t = $flt.Text
         $flt.Text = [String]::Empty
         $flt.Text = $t
@@ -2639,23 +2641,23 @@ Function Generate-Form {
             $dataGridToolTip.Hide($dataGridView)
             $dataGridToolTip.InitialDelay = [Int16]::MaxValue
 
-            if ($inputFilter.Focused) {
-                if ([string]::IsNullOrEmpty($inputFilter.Text)) {
+            if ($global:inputFilter.Focused) {
+                if ([string]::IsNullOrEmpty($global:inputFilter.Text)) {
                     $dataGridView.Focus()
                 } else {
-                    $inputFilter.Text = [String]::Empty
+                    $global:inputFilter.Text = [String]::Empty
                 }
             } else {
-                $inputFilter.Focus()
+                $global:inputFilter.Focus()
             }
         }
         if ($_.KeyCode -eq 'Return') {
-            if ($inputFilter.Focused) {
+            if ($global:inputFilter.Focused) {
                 $_.Handled = $true
                 $dataGridView.Focus()
             }
         }
-        if ($inputFilter.Focused -and ($_.KeyCode -in @('Up', 'Down'))) {
+        if ($global:inputFilter.Focused -and ($_.KeyCode -in @('Up', 'Down'))) {
             $Script:dataGridView.Focus()
             $_.Handled = $false
         }
@@ -2665,8 +2667,7 @@ Function Generate-Form {
 
     $dataModel = New-Object System.Data.DataTable
     $dataGridView.DataSource = $dataModel
-    $Script:dataModel = $dataModel
-    $Global:dataModel = $dataModel
+    $global:dataModel = $dataModel
     Init-PackageUpdateColumns $dataModel
 
     $form.Controls.Add($dataGridView)
@@ -2810,7 +2811,7 @@ Function Generate-Form {
     })
 
     $FuncHighlightLogFragment = {
-        if ($Script:dataModel.Rows.Count -eq 0) {
+        if ($global:dataModel.Rows.Count -eq 0) {
             return
         }
 
@@ -3644,7 +3645,7 @@ Function global:Show-DocView($packageName, $SetContent = $null, $Highlight = $nu
 }
 
 Function Write-PipPackageCounter {
-    $count = $dataModel.Rows.Count
+    $count = $global:dataModel.Rows.Count
     WriteLog "Now $count packages in the list."
 }
 
@@ -3652,9 +3653,9 @@ Function Store-CheckedPipSearchResults() {
     $selected = New-Object System.Data.DataTable
     Init-PackageSearchColumns $selected
 
-    $isInstallMode = $dataModel.Columns.Contains('Description')
+    $isInstallMode = $global:dataModel.Columns.Contains('Description')
     if ($isInstallMode) {
-        foreach ($row in $dataModel) {
+        foreach ($row in $global:dataModel) {
             if ($row.Select) {
                 $selected.ImportRow($row)
             }
@@ -3684,14 +3685,14 @@ Function Get-PipSearchResults($request) {
         if ([String]::IsNullOrEmpty($m.Groups[1].Value)) {
             continue
         }
-        $row = $dataModel.NewRow()
+        $row = $global:dataModel.NewRow()
         $row.Select = $false
         $row.Package = $m.Groups[1].Value
         $row.Installed = $m.Groups[2].Value
         $row.Description = $m.Groups[3].Value
         $row.Type = 'pip'
         $row.Status = ''
-        $dataModel.Rows.Add($row)
+        $global:dataModel.Rows.Add($row)
         $count += 1
     }
 
@@ -3744,7 +3745,7 @@ Function Get-CondaSearchResults($request) {
             $item = $_.Value
 
             foreach ($package in $item) {
-                $row = $dataModel.NewRow()
+                $row = $global:dataModel.NewRow()
                 $row.Select = $false
                 $row.Package = $name
                 $row.Installed = $package.version
@@ -3759,7 +3760,7 @@ Function Get-CondaSearchResults($request) {
 
                 $row.Type = 'conda'
                 $row.Status = ''
-                $dataModel.Rows.Add($row)
+                $global:dataModel.Rows.Add($row)
                 $count += 1
             }
         }
@@ -3777,14 +3778,14 @@ Function Get-GithubSearchResults ($request) {
     $items = $info.'items'
     $count = 0
     $items | ForEach-Object {
-        $row = $dataModel.NewRow()
+        $row = $global:dataModel.NewRow()
         $row.Select = $false
         $row.Package = $_.'full_name'
         $row.Installed = ($_.'pushed_at' -replace 'T',' ') -replace 'Z',''
         $row.Description = "$($_.'stargazers_count') $([char] 0x2729) $($_.'forks') $([char] 0x2442) $($_.'open_issues') $([char] 0x2757) $($_.'description')"
         $row.Type = 'git'
         $row.Status = ''
-        $dataModel.Rows.Add($row)
+        $global:dataModel.Rows.Add($row)
         $count++
     }
     return $count
@@ -3799,14 +3800,14 @@ Function global:Get-PluginSearchResults($request) {
             (Get-CurrentInterpreter 'Bits'))
 
         foreach ($package in $packages) {
-            $row = $dataModel.NewRow()
+            $row = $global:dataModel.NewRow()
             $row.Select = $false
             $row.Package = $package.Name
             $row.Installed = $package.Version
             $row.Description = $package.Description
             $row.Type = $package.Type
             $row.Status = ''
-            $dataModel.Rows.Add($row)
+            $global:dataModel.Rows.Add($row)
             $count++
         }
     }
@@ -3859,13 +3860,13 @@ Function global:Get-GithubRepoTags($gitLinkInfo, $ContinueWith = $null) {
 Function Get-SearchResults($request) {
     $previousSelected = Store-CheckedPipSearchResults
     Clear-Rows
-    Init-PackageSearchColumns $dataModel
+    Init-PackageSearchColumns $global:dataModel
 
     $dataGridView.BeginInit()
-    $dataModel.BeginLoadData()
+    $global:dataModel.BeginLoadData()
 
     foreach ($row in $previousSelected) {
-        $dataModel.ImportRow($row)
+        $global:dataModel.ImportRow($row)
     }
 
     $pipCount = Get-PipSearchResults $request
@@ -3873,7 +3874,7 @@ Function Get-SearchResults($request) {
     $pluginCount = Get-PluginSearchResults $request
     $githubCount = Get-GithubSearchResults $request
 
-    $dataModel.EndLoadData()
+    $global:dataModel.EndLoadData()
     $dataGridView.EndInit()
 
     return @{PipCount=$pipCount; CondaCount=$condaCount; GithubCount=$githubCount; PluginCount=$pluginCount; Total=($pipCount + $condaCount + $githubCount + $pluginCount)}
@@ -3902,7 +3903,7 @@ Function Get-SearchResults($request) {
     WriteLog
 
     Clear-Rows
-    Init-PackageUpdateColumns $dataModel
+    Init-PackageUpdateColumns $global:dataModel
 
 
     if ($pip_exe) {
@@ -3929,7 +3930,7 @@ Function Get-SearchResults($request) {
 
     Function Add-PackagesToTable($packages, $defaultType = [String]::Empty) {
         for ($n = 0; $n -lt $packages.Count; $n++) {
-            $row = $dataModel.NewRow()
+            $row = $global:dataModel.NewRow()
             $row.Select = $false
             $package = $packages[$n]
             $row.Package = $package.Package
@@ -3953,11 +3954,11 @@ Function Get-SearchResults($request) {
                 $row.Type = $defaultType
             }
 
-            $dataModel.Rows.Add($row)
+            $global:dataModel.Rows.Add($row)
         }
     }
 
-    $dataModel.BeginLoadData()
+    $global:dataModel.BeginLoadData()
 
     $pipCount = 0
     $condaCount = 0
@@ -3983,7 +3984,7 @@ Function Get-SearchResults($request) {
         $builtinCount = $builtinPackages.Count
         $otherCount = $otherPackages.Count
     }
-    $dataModel.EndLoadData()
+    $global:dataModel.EndLoadData()
 
     $Script:outdatedOnly = $outdatedOnly
     Highlight-PythonPackages
@@ -3991,37 +3992,37 @@ Function Get-SearchResults($request) {
     WriteLog 'Package list updated.'
     WriteLog 'Double click or [Ctrl+Enter] a table row to open PyPi, Anaconda.com or github.com in browser'
 
-    $count = $dataModel.Rows.Count
+    $count = $global:dataModel.Rows.Count
     WriteLog "Total $count packages: $builtinCount builtin, $pipCount pip, $condaCount conda, $otherCount other"
     WriteLog
 }
 
 Function Select-VisiblePipPackages($value) {
-    $dataModel.BeginLoadData()
+    $global:dataModel.BeginLoadData()
     for ($i = 0; $i -lt $dataGridView.Rows.Count; $i++) {
         if ($dataGridView.Rows[$i].DataBoundItem.Row.Type -in @('builtin', 'other') ) {
             continue
         }
         $dataGridView.Rows[$i].DataBoundItem.Row.Select = $value
     }
-    $dataModel.EndLoadData()
+    $global:dataModel.EndLoadData()
 }
 
 Function Select-PipPackages($value) {
-    $dataModel.BeginLoadData()
-    for ($i = 0; $i -lt $dataModel.Rows.Count; $i++) {
-       $dataModel.Rows[$i].Select = $value
+    $global:dataModel.BeginLoadData()
+    for ($i = 0; $i -lt $global:dataModel.Rows.Count; $i++) {
+       $global:dataModel.Rows[$i].Select = $value
     }
-    $dataModel.EndLoadData()
+    $global:dataModel.EndLoadData()
 }
 
 Function Set-Unchecked($index) {
-    $dataModel.Rows[$index].Select = $false
+    $global:dataModel.Rows[$index].Select = $false
 }
 
 Function Test-PackageInList($name) {
     $n = 0
-    foreach ($item in $Script:dataModel.Rows) {
+    foreach ($item in $global:dataModel.Rows) {
         if ($item.Package -eq $name) {
             return $n
         }
@@ -4032,22 +4033,22 @@ Function Test-PackageInList($name) {
 
 Function Clear-Rows() {
     $Script:outdatedOnly = $true
-    $Script:inputFilter.Clear()
-    $dataModel.DefaultView.RowFilter = $null
+    $global:inputFilter.Clear()
+    $global:dataModel.DefaultView.RowFilter = $null
     $dataGridView.ClearSelection()
 
     #if ($dataGridView.SortedColumn) {
     #    $dataGridView.SortedColumn.SortMode = [System.Windows.Forms.DataGridViewColumnSortMode]::NotSortable
     #}
 
-    $dataModel.DefaultView.Sort = [String]::Empty
+    $global:dataModel.DefaultView.Sort = [String]::Empty
 
     $dataGridView.BeginInit()
-    $dataModel.BeginLoadData()
+    $global:dataModel.BeginLoadData()
 
-    $dataModel.Rows.Clear()
+    $global:dataModel.Rows.Clear()
 
-    $dataModel.EndLoadData()
+    $global:dataModel.EndLoadData()
     $dataGridView.EndInit()
 }
 
@@ -4061,7 +4062,7 @@ Function global:Set-SelectedNRow($n) {
     $dataGridView.CurrentCell = $dataGridView[0, $n]
 }
 
-Function Set-SelectedRow($selectedRow) {
+Function global:Set-SelectedRow($selectedRow) {
     $Script:dataGridView.ClearSelection()
     foreach ($vRow in $Script:dataGridView.Rows) {
         if ($vRow.DataBoundItem.Row -eq $selectedRow) {
@@ -4113,9 +4114,9 @@ Function global:Execute-PipAction {
 
     $queue = [System.Collections.Generic.Queue[object]]::new()
 
-    for ($i = 0; $i -lt $dataModel.Rows.Count; $i++) {
-       if ($dataModel.Rows[$i].Select -eq $true) {
-            $null = $queue.Enqueue($dataModel.Rows[$i])
+    for ($i = 0; $i -lt $global:dataModel.Rows.Count; $i++) {
+       if ($global:dataModel.Rows[$i].Select -eq $true) {
+            $null = $queue.Enqueue($global:dataModel.Rows[$i])
        }
     }
 
@@ -4144,10 +4145,11 @@ Function global:Execute-PipAction {
             $ApplyAsyncContext = $ElementContext.ApplyAsyncContext
             $ApplyAsyncContextType = ([System.Type] "System.Threading.Tasks.TaskCompletionSource[$($ElementContext.ApplyAsyncContextType)]")
 
+            Set-SelectedRow $dataRow
             $name, $installed, $type = $dataRow.Package, $dataRow.Installed, $dataRow.Type
 
             $logFrom = GetLogLength
-            $dataModel.Columns['Status'].ReadOnly = $false
+            $global:dataModel.Columns['Status'].ReadOnly = $false
 
             WriteLog "$($action.Name) $name" -Background LightPink
 
@@ -4167,7 +4169,7 @@ Function global:Execute-PipAction {
                     WriteLog "Failed: $message" -Background DarkRed -Foreground White
                 }
 
-                $dataModel.Columns['Status'].ReadOnly = $true
+                $global:dataModel.Columns['Status'].ReadOnly = $true
                 $logTo = (GetLogLength) - $logFrom
                 $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
 
