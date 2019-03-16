@@ -3604,6 +3604,8 @@ class ProcessWithPipedIO {
     }
 
     Kill() {
+        $this._process.CancelOutputRead()
+        $this._process.CancelErrorRead()
         $this._process.Kill()
     }
 
