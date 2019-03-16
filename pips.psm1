@@ -4169,7 +4169,7 @@ Function global:Execute-PipAction {
                 $global:dataModel.Columns['Status'].ReadOnly = $false
                 $global:dataModel.Columns['Status'].ReadOnly = $true
                 $logTo = (GetLogLength) - $locals.logFrom
-                $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $logTo
+                $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $logFrom
                 $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
 
                 $null = $locals.taskCompletionSource.SetResult($locals.ApplyAsyncContext)
