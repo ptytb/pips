@@ -1,5 +1,7 @@
 ﻿$PSDefaultParameterValues['*:Encoding'] = 'UTF8'
 
+$global:FRAMEWORK_VERSION = [version]([Runtime.InteropServices.RuntimeInformation]::FrameworkDescription -replace '^.[^\d.]*','')
+
 [Void][Reflection.Assembly]::LoadWithPartialName("System")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Drawing")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Drawing.Size")
@@ -2402,7 +2404,7 @@ Some packages may generate garbage or show windows, don't panic.
                 $pipsPath = $PSScriptRoot
                 $pipsGitPath = [IO.Path]::combine($pipsPath, '.git')
                 $pipsHash = & (Get-Bin 'git') --git-dir=$pipsGitPath --work-tree=$pipsPath rev-parse --short HEAD 2>&1
-                $hostInfo = "``````$powerShellInfo```````npips $pipsHash`n`nDescribe your issue here"
+                $hostInfo = "``````$powerShellInfo```````n.NET $FRAMEWORK_VERSION`npips $pipsHash`n`nDescribe your issue here"
                 $issue = [System.Web.HttpUtility]::UrlPathEncode($hostInfo)
                 Open-LinkInBrowser "https://github.com/ptytb/pips/issues/new?title=$title&body=$hostInfo"
             };
