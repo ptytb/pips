@@ -3612,7 +3612,7 @@ class ProcessWithPipedIO {
         if ($container) {
             $count = $container.Count
             if ($count -gt 0) {
-                $lines = $container.ToArray() -join [Environment]::NewLine
+                $lines = $container -join [Environment]::NewLine
                 $container.Clear()
                 WriteLog $lines -Background $color
             }
