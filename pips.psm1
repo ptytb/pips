@@ -689,6 +689,8 @@ Function Add-ButtonMenu ($text, $tools, $onclick) {
     $button = Add-Button $text $handler
     $button.ImageAlign = [System.Drawing.ContentAlignment]::MiddleRight
     $button.Image = Convert-Base64ToBMP $iconBase64_DownArrow
+
+    return $button
 }
 
 Function Add-Label ($name) {
@@ -708,12 +710,14 @@ Function Add-Input ($handler) {
 
 
 Function Add-Buttons {
-    Add-Button "Check Updates" { Get-PythonPackages }
-    Add-Button "List Installed" { Get-PythonPackages($false) }
-    Add-Button "Sel All Visible" { Select-VisiblePipPackages($true) }
-    Add-Button "Select None" { Select-PipPackages($false) }
-    Add-Button "Check Deps" { Check-PipDependencies }
-    Add-Button "Execute" { Execute-PipAction }
+    $global:WIDGET_GROUP_COMMAND_BUTTONS = @(
+        Add-Button "Check Updates" { Get-PythonPackages } ;
+        Add-Button "List Installed" { Get-PythonPackages($false) } ;
+        Add-Button "Sel All Visible" { Select-VisiblePipPackages($true) } ;
+        Add-Button "Select None" { Select-PipPackages($false) } ;
+        Add-Button "Check Deps" { Check-PipDependencies } ;
+        Add-Button "Execute" { Execute-PipAction } ;
+    )
 }
 
 Function global:Get-PyDoc($request) {
@@ -2171,7 +2175,8 @@ Function Add-CreateEnvButtonMenu {
         [void] $FuncUpdateInterpreters.Invoke($path)
     }.GetNewClosure()
 
-    $createEnvButton = Add-ButtonMenu 'env: Create' $tools $menuclick
+    $buttonEnvCreate = Add-ButtonMenu 'env: Create' $tools $menuclick
+    return $buttonEnvCreate
 }
 
 Function Add-EnvToolButtonMenu {
@@ -2230,7 +2235,8 @@ Function Add-EnvToolButtonMenu {
         $output = $item.Code.Invoke()
     }
 
-    $envToolsButton = Add-ButtonMenu 'env: Tools' $menu $menuclick
+    $buttonEnvTools = Add-ButtonMenu 'env: Tools' $menu $menuclick
+    return $buttonEnvTools
 }
 
 Function global:Get-PyDocTopics() {
@@ -2426,7 +2432,8 @@ Some packages may generate garbage or show windows, don't panic.
         $output = $item.Code.Invoke()
     }
 
-    $envToolsButton = Add-ButtonMenu 'Tools' $menu $menuclick
+    $toolsButton = Add-ButtonMenu 'Tools' $menu $menuclick
+    return $toolsButton
 }
 
 Function global:Show-CurrentPackageInBrowser() {
@@ -2485,9 +2492,11 @@ Function Generate-Form {
     $toolTip = New-Object System.Windows.Forms.ToolTip
     $toolTip.SetToolTip($isolatedCheckBox, "Ignore environmental variables, user configuration and global packages.`n`n--isolated`n--local")
 
-    $null = Add-Button "Search..." { Generate-FormSearch }
-    $null = Add-Button "Install..." { Generate-FormInstall }
-    Add-ToolsButtonMenu
+    $global:WIDGET_GROUP_INSTALL_BUTTONS = @(
+        Add-Button "Search..." { Generate-FormSearch } ;
+        Add-Button "Install..." { Generate-FormInstall }
+    )
+    $null = Add-ToolsButtonMenu
 
     $null = NewLine-TopLayout
 
@@ -2577,7 +2586,7 @@ Function Generate-Form {
 
     $interpretersComboBox = Add-ComboBoxInterpreters
     $Global:interpretersComboBox = $interpretersComboBox
-    $null = Add-Button "env: Open..." {
+    $buttonEnvOpen = Add-Button "env: Open..." {
         $path = Request-FolderPathFromUser ("Choose a folder with python environment, created by either Virtualenv or pipenv`n`n" +
             "Typically it contains dirs: Include, Lib, Scripts")
         if ($path) {
@@ -2594,8 +2603,10 @@ Function Generate-Form {
         }
     }
 
-    Add-CreateEnvButtonMenu
-    Add-EnvToolButtonMenu
+    $buttonEnvCreate = Add-CreateEnvButtonMenu
+    $buttonEnvTools = Add-EnvToolButtonMenu
+
+    $global:WIDGET_GROUP_ENV_BUTTONS = @($buttonEnvOpen, $buttonEnvCreate, $buttonEnvTools)
 
     $interpreters = $Script:interpreters
     $trackDuplicateInterpreters = $Script:trackDuplicateInterpreters
@@ -3632,6 +3643,118 @@ class ProcessWithPipedIO {
 }
 
 
+class WidgetStateTransition {
+
+    hidden [System.Collections.Generic.Stack[hashtable]] $_states
+    hidden [System.Collections.Generic.List[System.Windows.Forms.Control]] $_controls
+    hidden [System.Collections.Generic.HashSet[Action]] $_actions
+
+    WidgetStateTransition () {
+        $this._states = [System.Collections.Generic.Stack[hashtable]]::new()
+        $this._controls = [System.Collections.Generic.List[System.Windows.Forms.Control]]::new()
+    }
+
+    [WidgetStateTransition] Add([System.Windows.Forms.Control] $control) {
+        $null = $this._controls.Add($control)
+        return $this
+    }
+
+    [WidgetStateTransition] AddRange([System.Windows.Forms.Control[]] $controls) {
+        $null = $this._controls.AddRange($controls)
+        return $this
+    }
+
+    [WidgetStateTransition] Transform([hashtable] $properties) {
+        $states = @{}
+        foreach ($control in $this._controls) {
+            $widgetState = @{}
+            foreach ($property in $properties.GetEnumerator()) {
+                # Write-Host $property.Key '=' $property.Value ' of ' $property.Value.GetType()
+                if ($property.Value -isnot [ScriptBlock]) {
+                    $null = $widgetState.Add($property.Key, $control."$($property.Key)")
+                    $control."$($property.Key)" = $property.Value
+                } else {
+                    $handlers = [WidgetStateTransition]::SpliceEventHandlers($control, $property.Key, $property.Value)
+                    $null = $widgetState.Add($property.Key, $handlers)
+                }
+            }
+            $states[$control] = $widgetState
+        }
+        $this._controls.Clear()
+        $this._states.Push($states)
+        return $this
+    }
+
+    [WidgetStateTransition] Reverse() {
+        $states = $this._states.Pop()
+        foreach ($widgetState in $states.GetEnumerator()) {
+            $control, $properties = $widgetState.Key, $widgetState.Value
+            foreach ($property in $properties.GetEnumerator()) {
+                # Write-Host 'REV ' $property.Key '=' $property.Value ' of ' $property.Value.GetType()
+                if ($property.Value -isnot [delegate[]]) {
+                    $control."$($property.Key)" = $property.Value
+                } else {
+                    $null = [WidgetStateTransition]::SpliceEventHandlers($control, $property.Key, $property.Value)
+                }
+            }
+        }
+        return $this
+    }
+
+    [WidgetStateTransition] ReverseAll() {
+        while ($this._states.Count -gt 0) {
+            $null = $this.Reverse()
+        }
+        return $this
+    }
+
+    [WidgetStateTransition] Debounce([Action] $action) {
+        if (-not $this._actions.Contains($action)) {
+            $this._actions.Add($action)
+        }
+        return $this
+    }
+
+    static [delegate[]] SpliceEventHandlers([System.Windows.Forms.Control] $control, [string] $event, $handlers) {
+
+        $type = $control.GetType()
+
+        $propertyInfo = $type.GetProperty('Events',
+            [System.Reflection.BindingFlags]::Instance -bor
+            [System.Reflection.BindingFlags]::NonPublic -bor
+            [System.Reflection.BindingFlags]::Static)
+
+        $eventHandlerList = $propertyInfo.GetValue($control)
+
+        $fieldInfo = [System.Windows.Forms.Control].GetField("Event$event",
+            [System.Reflection.BindingFlags]::Static -bor
+            [System.Reflection.BindingFlags]::NonPublic)
+
+        $eventKey = $fieldInfo.GetValue($control)
+
+        $eventHandler = $eventHandlerList[$eventKey]
+
+        $old = [System.Collections.Generic.List[delegate]]::new()
+
+        if ($eventHandler) {
+            $invocationList = @($eventHandler.GetInvocationList())
+
+            foreach ($handler in $invocationList) {
+                $null = $old.Add($handler)
+                $control."remove_$event"($handler)
+            }
+        }
+
+        foreach ($handler in $handlers) {
+            $control."add_$event"($handler)
+        }
+
+        return $old
+    }
+
+}
+
+
 Function global:Show-DocView($packageName, $SetContent = $null, $Highlight = $null, [switch] $NoDefaultHighlighting) {
     if (-not $SetContent) {
         $content = (Get-PyDoc $packageName) -join "`n"
@@ -4111,6 +4234,19 @@ Function global:Select-PipAction($actionName) {
 }
 
 Function global:Execute-PipAction {
+    $widgetStateTransition = [WidgetStateTransition]::new()
+    $disableThemWhileWorking = @(
+        $WIDGET_GROUP_COMMAND_BUTTONS ;
+        $WIDGET_GROUP_ENV_BUTTONS ;
+        $WIDGET_GROUP_INSTALL_BUTTONS ;
+        $interpretersComboBox ;
+        $actionListComboBox
+    )
+    $widgetStateTransition.AddRange($disableThemWhileWorking).Transform(@{Enabled=$false})
+    $widgetStateTransition.Add($WIDGET_GROUP_COMMAND_BUTTONS[-1]).Transform(@{Text='Cancel';Enabled=$true;Click={
+            $null = [System.Windows.Forms.MessageBox]::Show('Sure?', 'Cancel', [System.Windows.Forms.MessageBoxButtons]::YesNo)
+        }})
+
     $action = $global:actionsModel[$actionListComboBox.SelectedIndex]
 
     $tasksOkay = 0
@@ -4125,6 +4261,8 @@ Function global:Execute-PipAction {
     }
 
     $reportBatchResults = New-RunspacedDelegate([Action[System.Threading.Tasks.Task]] {
+        $null = $widgetStateTransition.ReverseAll()
+
         if (($tasksOkay -eq 0) -and ($tasksFailed -eq 0)) {
             WriteLog 'Nothing is selected.' -Background LightSalmon
         } else {
@@ -4155,6 +4293,11 @@ Function global:Execute-PipAction {
             WriteLog "$($action.Name) $name" -Background LightPink
 
             $taskCompletionSource = $ApplyAsyncContextType::new()
+
+            # $result = $action.Execute($name, $type, $installed) -join "`n"
+            if ($action) {
+                # (Get-CurrentInterpreter 'PythonExe')
+            }
 
             $process = [ProcessWithPipedIO]::new('cat', @('D:\work\pyfmt-big.txt'))
             $task = $process.StartWithLogging($true, $true)
@@ -4190,8 +4333,6 @@ Function global:Execute-PipAction {
                 [System.Threading.Tasks.TaskScheduler]::FromCurrentSynchronizationContext())
 
             return $taskCompletionSource.Task
-
-            # $result = $action.Execute($name, $type, $installed) -join "`n"
 
         }.GetNewClosure()) $reportBatchResults
     }
