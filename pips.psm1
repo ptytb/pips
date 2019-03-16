@@ -4153,7 +4153,6 @@ Function global:Execute-PipAction {
             $taskCompletionSource = $ApplyAsyncContextType::new()
 
             $process = [ProcessWithPipedIO]::new('cat', @('D:\work\pyfmt-big.txt'))
-            # wait till buffers are flushed
             $task = $process.StartWithLogging($true, $true)
             $continuation = New-RunspacedDelegate([Action[System.Threading.Tasks.Task[int], object]] {
                 param([System.Threading.Tasks.Task[int]] $task, [object] $locals)
