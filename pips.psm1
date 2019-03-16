@@ -2397,7 +2397,13 @@ Some packages may generate garbage or show windows, don't panic.
             MenuText = "Report a bug";
             Code = {
                 $title = [System.Web.HttpUtility]::UrlEncode("Something went wrong")
-                Open-LinkInBrowser "https://github.com/ptytb/pips/issues/new?title=$title"
+                $powerShellInfo = $PSVersionTable | Format-Table -HideTableHeaders -AutoSize | Out-String
+                $pipsPath = $PSScriptRoot
+                $pipsGitPath = [IO.Path]::combine($pipsPath, '.git')
+                $pipsHash = & (Get-Bin 'git') --git-dir=$pipsGitPath --work-tree=$pipsPath rev-parse --short HEAD 2>&1
+                $hostInfo = "``````$powerShellInfo```````npips $pipsHash`n`nDescribe your issue here"
+                $issue = [System.Web.HttpUtility]::UrlPathEncode($hostInfo)
+                Open-LinkInBrowser "https://github.com/ptytb/pips/issues/new?title=$title&body=$hostInfo"
             };
         };
     )
@@ -3531,7 +3537,9 @@ class ProcessWithPipedIO {
 
         $ExitedCallback = New-RunspacedDelegate ([EventHandler] {
             param($Sender, $EventArgs)
-            $taskCompletionSource.SetResult($process.ExitCode)
+            if ($self._timer -eq $null) {
+                $self._taskCompletionSource.SetResult($self._process.ExitCode)
+            }
         }.GetNewClosure())
 
         $process.add_OutputDataReceived($OutputCallback)
@@ -3582,6 +3590,7 @@ class ProcessWithPipedIO {
             if ($self._process.HasExited -and ($count -eq 0)) {
                 $Sender.Stop()
                 $self._timer = $null
+                $self._taskCompletionSource.SetResult($self._process.ExitCode)
             }
         }.GetNewClosure())
 
@@ -4128,6 +4137,7 @@ Function global:Execute-PipAction {
         $null = $action.Execute($queue.ToArray())
         return
     } else {
+        # ApplyAsync :: [DataRow] -> (ElementContext{ DataRow } -> int) -> DataRow )
         $null = ApplyAsync $queue ([Func[object, object]] {
             param($ElementContext)
             $dataRow = $ElementContext.Element
@@ -4144,6 +4154,7 @@ Function global:Execute-PipAction {
             $taskCompletionSource = $ApplyAsyncContextType::new()
 
             $process = [ProcessWithPipedIO]::new('cat', @('D:\work\pyfmt-big.txt'))
+            # wait till buffers are flushed
             $task = $process.StartWithLogging($true, $true)
             $continuation = New-RunspacedDelegate([Action[System.Threading.Tasks.Task[int], object]] {
                 param([System.Threading.Tasks.Task[int]] $task, [object] $locals)
@@ -4169,6 +4180,7 @@ Function global:Execute-PipAction {
                     taskCompletionSource=$taskCompletionSource;
                     ApplyAsyncContext=$ApplyAsyncContext;
                     dataRow=$dataRow;
+                    process=$process;
                 },
                 [System.Threading.Tasks.TaskScheduler]::FromCurrentSynchronizationContext())
 
