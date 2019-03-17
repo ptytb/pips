@@ -3683,7 +3683,8 @@ class ProcessWithPipedIO {
         $null = $this.Start()
 
         $delegate = New-RunspacedDelegate ([EventHandler] {
-            param($Sender)
+            param([System.Windows.Forms.Timer] $Sender)
+            $self = $Sender.Tag
             $count = $self.FlushBuffersToLog()
 
             if ($self._process.HasExited -and ($count -eq 0)) {
@@ -3691,9 +3692,10 @@ class ProcessWithPipedIO {
                 $null = $self._taskCompletionSource.TrySetResult($self._process.ExitCode)
                 $self._timer = $null
             }
-        }.GetNewClosure())
+        })
 
         $this._timer = [System.Windows.Forms.Timer]::new()
+        $this._timer.Tag = $self
         $this._timer.Interval = 75
         $this._timer.add_Tick($delegate)
         $this._timer.Start()
