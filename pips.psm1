@@ -704,10 +704,20 @@ Function NewLine-TopLayout() {
     $Script:lastWidgetLeft = 5
 }
 
-Function Add-Button ($name, $handler) {
+Function Add-Button ($name, $handler, [switch] $AsyncHandler) {
     $button = New-Object Windows.Forms.Button
     $button.Text = $name
-    $button.Add_Click([System.EventHandler] $handler)
+    if ($AsyncHandler) {
+        $button.Add_Click({
+            $widgetStateTransition = WidgetStateTransitionForCommandButton $button
+            $task = $handler.Invoke($args)
+            $task.ContinueWith(([WidgetStateTransition]::ReverseAllAsync()),
+                $widgetStateTransition,
+                [System.Threading.Tasks.TaskScheduler]::FromCurrentSynchronizationContext())
+        }.GetNewClosure())
+    } else {
+        $button.Add_Click([EventHandler] $handler)
+    }
     Add-TopWidget $button
     return $button
 }
@@ -789,7 +799,7 @@ Function Add-Buttons {
         Add-Button "Sel All Visible" { Select-VisiblePipPackages($true) } ;
         Add-Button "Select None" { Select-PipPackages($false) } ;
         Add-Button "Check Deps" { Check-PipDependencies } ;
-        Add-Button "Execute" { Execute-PipAction } ;
+        Add-Button "Execute" { Execute-PipAction } -AsyncHandler ;
     )
 }
 
@@ -3797,6 +3807,14 @@ class WidgetStateTransition {
         return $this
     }
 
+    static [object] ReverseAllAsync() {
+        $delegate = New-RunspacedDelegate ([Action[System.Threading.Tasks.Task[object], object]]{
+            param([System.Threading.Tasks.Task[object]] $task, [object] $widgetStateTransition)
+            $null = ($widgetStateTransition -as [WidgetStateTransition]).ReverseAll()
+        })
+        return $delegate
+    }
+
     [WidgetStateTransition] Debounce([Action] $action) {
         if (-not $this._actions.Contains($action)) {
             $this._actions.Add($action)
@@ -4333,7 +4351,7 @@ Function global:Select-PipAction($actionName) {
     }
 }
 
-Function global:Execute-PipAction {
+Function global:WidgetStateTransitionForCommandButton($button) {
     $widgetStateTransition = [WidgetStateTransition]::new()
     $disableThemWhileWorking = @(
         $WIDGET_GROUP_COMMAND_BUTTONS ;
@@ -4342,17 +4360,20 @@ Function global:Execute-PipAction {
         $interpretersComboBox ;
         $actionListComboBox
     )
-    $widgetStateTransition.AddRange($disableThemWhileWorking).Transform(@{Enabled=$false})
-    $widgetStateTransition.Add($WIDGET_GROUP_COMMAND_BUTTONS[-1]).Transform(@{Text='Cancel';Enabled=$true;Click={
+    $null = $widgetStateTransition.AddRange($disableThemWhileWorking).Transform(@{Enabled=$false})
+    $null = $widgetStateTransition.Add($button).Transform(@{Text='Cancel';Enabled=$true;Click={
             $response = [System.Windows.Forms.MessageBox]::Show('Sure?', 'Cancel', [System.Windows.Forms.MessageBoxButtons]::YesNo)
             if ($response -eq 'Yes') {
 
             }
         }})
-    $widgetStateTransition.GlobalVariables(@{
+    $null = $widgetStateTransition.GlobalVariables(@{
             APP_MODE=([AppMode]::Working);
         })
+    return $widgetStateTransition
+}
 
+Function global:Execute-PipAction {
     $action = $global:actionsModel[$actionListComboBox.SelectedIndex]
 
     $tasksOkay = 0
@@ -4366,8 +4387,10 @@ Function global:Execute-PipAction {
        }
     }
 
+    $execActionTaskCompletionSource = [System.Threading.Tasks.TaskCompletionSource[object]]::new()
+
     $reportBatchResults = New-RunspacedDelegate([Action[System.Threading.Tasks.Task]] {
-        $null = $widgetStateTransition.ReverseAll()
+        $execActionTaskCompletionSource.SetResult($null)
 
         if (($tasksOkay -eq 0) -and ($tasksFailed -eq 0)) {
             WriteLog 'Nothing is selected.' -Background LightSalmon
@@ -4442,6 +4465,8 @@ Function global:Execute-PipAction {
 
         }.GetNewClosure()) $reportBatchResults
     }
+
+    return $execActionTaskCompletionSource.Task
 }
 
 # by https://superuser.com/users/243093/megamorf
