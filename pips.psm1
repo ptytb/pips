@@ -433,6 +433,13 @@ enum InstallAutoCompleteMode {
   None
 }
 
+enum AppMode {
+    Idle;
+    Working
+}
+
+[AppMode] $global:APP_MODE = [AppMode]::Idle
+
 $global:packageTypes = [System.Collections.ArrayList]::new()
 $global:packageTypes.AddRange(@('pip', 'conda', 'git', 'wheel', 'https'))
 
@@ -667,7 +674,9 @@ Function Add-ButtonMenu ($text, $tools, $onclick) {
             if ($tool.IsSeparator) {
                 $menuStrip.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
             } elseif ($tool.Persistent) {
-                $menuStrip.Items.Add($tool.MenuText)
+                $item = [System.Windows.Forms.ToolStripMenuItem]::new($tool.MenuText)
+                $item.Enabled = (-not $tool.Contains('IsAccessible')) -or $tool.IsAccessible.Invoke()
+                $menuStrip.Items.Add($item)
             }
         }
 
@@ -2357,6 +2366,7 @@ Some packages may generate garbage or show windows, don't panic.
         };
         @{
             Persistent=$true;
+            IsAccessible = { $global:APP_MODE -eq [AppMode]::Idle };
             MenuText = 'Show pip cache info';
             Code = {
                 $paths = [System.Collections.Generic.List[string]]::new()
@@ -2396,6 +2406,7 @@ Some packages may generate garbage or show windows, don't panic.
         };
         @{
             Persistent=$true;
+            IsAccessible = { $global:APP_MODE -eq [AppMode]::Idle };
             MenuText = 'Clear package list';
             Code = {
                 Clear-Rows
@@ -3688,14 +3699,28 @@ class WidgetStateTransition {
     [WidgetStateTransition] Reverse() {
         $states = $this._states.Pop()
         foreach ($widgetState in $states.GetEnumerator()) {
-            $control, $properties = $widgetState.Key, $widgetState.Value
-            foreach ($property in $properties.GetEnumerator()) {
-                # Write-Host 'REV ' $property.Key '=' $property.Value ' of ' $property.Value.GetType()
-                if ($property.Value -isnot [delegate[]]) {
-                    $control."$($property.Key)" = $property.Value
-                } else {
-                    $null = [WidgetStateTransition]::SpliceEventHandlers($control, $property.Key, $property.Value)
+
+            switch ($widgetState.Key) {
+
+                { $_ -is [System.Windows.Forms.Control] } {
+                    $control, $properties = $widgetState.Key, $widgetState.Value
+                    foreach ($property in $properties.GetEnumerator()) {
+                        # Write-Host 'REV ' $property.Key '=' $property.Value ' of ' $property.Value.GetType()
+                        if ($property.Value -isnot [delegate[]]) {
+                            $control."$($property.Key)" = $property.Value
+                        } else {
+                            $null = [WidgetStateTransition]::SpliceEventHandlers($control, $property.Key, $property.Value)
+                        }
+                    }
+                    break
                 }
+
+                { $_ -is [string] } {
+                    $name, $value = $widgetState.Key, $widgetState.Value
+                    Set-Variable -Name $name -Value $value -Scope Global
+                    break
+                }
+
             }
         }
         return $this
@@ -3750,6 +3775,17 @@ class WidgetStateTransition {
         }
 
         return $old
+    }
+
+    [WidgetStateTransition] GlobalVariables([hashtable] $variables) {
+        $state = @{}
+        foreach ($variable in $variables.GetEnumerator()) {
+            $value = Get-Variable -Name $variable.Key -Scope Global -ValueOnly -ErrorAction SilentlyContinue
+            Set-Variable -Name $variable.Key -Value $variable.Value -Scope Global -Force
+            $state[$variable.Key] = $value
+        }
+        $this._states.Push($state)
+        return $this
     }
 
 }
@@ -4246,6 +4282,9 @@ Function global:Execute-PipAction {
     $widgetStateTransition.Add($WIDGET_GROUP_COMMAND_BUTTONS[-1]).Transform(@{Text='Cancel';Enabled=$true;Click={
             $null = [System.Windows.Forms.MessageBox]::Show('Sure?', 'Cancel', [System.Windows.Forms.MessageBoxButtons]::YesNo)
         }})
+    $widgetStateTransition.GlobalVariables(@{
+            APP_MODE=([AppMode]::Working);
+        })
 
     $action = $global:actionsModel[$actionListComboBox.SelectedIndex]
 
