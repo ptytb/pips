@@ -798,7 +798,7 @@ Function Add-Buttons {
         Add-Button "List Installed" { Get-PythonPackages($false) } ;
         Add-Button "Sel All Visible" { Select-VisiblePipPackages($true) } ;
         Add-Button "Select None" { Select-PipPackages($false) } ;
-        Add-Button "Check Deps" { Check-PipDependencies } ;
+        Add-Button "Check Deps" { Check-PipDependencies } -AsyncHandler ;
         Add-Button "Execute" { Execute-PipAction } -AsyncHandler ;
     )
 }
@@ -3645,9 +3645,6 @@ class ProcessWithPipedIO {
                 throw [Exception]::new("Failed to start process $($this._process.StartInfo.FileName)")
             }
 
-            $this._process.BeginOutputReadLine()
-            $this._process.BeginErrorReadLine()
-
         } catch {
             $this._taskCompletionSource.SetException($_.Exception)
         }
@@ -3681,6 +3678,13 @@ class ProcessWithPipedIO {
         }
 
         $null = $this.Start()
+
+        if ($LogOutput) {
+            $this._process.BeginOutputReadLine()
+        }
+        if ($LogErrors) {
+            $this._process.BeginErrorReadLine()
+        }
 
         $delegate = New-RunspacedDelegate ([EventHandler] {
             param([System.Windows.Forms.Timer] $Sender)
@@ -3726,6 +3730,14 @@ class ProcessWithPipedIO {
         $outLines = $this._FlushContainerToLog($this._processOutput, 'LightBlue')
         $errLines = $this._FlushContainerToLog($this._processError, 'LightSalmon')
         return $outLines + $errLines
+    }
+
+    [System.Threading.Tasks.Task[string]] ReadToEndAsync() {
+        return $this._process.StandardOutput.ReadToEndAsync()
+    }
+
+    WaitForExit() {
+        $this._process.WaitForExit()
     }
 }
 
@@ -3810,8 +3822,8 @@ class WidgetStateTransition {
     }
 
     static [object] ReverseAllAsync() {
-        $delegate = New-RunspacedDelegate ([Action[System.Threading.Tasks.Task[object], object]]{
-            param([System.Threading.Tasks.Task[object]] $task, [object] $widgetStateTransition)
+        $delegate = New-RunspacedDelegate ([Action[System.Threading.Tasks.Task, object]]{
+            param([System.Threading.Tasks.Task] $task, [object] $widgetStateTransition)
             $null = ($widgetStateTransition -as [WidgetStateTransition]).ReverseAll()
         })
         return $delegate
@@ -4322,24 +4334,31 @@ Function global:Set-SelectedRow($selectedRow) {
 }
 
 Function Check-PipDependencies {
-    WriteLog 'Checking dependencies...'
-
     $pip_exe = Get-CurrentInterpreter 'PipExe' -Executable
     if (-not $pip_exe) {
         WriteLog 'pip is not found!'
         return
     }
 
-    $result = & $pip_exe check 2>&1
-    $result = $result -join "`n"
+    WriteLog 'Checking dependencies...'
 
-    if ($result -match 'No broken requirements found') {
-        WriteLog "OK" -Background ([Drawing.Color]::LightGreen)
-        WriteLog $result
-    } else {
-        WriteLog "NOT OK" -Background ([Drawing.Color]::LightSalmon)
-        WriteLog $result
-    }
+    $process = [ProcessWithPipedIO]::new($pip_exe, @('check'))
+    $process.StartWithLogging($false, $true)
+    $task = $process.ReadToEndAsync()
+
+    $continuation = New-RunspacedDelegate ([Action[System.Threading.Tasks.Task[string]]] {
+        param([System.Threading.Tasks.Task[string]] $task)
+        $result = $task.Result
+
+        if ($result -match 'No broken requirements found') {
+            WriteLog "OK" -Background ([Drawing.Color]::LightGreen)
+            WriteLog $result
+        } else {
+            WriteLog "NOT OK" -Background ([Drawing.Color]::LightSalmon)
+            WriteLog $result
+        }
+    })
+    return $task.ContinueWith($continuation)
 }
 
 Function global:Select-PipAction($actionName) {
