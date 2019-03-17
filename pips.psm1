@@ -4258,20 +4258,40 @@ Function Get-SearchResults($request) {
 
 Function Select-VisiblePipPackages($value) {
     $global:dataModel.BeginLoadData()
+
+    $headersSizeMode = $dataGridView.RowHeadersWidthSizeMode
+    $columnsSizeMode = $dataGridView.AutoSizeColumnsMode
+    $dataGridView.RowHeadersWidthSizeMode = [System.Windows.Forms.DataGridViewRowHeadersWidthSizeMode]::DisableResizing
+    $dataGridView.AutoSizeColumnsMode = [System.Windows.Forms.DataGridViewAutoSizeColumnsMode]::None
+
     for ($i = 0; $i -lt $dataGridView.Rows.Count; $i++) {
         if ($dataGridView.Rows[$i].DataBoundItem.Row.Type -in @('builtin', 'other') ) {
             continue
         }
         $dataGridView.Rows[$i].DataBoundItem.Row.Select = $value
     }
+
+    $dataGridView.RowHeadersWidthSizeMode = $headersSizeMode
+    $dataGridView.AutoSizeColumnsMode = $columnsSizeMode
+
     $global:dataModel.EndLoadData()
 }
 
 Function Select-PipPackages($value) {
     $global:dataModel.BeginLoadData()
+
+    $headersSizeMode = $dataGridView.RowHeadersWidthSizeMode
+    $columnsSizeMode = $dataGridView.AutoSizeColumnsMode
+    $dataGridView.RowHeadersWidthSizeMode = [System.Windows.Forms.DataGridViewRowHeadersWidthSizeMode]::DisableResizing
+    $dataGridView.AutoSizeColumnsMode = [System.Windows.Forms.DataGridViewAutoSizeColumnsMode]::None
+
     for ($i = 0; $i -lt $global:dataModel.Rows.Count; $i++) {
        $global:dataModel.Rows[$i].Select = $value
     }
+    
+    $dataGridView.RowHeadersWidthSizeMode = $headersSizeMode
+    $dataGridView.AutoSizeColumnsMode = $columnsSizeMode
+
     $global:dataModel.EndLoadData()
 }
 
