@@ -480,7 +480,7 @@ $global:actionsModel = $null
 $global:dataModel = $null  # [DataRow] keeps actual rows for the table of packages
 $isolatedCheckBox = $null
 $header = ("Select", "Package", "Installed", "Latest", "Type", "Status")
-$csv_header = ("Package", "Installed", "Latest", "Type", "Status")
+$global:csv_header = ("Package", "Installed", "Latest", "Type", "Status")
 $search_columns = ("Select", "Package", "Installed", "Description", "Type", "Status")
 $formLoaded = $false
 $outdatedOnly = $true
@@ -794,8 +794,8 @@ Function Add-Input ($handler) {
 
 Function Add-Buttons {
     $global:WIDGET_GROUP_COMMAND_BUTTONS = @(
-        Add-Button "Check Updates" { Get-PythonPackages } ;
-        Add-Button "List Installed" { Get-PythonPackages($false) } ;
+        Add-Button "Check Updates" { Get-PythonPackages } -AsyncHandler ;
+        Add-Button "List Installed" { Get-PythonPackages($false) } -AsyncHandler ;
         Add-Button "Sel All Visible" { Select-VisiblePipPackages($true) } ;
         Add-Button "Select None" { Select-PipPackages($false) } ;
         Add-Button "Check Deps" { Check-PipDependencies } -AsyncHandler ;
@@ -883,7 +883,7 @@ Function Get-PythonOtherPackages {
     return ,$otherLibs
 }
 
-Function Get-CondaPackagesHelper([bool] $outdatedOnly) {
+Function GetCondaJsonAsync([bool] $outdatedOnly) {
     $conda_exe = Get-CurrentInterpreter 'CondaExe' -Executable
     $arguments = New-Object System.Collections.ArrayList
 
@@ -901,51 +901,75 @@ Function Get-CondaPackagesHelper([bool] $outdatedOnly) {
     $null = $arguments.Add('--prefix')
     $null = $arguments.Add((Get-CurrentInterpreter 'Path'))
 
-    $items = & $conda_exe $arguments | ConvertFrom-Json
-    return ,$items
+    $process = [ProcessWithPipedIO]::new($conda_exe, $arguments)
+    $null = $process.StartWithLogging($false, $true)
+    $task = $process.ReadToEndAsync()
+    return $task
 }
 
-Function Get-CondaPackages([bool] $outdatedOnly) {
-    $condaPackages = New-Object System.Collections.ArrayList
-    $items = Get-CondaPackagesHelper $false
-    $installed = @{}
+Function GetCondaPackagesAsync([bool] $outdatedOnly) {
 
-    foreach ($item in $items) {
-        if (-not $outdatedOnly) {
-            $null = $condaPackages.Add([PSCustomObject] @{Type='conda'; Package=$item.name; 'Installed'=$item.version})
-        } else {
-            $null = $installed.Add($item.name, $item.version)
-        }
-    }
+    $continuationParseJson = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
+        param([System.Threading.Tasks.Task] $task)
 
-    if ($outdatedOnly) {
-        $items = Get-CondaPackagesHelper $outdatedOnly
-        $items.PSObject.Properties | ForEach-Object {
-            $name = $_.Name
-            $archives = $_.Value
+        [string[]] $JsonList = $task.Result
+        $outdatedOnly = $JsonList.Length -eq 2
 
-            if (($archives.Count -eq 0) -or (-not $installed.Contains($name))) {
-                return
+        $condaPackages = [System.Collections.ArrayList]::new()
+        $installed = @{}
+        $items = $JsonList[0] | ConvertFrom-Json
+
+        foreach ($item in $items) {
+            if (-not $outdatedOnly) {
+                $null = $condaPackages.Add([PSCustomObject] @{Type='conda'; Package=$item.name; 'Installed'=$item.version})
+            } else {
+                $null = $installed.Add($item.name, $item.version)
             }
+        }
 
-            foreach ($archive in $archives) {
-                [version] $version_installed = [version]::new()
-                [version] $version_updated = [version]::new()
+        if ($outdatedOnly) {
+            $items = $JsonList[1] | ConvertFrom-Json
+            $items.PSObject.Properties | ForEach-Object {
+                $name = $_.Name
+                $archives = $_.Value
 
-                $tryVIn = [version]::TryParse(($installed[$name] -replace '[^\d.]',''), [ref] $version_installed)
-                $tryVUpd = [version]::TryParse(($archive.version -replace '[^\d.]',''), [ref] $version_updated)
-
-                if (-not($tryVIn -and $tryVUpd -and ($version_installed -ge $version_updated))) {
-                    $null = $condaPackages.Add([PSCustomObject] @{Type='conda'; Package=$name;
-                        'Latest'=$archive.version;
-                        'Installed'=$installed[$name]; })
+                if (($archives.Count -eq 0) -or (-not $installed.Contains($name))) {
+                    return
                 }
 
+                foreach ($archive in $archives) {
+                    [version] $version_installed = [version]::new()
+                    [version] $version_updated = [version]::new()
+
+                    $tryVIn = [version]::TryParse(($installed[$name] -replace '[^\d.]',''), [ref] $version_installed)
+                    $tryVUpd = [version]::TryParse(($archive.version -replace '[^\d.]',''), [ref] $version_updated)
+
+                    if (-not($tryVIn -and $tryVUpd -and ($version_installed -ge $version_updated))) {
+                        $null = $condaPackages.Add([PSCustomObject] @{Type='conda'; Package=$name;
+                            'Latest'=$archive.version;
+                            'Installed'=$installed[$name]; })
+                    }
+
+                }
             }
         }
+
+        return $condaPackages
+    })
+
+    $tasks = [System.Collections.Generic.List[System.Threading.Tasks.Task[string]]]::new()
+    $taskGetInstalledJson = GetCondaJsonAsync $false
+    $null = $tasks.Add($taskGetInstalledJson)
+
+    if ($outdatedOnly) {  # get updated versions and keep only those newer than installed
+        $taskGetUpdatedJson = GetCondaJsonAsync $true
+        $null = $tasks.Add($taskGetUpdatedJson)
     }
 
-    return ,$condaPackages
+    $taskGetJsonList = [System.Threading.Tasks.Task[string]]::WhenAll($tasks)
+    $taskProcessJson = $taskGetJsonList.ContinueWith($continuationParseJson)
+
+    return $taskProcessJson
 }
 
 $actionCommands = @{
@@ -1941,18 +1965,21 @@ Function Init-PackageSearchColumns($dataTable) {
     }
 }
 
-Function global:Highlight-PythonPackages {
-    if (-not $outdatedOnly) {
-        $dataGridView.BeginInit()
-        foreach ($row in $dataGridView.Rows) {
-            if ($row.DataBoundItem.Row.Type -eq 'builtin') {
-                $row.DefaultCellStyle.BackColor = [Drawing.Color]::LightGreen
-            } elseif ($row.DataBoundItem.Row.Type -eq 'other') {
-                $row.DefaultCellStyle.BackColor = [Drawing.Color]::LightPink
-            }
-        }
-        $dataGridView.EndInit()
+Function global:HighlightPythonPackages {
+    # $global:outdatedOnly is needed because when row filter changes, we need to colorize rows again
+    if ($outdatedOnly) {
+        return
     }
+
+    $dataGridView.BeginInit()
+    foreach ($row in $dataGridView.Rows) {
+        if ($row.DataBoundItem.Row.Type -eq 'builtin') {
+            $row.DefaultCellStyle.BackColor = [Drawing.Color]::LightGreen
+        } elseif ($row.DataBoundItem.Row.Type -eq 'other') {
+            $row.DefaultCellStyle.BackColor = [Drawing.Color]::LightPink
+        }
+    }
+    $dataGridView.EndInit()
 }
 
 Function global:Open-LinkInBrowser($url) {
@@ -2641,7 +2668,7 @@ Function Generate-Form {
             Set-SelectedRow $selectedRow
         }
 
-        Highlight-PythonPackages
+        HighlightPythonPackages
     }.GetNewClosure()
 
     $global:inputFilter = $global:inputFilter
@@ -2715,7 +2742,7 @@ Function Generate-Form {
     $dataGridView.Location = New-Object Drawing.Point 7,($Script:lastWidgetTop + $Script:widgetLineHeight)
     $dataGridView.Size = New-Object Drawing.Point 800,450
     $dataGridView.ShowCellToolTips = $false
-    $dataGridView.Add_Sorted({ Highlight-PythonPackages })
+    $dataGridView.Add_Sorted({ HighlightPythonPackages })
 
     $dataGridToolTip = New-Object System.Windows.Forms.ToolTip
 
@@ -4139,100 +4166,129 @@ Function Get-SearchResults($request) {
     return @{PipCount=$pipCount; CondaCount=$condaCount; GithubCount=$githubCount; PluginCount=$pluginCount; Total=($pipCount + $condaCount + $githubCount + $pluginCount)}
 }
 
- Function Get-PythonPackages($outdatedOnly = $true) {
-    WriteLog
-    WriteLog 'Updating package list... '
+Function global:AddPackagesToTable($packages, $defaultType = [String]::Empty) {
+    $global:dataModel.BeginLoadData()
+    $headersSizeMode = $dataGridView.RowHeadersWidthSizeMode
+    $columnsSizeMode = $dataGridView.AutoSizeColumnsMode
+    $dataGridView.RowHeadersWidthSizeMode = [System.Windows.Forms.DataGridViewRowHeadersWidthSizeMode]::DisableResizing
+    $dataGridView.AutoSizeColumnsMode = [System.Windows.Forms.DataGridViewAutoSizeColumnsMode]::None
 
-    $python_exe = Get-CurrentInterpreter 'PythonExe' -Executable
-    $pip_exe = Get-CurrentInterpreter 'PipExe' -Executable
-    $conda_exe = Get-CurrentInterpreter 'CondaExe' -Executable
+    foreach ($package in $packages) {
+        $row = $global:dataModel.NewRow()
+        $row.Select = $false
+        $row.Package = $package.Package
 
-    if ($python_exe) {
-        WriteLog (& $python_exe --version 2>&1)
-    } else {
-        WriteLog 'Python is not found!'
+        $availableKeys = $package.PSObject.Properties.Name
+
+        # write-host $availableKeys
+        # Write-Host $package.Package $availableKeys
+
+        if ($availableKeys -contains 'Installed') {
+            $row.Installed = $package.Installed
+        }
+
+        if ($availableKeys -contains 'Latest') {
+            $row.Latest = $package.Latest
+        }
+
+        if (($availableKeys -contains 'Type') -and (-not [string]::IsNullOrWhiteSpace($package.Type))) {
+            $row.Type = $package.Type
+        } else {
+            $row.Type = $defaultType
+        }
+
+        $global:dataModel.Rows.Add($row)
     }
 
-    if ($pip_exe) {
-        WriteLog (& $pip_exe --version 2>&1)
-    } else {
-        WriteLog 'pip is not found!'
-    }
+    $dataGridView.RowHeadersWidthSizeMode = $headersSizeMode
+    $dataGridView.AutoSizeColumnsMode = $columnsSizeMode
+    $global:dataModel.EndLoadData()
+}
 
-    WriteLog
-
+Function Get-PythonPackages($outdatedOnly = $true) {
     Clear-Rows
     Init-PackageUpdateColumns $global:dataModel
 
+    $continuationAllDone = New-RunspacedDelegate ([Action[System.Threading.Tasks.Task]] {
+        param([System.Threading.Tasks.Task] $task)
 
-    if ($pip_exe) {
-        $args = New-Object System.Collections.ArrayList
-        $null = $args.Add('list')
-        $null = $args.Add('--format=columns')
+        [object[]] $tuplesPackagesType = $task.Result
+
+        foreach ($tuple in $tuplesPackagesType) {
+            $packages, $type = $tuple.Item1, $tuple.Item2
+            AddPackagesToTable $packages $type
+        }
+
+        # $global:outdatedOnly = $outdatedOnly
+        # HighlightPythonPackages
+
+        $pipCount = 0
+        $condaCount = 0
+        $builtinCount = 0
+        $otherCount = 0
+
+        WriteLog 'Double click or [Ctrl+Enter] a table row to open package''s home page in browser'
+
+        $count = $global:dataModel.Rows.Count
+        WriteLog "Total $count packages: $builtinCount builtin, $pipCount pip, $condaCount conda, $otherCount other"
+    })
+
+    $allTasks = [System.Collections.Generic.List[System.Threading.Tasks.Task[object]]]::new()
+
+    $python_exe = Get-CurrentInterpreter 'PythonExe' -Executable
+    if ($python_exe) {
+        # Func [Task[string], Tuple`2[System.Management.Automation.PSObject, System.String]]
+        $continuationParsePipOutput = New-RunspacedDelegate ([Func[System.Threading.Tasks.Task[string], object]] {
+            param([System.Threading.Tasks.Task[string]] $task)
+
+            $csv = $task.Result -replace ' +',' '  # ConvertFrom-Csv understands only one space between columns
+
+            $pipPackages = $csv `
+                | ConvertFrom-Csv -Header $csv_header -Delimiter ' ' `
+                | Select-Object -Skip 2  # Ignore a header line and a separator line
+
+            return [Tuple]::Create($pipPackages, 'pip')
+        })
+
+        $arguments = New-Object System.Collections.ArrayList
+        $null = $arguments.AddRange(('-m', 'pip'))
+        $null = $arguments.Add('list')
+        $null = $arguments.Add('--format=columns')
 
         if ($outdatedOnly) {
-            $null = $args.Add('--outdated')
+            $null = $arguments.Add('--outdated')
         }
 
         if ($Script:isolatedCheckBox.Checked) {
-            $null = $args.Add('--isolated')  # ignore user config
-            $null = $args.Add('--local')     # ignore global packages
+            $null = $arguments.Add('--isolated')  # ignore user config
+            $null = $arguments.Add('--local')     # ignore global packages
         }
 
-        $pip_list = & $pip_exe $args
-        $pipPackages = $pip_list `
-            | Select-Object -Skip 2 `
-            | % { $_ -replace '\s+', ' ' } `
-            | ConvertFrom-Csv -Header $csv_header -Delimiter ' ' `
-            | where { -not [String]::IsNullOrEmpty($_.Package) }
+        $process = [ProcessWithPipedIO]::new($python_exe, $arguments)
+        $null = $process.StartWithLogging($false, $true)
+        $task = $process.ReadToEndAsync()
+        $taskPipList = $task.ContinueWith($continuationParsePipOutput)
+        $null = $allTasks.Add($taskPipList)
     }
 
-    Function Add-PackagesToTable($packages, $defaultType = [String]::Empty) {
-        for ($n = 0; $n -lt $packages.Count; $n++) {
-            $row = $global:dataModel.NewRow()
-            $row.Select = $false
-            $package = $packages[$n]
-            $row.Package = $package.Package
-
-            $availableKeys = $package.PSObject.Properties.Name
-
-            # write-host $availableKeys
-            # Write-Host $package.Package $availableKeys
-
-            if ($availableKeys -contains 'Installed') {
-                $row.Installed = $package.Installed
-            }
-
-            if ($availableKeys -contains 'Latest') {
-                $row.Latest = $package.Latest
-            }
-
-            if (($availableKeys -contains 'Type') -and (-not [string]::IsNullOrWhiteSpace($package.Type))) {
-                $row.Type = $package.Type
-            } else {
-                $row.Type = $defaultType
-            }
-
-            $global:dataModel.Rows.Add($row)
-        }
-    }
-
-    $global:dataModel.BeginLoadData()
-
-    $pipCount = 0
-    $condaCount = 0
-    $builtinCount = 0
-    $otherCount = 0
-
-    if ($pip_exe) {
-        Add-PackagesToTable $pipPackages 'pip'
-        $pipCount = $pipPackages.Count
-    }
+    $conda_exe = Get-CurrentInterpreter 'CondaExe' -Executable
     if ($conda_exe) {
-        $condaPackages = Get-CondaPackages $outdatedOnly
-        Add-PackagesToTable $condaPackages 'conda'
-        $condaCount = $condaPackages.Count
+        $continuationAddCondaPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
+            param([System.Threading.Tasks.Task] $task)
+            $condaPackages = $task.Result
+            return [Tuple]::Create($condaPackages, 'conda')
+        })
+        $task = GetCondaPackagesAsync $outdatedOnly
+        $taskCondaList = $task.ContinueWith($continuationAddCondaPackages)
+        $null = $allTasks.Add($taskCondaList)
     }
+
+    $taskAllDone = [System.Threading.Tasks.Task[object]]::WhenAll($allTasks)
+    $taskAllDone.ContinueWith($continuationAllDone,
+        [System.Threading.Tasks.TaskScheduler]::FromCurrentSynchronizationContext())
+
+    return $taskAllDone
+
     if (-not $outdatedOnly) {
         $builtinPackages = Get-PythonBuiltinPackages
         Add-PackagesToTable $builtinPackages 'builtin'
@@ -4243,17 +4299,6 @@ Function Get-SearchResults($request) {
         $builtinCount = $builtinPackages.Count
         $otherCount = $otherPackages.Count
     }
-    $global:dataModel.EndLoadData()
-
-    $Script:outdatedOnly = $outdatedOnly
-    Highlight-PythonPackages
-
-    WriteLog 'Package list updated.'
-    WriteLog 'Double click or [Ctrl+Enter] a table row to open PyPi, Anaconda.com or github.com in browser'
-
-    $count = $global:dataModel.Rows.Count
-    WriteLog "Total $count packages: $builtinCount builtin, $pipCount pip, $condaCount conda, $otherCount other"
-    WriteLog
 }
 
 Function Select-VisiblePipPackages($value) {
@@ -4288,7 +4333,7 @@ Function Select-PipPackages($value) {
     for ($i = 0; $i -lt $global:dataModel.Rows.Count; $i++) {
        $global:dataModel.Rows[$i].Select = $value
     }
-    
+
     $dataGridView.RowHeadersWidthSizeMode = $headersSizeMode
     $dataGridView.AutoSizeColumnsMode = $columnsSizeMode
 
@@ -4354,16 +4399,16 @@ Function global:Set-SelectedRow($selectedRow) {
 }
 
 Function Check-PipDependencies {
-    $pip_exe = Get-CurrentInterpreter 'PipExe' -Executable
-    if (-not $pip_exe) {
-        WriteLog 'pip is not found!'
+    $python_exe = Get-CurrentInterpreter 'PythonExe' -Executable
+    if (-not $python_exe) {
+        WriteLog 'Python is not found!'
         return
     }
 
     WriteLog 'Checking dependencies...'
 
-    $process = [ProcessWithPipedIO]::new($pip_exe, @('check'))
-    $process.StartWithLogging($false, $true)
+    $process = [ProcessWithPipedIO]::new($python_exe, @('-m', 'pip', 'check'))
+    $null = $process.StartWithLogging($false, $true)
     $task = $process.ReadToEndAsync()
 
     $continuation = New-RunspacedDelegate ([Action[System.Threading.Tasks.Task[string]]] {
