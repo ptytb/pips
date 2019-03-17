@@ -1,5 +1,17 @@
 ﻿$PSDefaultParameterValues['*:Encoding'] = 'UTF8'
 
+
+$pips_pipe_instance = [System.IO.Directory]::GetFiles("\\.\\pipe\\") | Where-Object { $_ -match 'pips_spelling_server'}
+if ($pips_pipe_instance) {
+    [System.Windows.Forms.MessageBox]::Show(
+        "There's another pips instance running, exiting.",
+        "pips",
+        [System.Windows.Forms.MessageBoxButtons]::OK)
+    ${function:global:Start-Main} = { Exit }
+    Return
+}
+
+
 $global:FRAMEWORK_VERSION = [version]([Runtime.InteropServices.RuntimeInformation]::FrameworkDescription -replace '^.[^\d.]*','')
 
 [Void][Reflection.Assembly]::LoadWithPartialName("System")
@@ -165,14 +177,66 @@ public class RichTextBoxEx : System.Windows.Forms.RichTextBox
 $global:RichTextBox_t = [RichTextBoxEx]
 
 
-$pips_pipe_instance = [System.IO.Directory]::GetFiles("\\.\\pipe\\") | Where-Object { $_ -match 'pips_spelling_server'}
-if ($pips_pipe_instance) {
-    [System.Windows.Forms.MessageBox]::Show(
-        "There's another pips instance running, exiting.",
-        "pips",
-        [System.Windows.Forms.MessageBoxButtons]::OK)
-    ${function:global:Start-Main} = { Exit }
-    Return
+Add-Type -Name TerminateGracefully -Namespace Console -MemberDefinition @'
+// https://stackoverflow.com/questions/813086/can-i-send-a-ctrl-c-sigint-to-an-application-on-windows
+// https://docs.microsoft.com/en-us/windows/console/generateconsolectrlevent
+
+delegate bool ConsoleCtrlDelegate(CtrlTypes CtrlType);
+
+// Enumerated type for the control messages sent to the handler routine
+public enum CtrlTypes : uint
+{
+  CTRL_C_EVENT = 0,
+  CTRL_BREAK_EVENT,
+  CTRL_CLOSE_EVENT,
+  CTRL_LOGOFF_EVENT = 5,
+  CTRL_SHUTDOWN_EVENT
+}
+
+[DllImport("kernel32.dll", SetLastError = true)]
+static extern bool AllocConsole();
+
+[DllImport("kernel32.dll", SetLastError = true)]
+static extern int AttachConsole(uint dwProcessId);
+
+[DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
+static extern bool FreeConsole();
+
+[DllImport("kernel32.dll")]
+static extern bool SetConsoleCtrlHandler(ConsoleCtrlDelegate HandlerRoutine, bool Add);
+
+[DllImport("kernel32.dll")]
+[return: MarshalAs(UnmanagedType.Bool)]
+private static extern bool GenerateConsoleCtrlEvent(CtrlTypes dwCtrlEvent, uint dwProcessGroupId);
+
+public static void StopProgram(int pid, CtrlTypes signal)
+{
+  if (AttachConsole((uint) pid) == 0) {
+    AllocConsole();
+    AttachConsole((uint) pid);
+  }
+
+  SetConsoleCtrlHandler(null, true);
+  GenerateConsoleCtrlEvent(signal, 0);
+  FreeConsole();
+  System.Diagnostics.Process.GetProcessById(pid).WaitForExit(2000);
+  SetConsoleCtrlHandler(null, false);
+}
+'@
+
+Function global:TryTerminateGracefully([System.Diagnostics.Process] $process) {
+    [Console.TerminateGracefully]::StopProgram($process.Id, [Console.TerminateGracefully+CtrlTypes]::CTRL_C_EVENT)
+    if ($process.HasExited) {
+        return
+    }
+    [Console.TerminateGracefully]::StopProgram($process.Id, [Console.TerminateGracefully+CtrlTypes]::CTRL_BREAK_EVENT)
+    if ($process.HasExited) {
+        return
+    }
+    try {
+        $process.StandardInput.Close()
+    } catch { }
+    $process.Kill()
 }
 
 
@@ -3630,7 +3694,7 @@ class ProcessWithPipedIO {
     Kill() {
         $this._process.CancelOutputRead()
         $this._process.CancelErrorRead()
-        $this._process.Kill()
+        TryTerminateGracefully($this._process)
     }
 
     hidden [int] _FlushContainerToLog($container, $color) {
@@ -4280,7 +4344,10 @@ Function global:Execute-PipAction {
     )
     $widgetStateTransition.AddRange($disableThemWhileWorking).Transform(@{Enabled=$false})
     $widgetStateTransition.Add($WIDGET_GROUP_COMMAND_BUTTONS[-1]).Transform(@{Text='Cancel';Enabled=$true;Click={
-            $null = [System.Windows.Forms.MessageBox]::Show('Sure?', 'Cancel', [System.Windows.Forms.MessageBoxButtons]::YesNo)
+            $response = [System.Windows.Forms.MessageBox]::Show('Sure?', 'Cancel', [System.Windows.Forms.MessageBoxButtons]::YesNo)
+            if ($response -eq 'Yes') {
+
+            }
         }})
     $widgetStateTransition.GlobalVariables(@{
             APP_MODE=([AppMode]::Working);
