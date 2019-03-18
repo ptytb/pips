@@ -2857,7 +2857,7 @@ Function Generate-Form {
                 $logTo = $logView.TextLength
 
                 if (-not $NoNewline) {
-                    $logView.AppendText("`n")
+                    $logView.AppendText([Environment]::NewLine)
                 }
             }
 
@@ -2879,11 +2879,11 @@ Function Generate-Form {
             $null = $SendMessage.Invoke($logView.Handle, $WM_VSCROLL, $SB_PAGEBOTTOM, 0)
         }.GetNewClosure()
 
-        $WritePipLogDelegate = [EventHandler] {
+        $WritePipLogDelegate = New-RunspacedDelegate ([EventHandler] {
             param($Sender, $EventArgs)
             $Arguments = $EventArgs.Arguments
-            $null = & $FuncWriteLog @Arguments
-        }.GetNewClosure()
+            $null = & $FuncWriteLog @arguments
+        }.GetNewClosure())
 
         ${function:global:WriteLog} = {
             [CmdletBinding()]
@@ -2946,10 +2946,10 @@ Function Generate-Form {
         }
         $row = $viewRow.DataBoundItem.Row
 
-        $logView.SelectAll()
-        $logView.SelectionBackColor = $logView.BackColor
-
         if (Get-Member -inputobject $row -name "LogTo" -Membertype Properties) {
+            $logView.SelectAll()
+            $logView.SelectionBackColor = $logView.BackColor
+
             $logView.Select($row.LogFrom, $row.LogTo)
             $logView.SelectionBackColor = [Drawing.Color]::Yellow
             $logView.ScrollToCaret()
@@ -3643,6 +3643,9 @@ class ProcessWithPipedIO {
         $startInfo.RedirectStandardOutput = $true
         $startInfo.RedirectStandardError = $true
 
+        $startInfo.StandardOutputEncoding = [Text.Encoding]::UTF8
+        $startInfo.StandardErrorEncoding = [Text.Encoding]::UTF8
+
         $process = [System.Diagnostics.Process]::new()
         $process.StartInfo = $startInfo
         $process.EnableRaisingEvents = $true
@@ -3698,7 +3701,17 @@ class ProcessWithPipedIO {
 
             $ErrorCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
                 param($Sender, $EventArgs)
-                $null = $self._processError.Add($EventArgs.Data)
+                $line = $EventArgs.Data
+
+                if ([string]::IsNullOrWhiteSpace($line)) {
+                    return
+                }
+
+                if ($self._process.HasExited) {
+                    WriteLog $line -Background LightSalmon
+                } else {
+                    $null = $self._processError.Add($line)
+                }
             }.GetNewClosure())
 
             $this._process.add_ErrorDataReceived($ErrorCallback)
@@ -4238,8 +4251,8 @@ Function Get-PythonPackages($outdatedOnly = $true) {
     $python_exe = Get-CurrentInterpreter 'PythonExe' -Executable
     if ($python_exe) {
         # Func [Task[string], Tuple`2[System.Management.Automation.PSObject, System.String]]
-        $continuationParsePipOutput = New-RunspacedDelegate ([Func[System.Threading.Tasks.Task[string], object]] {
-            param([System.Threading.Tasks.Task[string]] $task)
+        $continuationParsePipOutput = New-RunspacedDelegate ([Func[System.Threading.Tasks.Task, object]] {
+            param([System.Threading.Tasks.Task] $task)
 
             $csv = $task.Result -replace ' +',' '  # ConvertFrom-Csv understands only one space between columns
 
@@ -4283,9 +4296,15 @@ Function Get-PythonPackages($outdatedOnly = $true) {
         $null = $allTasks.Add($taskCondaList)
     }
 
-    $taskAllDone = [System.Threading.Tasks.Task[object]]::WhenAll($allTasks)
-    $taskAllDone.ContinueWith($continuationAllDone,
-        [System.Threading.Tasks.TaskScheduler]::FromCurrentSynchronizationContext())
+    WriteLog $allTasks -Background DarkCyan -Foreground Yellow
+
+    try {
+        $taskAllDone = [System.Threading.Tasks.Task]::WhenAll($allTasks)
+        $taskAllDone.ContinueWith($continuationAllDone,
+            [System.Threading.Tasks.TaskScheduler]::FromCurrentSynchronizationContext())
+    } catch [System.AggregateException] {
+        WriteLog "One or more tasks have failed" -Background DarkRed
+    }
 
     return $taskAllDone
 
@@ -4423,7 +4442,8 @@ Function Check-PipDependencies {
             WriteLog $result
         }
     })
-    return $task.ContinueWith($continuation)
+    return $task.ContinueWith($continuation,
+        [System.Threading.Tasks.TaskScheduler]::FromCurrentSynchronizationContext())
 }
 
 Function global:Select-PipAction($actionName) {
@@ -4915,8 +4935,8 @@ Function Load-Plugins() {
 }
 
 Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
-    $env:PYTHONIOENCODING="UTF-16"
-    $env:LC_CTYPE="UTF-16"
+    $env:PYTHONIOENCODING="UTF-8"
+    $env:LC_CTYPE="UTF-8"
 
     if (-not $Debug) {
        Set-StrictMode -Off
