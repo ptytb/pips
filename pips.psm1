@@ -903,7 +903,7 @@ Function GetCondaJsonAsync([bool] $outdatedOnly) {
 
     $process = [ProcessWithPipedIO]::new($conda_exe, $arguments)
     $null = $process.StartWithLogging($false, $true)
-    $task = $process.ReadToEndAsync()
+    $task = $process.ReadOutputToEndAsync()
     return $task
 }
 
@@ -912,10 +912,15 @@ Function GetCondaPackagesAsync([bool] $outdatedOnly) {
     $continuationParseJson = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
         param([System.Threading.Tasks.Task] $task)
 
+        $condaPackages = [System.Collections.Generic.List[PSCustomObject]]::new()
+
+        trap {
+            return ,$condaPackages
+        }
+
         [string[]] $JsonList = $task.Result
         $outdatedOnly = $JsonList.Length -eq 2
 
-        $condaPackages = [System.Collections.Generic.List[PSCustomObject]]::new()
         $installed = @{}
         $items = $JsonList[0] | ConvertFrom-Json
 
@@ -2811,8 +2816,9 @@ Function Generate-Form {
         $null = [TextBoxNavigationHook]::new($Sender)
 
         $logView = $Sender
+        $global:logView = $logView
 
-        $FuncWriteLog = {
+        $global:FuncWriteLog = ({
             param(
                 [object[]] $Lines,
                 [bool] $UpdateLastLine,
@@ -2877,13 +2883,13 @@ Function Generate-Form {
             $null = $SendMessage.Invoke($logView.Handle, $WM_SETREDRAW, 1, 0)
             $null = $SendMessage.Invoke($logView.Handle, $EM_SETEVENTMASK, 0, $eventMask)
             $null = $SendMessage.Invoke($logView.Handle, $WM_VSCROLL, $SB_PAGEBOTTOM, 0)
-        }.GetNewClosure()
+        })
 
         $WritePipLogDelegate = New-RunspacedDelegate ([EventHandler] {
             param($Sender, $EventArgs)
             $Arguments = $EventArgs.Arguments
             $null = & $FuncWriteLog @arguments
-        }.GetNewClosure())
+        })
 
         ${function:global:WriteLog} = {
             [CmdletBinding()]
@@ -2914,7 +2920,7 @@ Function Generate-Form {
             } else {
                 $null = & $FuncWriteLog @arguments
             }
-        }.GetNewClosure()
+        }
 
         ${function:global:ClearLog} = {
             $logView.Clear()
@@ -3628,6 +3634,8 @@ class ProcessWithPipedIO {
     hidden [System.Threading.Tasks.TaskCompletionSource[int]] $_taskCompletionSource  # Keeps the exit code of a process
     hidden [System.Collections.Generic.List[string]] $_processOutput
     hidden [System.Collections.Generic.List[string]] $_processError
+    hidden [bool] $_processOutputEnded = $false
+    hidden [bool] $_processErrorEnded = $false
     hidden [System.Windows.Forms.Timer] $_timer
 
     ProcessWithPipedIO($Command, $Arguments) {
@@ -3656,7 +3664,7 @@ class ProcessWithPipedIO {
 
         $ExitedCallback = New-RunspacedDelegate ([EventHandler] {
             param($Sender, $EventArgs)
-            if ($self._timer -eq $null) {
+            if (($self._timer -eq $null) -and $self._processOutputEnded -and $self._processErrorEnded) {
                 $null = $self._taskCompletionSource.TrySetResult($self._process.ExitCode)
             }
         }.GetNewClosure())
@@ -3668,6 +3676,8 @@ class ProcessWithPipedIO {
     }
 
     [System.Threading.Tasks.Task[int]] Start() {
+        $started = $false
+
         try {
             $started = $this._process.Start()
 
@@ -3679,39 +3689,45 @@ class ProcessWithPipedIO {
             $this._taskCompletionSource.SetException($_.Exception)
         }
 
+        if ($started) {
+            try {
+                $this._process.StandardInput.Close()
+            } catch { }
+        }
+
         return $this._taskCompletionSource.Task
     }
 
     [System.Threading.Tasks.Task[int]] StartWithLogging([bool] $LogOutput, [bool] $LogErrors) {
         $self = $this
 
-        if ($LogOutput) {
+        if ($LogOutput) {  # ReadOutputToEndAsync() is supposed to be called otherwise!
             $this._processOutput = [System.Collections.Generic.List[string]]::new()
-
             $OutputCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
                 param($Sender, $EventArgs)
-                $null = $self._processOutput.Add($EventArgs.Data)
+                $line = $EventArgs.Data
+                if ($line -eq $null) {  # IMPORTANT
+                    $self._processOutputEnded = $true
+                } else {
+                    $null = $self._processOutput.Add($line)
+                }
             }.GetNewClosure())
-
             $this._process.add_OutputDataReceived($OutputCallback)
         }
 
         if ($LogErrors) {
             $this._processError = [System.Collections.Generic.List[string]]::new()
-
-            $ErrorCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
-                param($Sender, $EventArgs)
-                $line = $EventArgs.Data
-
-                if ([string]::IsNullOrWhiteSpace($line)) {
-                    return
-                }
-
-                $null = $self._processError.Add($line)
-            }.GetNewClosure())
-
-            $this._process.add_ErrorDataReceived($ErrorCallback)
         }
+        $ErrorCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
+            param($Sender, $EventArgs)
+            $line = $EventArgs.Data
+            if ($line -eq $null) {  # IMPORTANT
+                $self._processErrorEnded = $true
+            } elseif ($LogErrors) {
+                $null = $self._processError.Add($line)
+            }
+        }.GetNewClosure())
+        $this._process.add_ErrorDataReceived($ErrorCallback)
 
         if ($LogOutput -or $LogErrors) {
             $this._timer = [System.Windows.Forms.Timer]::new()
@@ -3721,10 +3737,8 @@ class ProcessWithPipedIO {
                 $self = $Sender.Tag
                 $count = $self.FlushBuffersToLog()
 
-                if ($self._process.HasExited -and ($count -eq 0)) {
+                if ($self._process.HasExited -and $self._processOutputEnded -and -$self._processErrorEnded -and ($count -eq 0)) {
                     $Sender.Stop()
-                    $self._process.WaitForExit()
-                    $null = $self.FlushBuffersToLog()
                     $null = $self._taskCompletionSource.TrySetResult($self._process.ExitCode)
                 }
             })
@@ -3775,8 +3789,19 @@ class ProcessWithPipedIO {
         return $outLines + $errLines
     }
 
-    [System.Threading.Tasks.Task[string]] ReadToEndAsync() {
-        return $this._process.StandardOutput.ReadToEndAsync()
+    [System.Threading.Tasks.Task[string]] ReadOutputToEndAsync() {
+        $taskCompletionSource = [System.Threading.Tasks.TaskCompletionSource[string]]::new()
+
+        $continuationReadingDone = New-RunspacedDelegate ([Action[System.Threading.Tasks.Task[string], object]] {
+            param([System.Threading.Tasks.Task[string]] $task, [object] $locals)
+
+            $locals.tcs.SetResult($task.Result)
+            $locals.self._processOutputEnded = $true
+        })
+        $taskRead = $this._process.StandardOutput.ReadToEndAsync()
+        $null = $taskRead.ContinueWith($continuationReadingDone, @{ self=$this; tcs=$taskCompletionSource })
+
+        return $taskCompletionSource.Task
     }
 
     WaitForExit() {
@@ -4282,7 +4307,7 @@ Function Get-PythonPackages($outdatedOnly = $true) {
 
         $process = [ProcessWithPipedIO]::new($python_exe, $arguments)
         $null = $process.StartWithLogging($false, $true)
-        $task = $process.ReadToEndAsync()
+        $task = $process.ReadOutputToEndAsync()
         $taskPipList = $task.ContinueWith($continuationParsePipOutput)
         $null = $allTasks.Add($taskPipList)
     }
@@ -4424,29 +4449,34 @@ Function Check-PipDependencies {
     $python_exe = Get-CurrentInterpreter 'PythonExe' -Executable
     if (-not $python_exe) {
         WriteLog 'Python is not found!'
-        return
+        throw [Exception]::new("Python is not found!")
     }
 
     WriteLog 'Checking dependencies...'
 
     $process = [ProcessWithPipedIO]::new($python_exe, @('-m', 'pip', 'check'))
-    $null = $process.StartWithLogging($false, $true)
-    $task = $process.ReadToEndAsync()
+    $taskProcessDone = $process.StartWithLogging($false, $true)
+    $taskReadOutput = $process.ReadOutputToEndAsync()
 
-    $continuation = New-RunspacedDelegate ([Action[System.Threading.Tasks.Task[string]]] {
+    $continuationReport = New-RunspacedDelegate ([Action[System.Threading.Tasks.Task[string]]] {
         param([System.Threading.Tasks.Task[string]] $task)
         $result = $task.Result
 
         if ($result -match 'No broken requirements found') {
             WriteLog "Dependencies are OK" -Background ([Drawing.Color]::LightGreen)
-            WriteLog $result
         } else {
             WriteLog "Dependencies are NOT OK" -Background ([Drawing.Color]::LightSalmon)
             WriteLog $result
         }
     })
-    return $task.ContinueWith($continuation,
+    $taskReportLogged = $taskReadOutput.ContinueWith($continuationReport,
         [System.Threading.Tasks.TaskScheduler]::FromCurrentSynchronizationContext())
+
+    $allTasks = [System.Collections.Generic.List[System.Threading.Tasks.Task]]::new()
+    $null = $allTasks.Add($taskProcessDone)
+    $null = $allTasks.Add($taskReportLogged)
+
+    return [System.Threading.Tasks.Task]::WhenAll($allTasks)
 }
 
 Function global:Select-PipAction($actionName) {
@@ -4996,6 +5026,8 @@ Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
             }
 
             Write-Host $Exception.StackTrace @color
+            Write-Host ('-' * 70) @color
+            Write-Host (Get-PSCallStack | Format-Table -AutoSize | Out-String) @color
             Write-Host ('=' * 70) @color
 
             Show-ConsoleWindow $true
