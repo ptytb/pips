@@ -3707,14 +3707,31 @@ class ProcessWithPipedIO {
                     return
                 }
 
-                if ($self._process.HasExited) {
-                    WriteLog $line -Background LightSalmon
-                } else {
-                    $null = $self._processError.Add($line)
-                }
+                $null = $self._processError.Add($line)
             }.GetNewClosure())
 
             $this._process.add_ErrorDataReceived($ErrorCallback)
+        }
+
+        if ($LogOutput -or $LogErrors) {
+            $this._timer = [System.Windows.Forms.Timer]::new()
+
+            $delegate = New-RunspacedDelegate ([EventHandler] {
+                param([System.Windows.Forms.Timer] $Sender)
+                $self = $Sender.Tag
+                $count = $self.FlushBuffersToLog()
+
+                if ($self._process.HasExited -and ($count -eq 0)) {
+                    $Sender.Stop()
+                    $self._process.WaitForExit()
+                    $null = $self.FlushBuffersToLog()
+                    $null = $self._taskCompletionSource.TrySetResult($self._process.ExitCode)
+                }
+            })
+
+            $this._timer.Tag = $self
+            $this._timer.Interval = 75
+            $this._timer.add_Tick($delegate)
         }
 
         $null = $this.Start()
@@ -3726,23 +3743,9 @@ class ProcessWithPipedIO {
             $this._process.BeginErrorReadLine()
         }
 
-        $delegate = New-RunspacedDelegate ([EventHandler] {
-            param([System.Windows.Forms.Timer] $Sender)
-            $self = $Sender.Tag
-            $count = $self.FlushBuffersToLog()
-
-            if ($self._process.HasExited -and ($count -eq 0)) {
-                $Sender.Stop()
-                $null = $self._taskCompletionSource.TrySetResult($self._process.ExitCode)
-                $self._timer = $null
-            }
-        })
-
-        $this._timer = [System.Windows.Forms.Timer]::new()
-        $this._timer.Tag = $self
-        $this._timer.Interval = 75
-        $this._timer.add_Tick($delegate)
-        $this._timer.Start()
+        if ($LogOutput -or $LogErrors) {
+            $this._timer.Start()
+        }
 
         return $this._taskCompletionSource.Task
     }
@@ -4296,7 +4299,7 @@ Function Get-PythonPackages($outdatedOnly = $true) {
         $null = $allTasks.Add($taskCondaList)
     }
 
-    WriteLog $allTasks -Background DarkCyan -Foreground Yellow
+    # WriteLog $allTasks -Background DarkCyan -Foreground Yellow
 
     try {
         $taskAllDone = [System.Threading.Tasks.Task]::WhenAll($allTasks)
