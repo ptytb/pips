@@ -3790,18 +3790,13 @@ class ProcessWithPipedIO {
     }
 
     [System.Threading.Tasks.Task[string]] ReadOutputToEndAsync() {
-        $taskCompletionSource = [System.Threading.Tasks.TaskCompletionSource[string]]::new()
-
-        $continuationReadingDone = New-RunspacedDelegate ([Action[System.Threading.Tasks.Task[string], object]] {
-            param([System.Threading.Tasks.Task[string]] $task, [object] $locals)
-
-            $locals.tcs.SetResult($task.Result)
+        $continuationReadingDone = New-RunspacedDelegate ([Action[System.Threading.Tasks.Task, object]] {
+            param([System.Threading.Tasks.Task] $task, [object] $locals)
             $locals.self._processOutputEnded = $true
         })
         $taskRead = $this._process.StandardOutput.ReadToEndAsync()
-        $null = $taskRead.ContinueWith($continuationReadingDone, @{ self=$this; tcs=$taskCompletionSource })
-
-        return $taskCompletionSource.Task
+        $taskSetOutputEnded = $taskRead.ContinueWith($continuationReadingDone, @{ self=$this; })
+        return $taskRead
     }
 
     WaitForExit() {
