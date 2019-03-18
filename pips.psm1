@@ -2916,7 +2916,7 @@ Function Generate-Form {
                 $EventArgs = MakeEvent @{
                     Arguments=$arguments
                 }
-                $null = $logView.Invoke($WritePipLogDelegate, ($logView, $EventArgs))
+                $null = $logView.BeginInvoke($WritePipLogDelegate, ($logView, $EventArgs))
             } else {
                 $null = & $FuncWriteLog @arguments
             }
