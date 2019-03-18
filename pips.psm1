@@ -915,7 +915,7 @@ Function GetCondaPackagesAsync([bool] $outdatedOnly) {
         [string[]] $JsonList = $task.Result
         $outdatedOnly = $JsonList.Length -eq 2
 
-        $condaPackages = [System.Collections.ArrayList]::new()
+        $condaPackages = [System.Collections.Generic.List[PSCustomObject]]::new()
         $installed = @{}
         $items = $JsonList[0] | ConvertFrom-Json
 
@@ -929,12 +929,12 @@ Function GetCondaPackagesAsync([bool] $outdatedOnly) {
 
         if ($outdatedOnly) {
             $items = $JsonList[1] | ConvertFrom-Json
-            $items.PSObject.Properties | ForEach-Object {
+            foreach ($_ in $items.PSObject.Properties.GetEnumerator()) { # ForEach-Object doesn't work here
                 $name = $_.Name
                 $archives = $_.Value
 
                 if (($archives.Count -eq 0) -or (-not $installed.Contains($name))) {
-                    return
+                    continue
                 }
 
                 foreach ($archive in $archives) {
@@ -954,7 +954,7 @@ Function GetCondaPackagesAsync([bool] $outdatedOnly) {
             }
         }
 
-        return $condaPackages
+        return ,$condaPackages
     })
 
     $tasks = [System.Collections.Generic.List[System.Threading.Tasks.Task[string]]]::new()
@@ -2320,7 +2320,7 @@ Function Add-EnvToolButtonMenu {
                     Generate-FormEnvironmentVariables $interpreter
                 } else {
                     $path = $interpreter.Path
-                    WriteLog "WARNING: Editing global variables for global interpreter $path"
+                    WriteLog "$path is not a venv. Editing system-wide environment variables." -Background 'LightSalmon'
                     & rundll32 sysdm.cpl,EditEnvironmentVariables
                 }
             };
@@ -4435,10 +4435,10 @@ Function Check-PipDependencies {
         $result = $task.Result
 
         if ($result -match 'No broken requirements found') {
-            WriteLog "OK" -Background ([Drawing.Color]::LightGreen)
+            WriteLog "Dependencies are OK" -Background ([Drawing.Color]::LightGreen)
             WriteLog $result
         } else {
-            WriteLog "NOT OK" -Background ([Drawing.Color]::LightSalmon)
+            WriteLog "Dependencies are NOT OK" -Background ([Drawing.Color]::LightSalmon)
             WriteLog $result
         }
     })
