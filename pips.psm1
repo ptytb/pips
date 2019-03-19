@@ -870,7 +870,7 @@ Function Get-PythonOtherPackages {
     return ,$otherLibs
 }
 
-Function GetCondaJsonAsync([bool] $outdatedOnly) {
+Function global:GetCondaJsonAsync([bool] $outdatedOnly) {
     $conda_exe = Get-CurrentInterpreter 'CondaExe' -Executable
     $arguments = New-Object System.Collections.ArrayList
 
@@ -894,7 +894,7 @@ Function GetCondaJsonAsync([bool] $outdatedOnly) {
     return $task
 }
 
-Function GetCondaPackagesAsync([bool] $outdatedOnly) {
+Function global:GetCondaPackagesAsync([bool] $outdatedOnly) {
 
     $continuationParseJson = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
         param([System.Threading.Tasks.Task] $task)
