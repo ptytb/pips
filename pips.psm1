@@ -4577,9 +4577,11 @@ Function global:ExecutePipAction {
                 if ($task.IsCompleted -and (-not $task.IsFaulted)) {
                     $exitCode = $task.Result
                     WriteLog "Exited with code $exitCode" -Background DarkGreen -Foreground White
+                    $locals.functionContext.tasksOkay += 1
                 } else {
                     $message = $task.Exception.InnerException
                     WriteLog "Failed: $message" -Background DarkRed -Foreground White
+                    $locals.functionContext.tasksFailed += 1
                 }
 
                 $global:dataModel.Columns['Status'].ReadOnly = $false
@@ -4593,6 +4595,7 @@ Function global:ExecutePipAction {
                 dataRow=$dataRow;
                 process=$process;
                 logFrom=$logFrom;
+                functionContext=$FunctionContext;
             }
             $taskReport = $taskProcessDone.ContinueWith($continuationReport, $locals, $global:UI_SYNCHRONIZATION_CONTEXT)
             return $taskReport
