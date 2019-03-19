@@ -875,7 +875,7 @@ Function GetCondaJsonAsync([bool] $outdatedOnly) {
     $null = $arguments.Add((Get-CurrentInterpreter 'Path'))
 
     $process = [ProcessWithPipedIO]::new($conda_exe, $arguments)
-    $null = $process.StartWithLogging($false, $true)
+    $taskProcessDone = $process.StartWithLogging($false, $true)
     $task = $process.ReadOutputToEndAsync()
     return $task
 }
@@ -4322,14 +4322,13 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
         }
 
         $process = [ProcessWithPipedIO]::new($python_exe, $arguments)
-        $null = $process.StartWithLogging($false, $true)
-        $task = $process.ReadOutputToEndAsync()
-        $taskPipList = $task.ContinueWith($continuationParsePipOutput)
+        $taskProcessDone  = $process.StartWithLogging($false, $true)
+        $taskReadOutput = $process.ReadOutputToEndAsync()
+        $taskPipList = $taskReadOutput.ContinueWith($continuationParsePipOutput, $global:UI_SYNCHRONIZATION_CONTEXT)
         $null = $allTasks.Add($taskPipList)
     }
 
-    # $conda_exe = Get-CurrentInterpreter 'CondaExe' -Executable
-    $conda_exe = $false
+    $conda_exe = Get-CurrentInterpreter 'CondaExe' -Executable
     if ($conda_exe) {
         $continuationAddCondaPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
             param([System.Threading.Tasks.Task] $task)
@@ -4337,7 +4336,7 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
             return [Tuple]::Create($condaPackages, 'conda')
         })
         $task = GetCondaPackagesAsync $outdatedOnly
-        $taskCondaList = $task.ContinueWith($continuationAddCondaPackages)
+        $taskCondaList = $task.ContinueWith($continuationAddCondaPackages, $global:UI_SYNCHRONIZATION_CONTEXT)
         $null = $allTasks.Add($taskCondaList)
     }
 
