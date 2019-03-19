@@ -110,9 +110,17 @@ Function global:ApplyAsync([object] $FunctionContext, [object] $Queue, [Func[obj
         if ($queue.Count -gt 0) {
             $element = $queue.Dequeue()
             $taskFromFunction = $locals.function.Invoke($element, $locals.FunctionContext)
-            $null = $taskFromFunction.ContinueWith($locals.iterator, $locals, $global:UI_SYNCHRONIZATION_CONTEXT)
+            $null = $taskFromFunction.ContinueWith($locals.iterator, $locals,
+                [System.Threading.CancellationToken]::None,
+                ([System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously -bor
+                    [System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent),
+                $global:UI_SYNCHRONIZATION_CONTEXT)
         } else {
-            $null = $task.ContinueWith($locals.Finally, $locals.FunctionContext, $global:UI_SYNCHRONIZATION_CONTEXT)
+            $null = $task.ContinueWith($locals.Finally, $locals.FunctionContext,
+                [System.Threading.CancellationToken]::None,
+                ([System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously -bor
+                    [System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent),
+                $global:UI_SYNCHRONIZATION_CONTEXT)
         }
     })
 
@@ -125,7 +133,11 @@ Function global:ApplyAsync([object] $FunctionContext, [object] $Queue, [Func[obj
     }
 
     $t = [System.Threading.Tasks.Task]::FromResult(@{})
-    $null = $t.ContinueWith($iterator, $locals, $global:UI_SYNCHRONIZATION_CONTEXT)
+    $null = $t.ContinueWith($iterator, $locals,
+        [System.Threading.CancellationToken]::None,
+        ([System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously -bor
+            [System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent),
+            $global:UI_SYNCHRONIZATION_CONTEXT)
 }
 
 
@@ -273,7 +285,7 @@ $continuation = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task[Obje
     [bool] $Global:SuggestionsWorking = $false
 });
 
-$task.ContinueWith($continuation);
+$null = $task.ContinueWith($continuation);
 $task.Start()
 
 
@@ -450,13 +462,11 @@ $global:dataGridView = $null
 $global:inputFilter = $null
 $global:actionsModel = $null
 $global:dataModel = $null  # [DataRow] keeps actual rows for the table of packages
-$isolatedCheckBox = $null
-$header = ("Select", "Package", "Installed", "Latest", "Type", "Status")
+$global:header = ("Select", "Package", "Installed", "Latest", "Type", "Status")
 $global:csv_header = ("Package", "Installed", "Latest", "Type", "Status")
-$search_columns = ("Select", "Package", "Installed", "Description", "Type", "Status")
-$formLoaded = $false
-$outdatedOnly = $true
-$interpreters = $null
+$global:search_columns = ("Select", "Package", "Installed", "Description", "Type", "Status")
+$global:outdatedOnly = $true
+$global:interpreters = $null
 $global:autoCompleteIndex = $null
 $Global:interpretersComboBox = $null
 
@@ -663,7 +673,7 @@ Function global:WriteLog {
 Function Add-TopWidget($widget, $span=1) {
     $widget.Location = New-Object Drawing.Point $lastWidgetLeft,$lastWidgetTop
     $widget.size = New-Object Drawing.Point ($span*100-5),$widgetLineHeight
-    $Script:form.Controls.Add($widget)
+    $global:form.Controls.Add($widget)
     $Script:lastWidgetLeft = $lastWidgetLeft + ($span*100)
 }
 
@@ -685,7 +695,11 @@ Function Add-Button ($name, $handler, [switch] $AsyncHandler) {
             $widgetStateTransition = WidgetStateTransitionForCommandButton $button
             $doReverseWidgetState = [WidgetStateTransition]::ReverseAllAsync()
             $task = $handler.Invoke($Sender, $EventArgs)
-            $null = $task.ContinueWith($doReverseWidgetState, $widgetStateTransition, $global:UI_SYNCHRONIZATION_CONTEXT)
+            $null = $task.ContinueWith($doReverseWidgetState, $widgetStateTransition,
+                [System.Threading.CancellationToken]::None,
+                ([System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously -bor
+                    [System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent),
+                    $global:UI_SYNCHRONIZATION_CONTEXT)
         }.GetNewClosure())
         $button.Add_Click($wrappedHandler)
     } else {
@@ -696,7 +710,7 @@ Function Add-Button ($name, $handler, [switch] $AsyncHandler) {
 }
 
 Function Add-ButtonMenu ($text, $tools, $onclick) {
-    $form = $script:form  # to be captured by $handler's closure
+    $form = $global:form  # to be captured by $handler's closure
 
     $handler = {
         param($button)
@@ -739,7 +753,7 @@ Function Add-ButtonMenu ($text, $tools, $onclick) {
         }.GetNewClosure())
 
         $point = New-Object System.Drawing.Point ($button.Location.X, $button.Bottom)
-        $menuStrip.Show($Script:form.PointToScreen($point))
+        $menuStrip.Show($global:form.PointToScreen($point))
     }.GetNewClosure()
 
     $button = Add-Button $text $handler
@@ -1097,7 +1111,7 @@ x = Package doesn't exist in index
     $actionListComboBox = New-Object System.Windows.Forms.ComboBox
     $actionListComboBox.DataSource = $actionsModel
     $actionListComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-    Add-TopWidget $actionListComboBox 1.25
+    Add-TopWidget $actionListComboBox 2.0
 
     return $actionListComboBox
 }
@@ -1230,64 +1244,6 @@ Function Add-CheckBox($text, $code) {
     return ($checkBox)
 }
 
-Function Toggle-VirtualEnv ($state) {
-    if (-not $Script:formLoaded) {
-        return
-    }
-
-    Function Guess-EnvPath ($fileName) {
-        $paths = @('.\env\Scripts\'; '.\Scripts\'; '.env\')
-        foreach ($tryPath in $paths) {
-            if (Test-Path ($tryPath + $fileName)) {
-                return ($tryPath + $fileName)
-            }
-        }
-        return $null
-    }
-
-    $pipEnvActivate = Guess-EnvPath 'activate.ps1'
-    $pipEnvDeactivate = Guess-EnvPath 'deactivate.bat'
-
-    if ($pipEnvActivate -eq $null -or $pipEnvDeactivate -eq $null) {
-        WriteLog 'virtualenv not found. Run me from where "pip -m virtualenv env" command has been executed.'
-        return
-    }
-
-    if ($state) {
-        $env:_OLD_VIRTUAL_PROMPT = "$env:PROMPT"
-        $env:_OLD_VIRTUAL_PYTHONHOME = "$env:PYTHONHOME"
-        $env:_OLD_VIRTUAL_PATH = "$env:PATH"
-
-        WriteLog ('Activating: ' + $pipEnvActivate)
-        . $pipEnvActivate
-    }
-    else {
-        WriteLog ('Deactivating: "' + $pipEnvDeactivate + '" and unsetting environment')
-
-        &$pipEnvDeactivate
-
-        $env:VIRTUAL_ENV = ''
-
-        if ($env:_OLD_VIRTUAL_PROMPT) {
-            $env:PROMPT = "$env:_OLD_VIRTUAL_PROMPT"
-            $env:_OLD_VIRTUAL_PROMPT = ''
-        }
-
-        if ($env:_OLD_VIRTUAL_PYTHONHOME) {
-            $env:PYTHONHOME = "$env:_OLD_VIRTUAL_PYTHONHOME"
-            $env:_OLD_VIRTUAL_PYTHONHOME = ''
-        }
-
-        if ($env:_OLD_VIRTUAL_PATH) {
-            $env:PATH = "$env:_OLD_VIRTUAL_PATH"
-            $env:_OLD_VIRTUAL_PATH = ''
-        }
-    }
-
-    #WriteLog "PROMPT=" $env:PROMPT
-    #WriteLog "PYTHONHOME=" $env:PYTHONHOME
-    #WriteLog "PATH=" $env:PATH
-}
 
 Function ConvertFrom-RegexGroupsToObject($groups) {
     $gitLinkInfo = New-Object PSCustomObject
@@ -1382,7 +1338,7 @@ Function global:Prepare-PackageAutoCompletion {
     }
 }
 
-Function Generate-FormInstall {
+Function global:GenerateFormInstall {
     Prepare-PackageAutoCompletion
 
     $form = New-Object System.Windows.Forms.Form
@@ -1810,7 +1766,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
     $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
     $form.MinimizeBox = $false
     $form.MaximizeBox = $false
-    $form.Icon = $Script:form.Icon
+    $form.Icon = $global:form.Icon
 
     $null = $form.ShowDialog()
 }
@@ -1825,7 +1781,7 @@ Function global:Request-UserString($message, $title, $default, $completionItems 
     $Form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
     $Form.MinimizeBox = $false
     $Form.MaximizeBox = $false
-    $Form.Icon = $Script:form.Icon
+    $Form.Icon = $global:form.Icon
 
     $TextBox1                        = New-Object system.Windows.Forms.TextBox
     $TextBox1.multiline              = $false
@@ -1884,7 +1840,7 @@ Function global:Request-UserString($message, $title, $default, $completionItems 
     }
 }
 
-Function Generate-FormSearch {
+Function global:GenerateFormSearch {
     $pluginNames = ($global:plugins | ForEach-Object { $_.GetPluginName() }) -join ', '
     $message = "Enter keywords to search with PyPi, Conda, Github and plugins: $pluginNames`n`nChecked items will be kept in the search list"
     $title = "pip, conda, github search"
@@ -1918,7 +1874,7 @@ Function global:InitPackageGridViewProperties() {
 
 Function global:InitPackageUpdateColumns($dataTable) {
     $dataTable.Columns.Clear()
-    foreach ($c in $header) {
+    foreach ($c in $global:header) {
         if ($c -eq "Select") {
             $column = New-Object System.Data.DataColumn $c,([bool])
         } else {
@@ -1929,9 +1885,9 @@ Function global:InitPackageUpdateColumns($dataTable) {
     }
 }
 
-Function Init-PackageSearchColumns($dataTable) {
+Function global:InitPackageSearchColumns($dataTable) {
     $dataTable.Columns.Clear()
-    foreach ($c in $search_columns) {
+    foreach ($c in $global:search_columns) {
         if ($c -eq "Select") {
             $column = New-Object System.Data.DataColumn $c,([bool])
         } else {
@@ -2565,7 +2521,7 @@ Function Generate-Form {
     $form.Topmost = $false
     $form.KeyPreview = $true
     $form.Icon = Convert-Base64ToICO $iconBase64_Snakes
-    $Script:form = $form
+    $global:form = $form
 
     $null = Add-Buttons
 
@@ -2574,17 +2530,13 @@ Function Generate-Form {
 
     $group = New-Object System.Windows.Forms.Panel
     $group.Location = New-Object System.Drawing.Point 502,2
-    $group.Size = New-Object System.Drawing.Size 226,28
+    $group.Size = New-Object System.Drawing.Size 300,28
     $group.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
     $form.Controls.Add($group)
 
-    $Script:isolatedCheckBox = Add-CheckBox 'isolated' { Toggle-VirtualEnv $Script:isolatedCheckBox.Checked }
-    $toolTip = New-Object System.Windows.Forms.ToolTip
-    $toolTip.SetToolTip($isolatedCheckBox, "Ignore environmental variables, user configuration and global packages.`n`n--isolated`n--local")
-
     $global:WIDGET_GROUP_INSTALL_BUTTONS = @(
-        Add-Button "Search..." { Generate-FormSearch } ;
-        Add-Button "Install..." { Generate-FormInstall }
+        Add-Button "Search..." { GenerateFormSearch } ;
+        Add-Button "Install..." { GenerateFormInstall }
     )
     $null = Add-ToolsButtonMenu
 
@@ -2791,7 +2743,7 @@ Function Generate-Form {
         $logView = $Sender
         $global:logView = $logView
 
-        $global:FuncWriteLog = ({
+        ${function:global:FuncWriteLog} = ({
             param(
                 [object[]] $Lines,
                 [bool] $UpdateLastLine,
@@ -2861,7 +2813,7 @@ Function Generate-Form {
         $WritePipLogDelegate = New-RunspacedDelegate ([EventHandler] {
             param($Sender, $EventArgs)
             $Arguments = $EventArgs.Arguments
-            $null = & $FuncWriteLog @arguments
+            $null = FuncWriteLog @arguments
         })
 
         ${function:global:WriteLog} = {
@@ -2891,7 +2843,7 @@ Function Generate-Form {
                 }
                 $null = $logView.BeginInvoke($WritePipLogDelegate, ($logView, $EventArgs))
             } else {
-                $null = & $FuncWriteLog @arguments
+                $null = FuncWriteLog @arguments
             }
         }
 
@@ -2943,7 +2895,6 @@ Function Generate-Form {
                 Show-CurrentPackageInBrowser
             }
         }.GetNewClosure())
-    $form.Add_Load({ $Script:formLoaded = $true })
 
     $lastWidgetTop = $Script:lastWidgetTop
 
@@ -3049,7 +3000,7 @@ Function Generate-FormEnvironmentVariables($interpreterRecord) {
     $Form.MinimizeBox = $false
     $Form.MaximizeBox = $false
     $Form.KeyPreview = $true
-    $Form.Icon = $Script:form.Icon
+    $Form.Icon = $global:form.Icon
 
     $VariablesGroup                  = New-Object system.Windows.Forms.Groupbox
     $VariablesGroup.height           = 322
@@ -3297,7 +3248,7 @@ class DocView {
         $this.formDoc.KeyPreview = $true
         $this.formDoc.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterParent
 
-        $this.formDoc.Icon = $Script:form.Icon
+        $this.formDoc.Icon = $global:form.Icon
 
         $this.docView = $global:RichTextBox_t::new()
         $this.docView.Location = New-Object Drawing.Point 7,7
@@ -3780,7 +3731,8 @@ class ProcessWithPipedIO {
         $token = [System.Threading.CancellationToken]::None
         $options = ([System.Threading.Tasks.TaskCreationOptions]::DenyChildAttach -bor `
             [System.Threading.Tasks.TaskCreationOptions]::HideScheduler -bor `
-            [System.Threading.Tasks.TaskCreationOptions]::LongRunning)
+            [System.Threading.Tasks.TaskCreationOptions]::LongRunning -bor `
+            [System.Threading.Tasks.TaskCreationOptions]::RunContinuationsAsynchronously)
         $null = [System.Threading.Tasks.Task]::Factory.StartNew($delegate, @{self=$this; code=$ExitCode}, $token, $options, [System.Threading.Tasks.TaskScheduler]::Default)
     }
 
@@ -3815,7 +3767,8 @@ class ProcessWithPipedIO {
             $locals.self._processOutputEnded = $true
         })
         $taskRead = $this._process.StandardOutput.ReadToEndAsync()
-        $taskSetOutputEnded = $taskRead.ContinueWith($continuationReadingDone, @{ self=$this; })
+        $taskSetOutputEnded = $taskRead.ContinueWith($continuationReadingDone, @{ self=$this; },
+            [System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously)
         return $taskRead
     }
 
@@ -3993,7 +3946,7 @@ Function Write-PipPackageCounter {
 
 Function Store-CheckedPipSearchResults() {
     $selected = New-Object System.Data.DataTable
-    Init-PackageSearchColumns $selected
+    InitPackageSearchColumns $selected
 
     $isInstallMode = $global:dataModel.Columns.Contains('Description')
     if ($isInstallMode) {
@@ -4202,7 +4155,7 @@ Function global:Get-GithubRepoTags($gitLinkInfo, $ContinueWith = $null) {
 Function Get-SearchResults($request) {
     $previousSelected = Store-CheckedPipSearchResults
     ClearRows
-    Init-PackageSearchColumns $global:dataModel
+    InitPackageSearchColumns $global:dataModel
 
     $dataGridView.BeginInit()
     $global:dataModel.BeginLoadData()
@@ -4222,7 +4175,7 @@ Function Get-SearchResults($request) {
     return @{PipCount=$pipCount; CondaCount=$condaCount; GithubCount=$githubCount; PluginCount=$pluginCount; Total=($pipCount + $condaCount + $githubCount + $pluginCount)}
 }
 
-${global:FuncAddPackagesToTable} = {
+Function global:AddPackagesToTable {
     param($packages, $defaultType = [String]::Empty)
 
     $global:dataModel.BeginLoadData()
@@ -4274,7 +4227,7 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
 
         foreach ($tuple in $tuplesPackagesType) {
             $packages, $type = $tuple.Item1, $tuple.Item2
-            & $global:FuncAddPackagesToTable $packages $type
+            AddPackagesToTable $packages $type
         }
 
         # $global:outdatedOnly = $outdatedOnly
@@ -4319,11 +4272,6 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
 
         if ($outdatedOnly) {
             $null = $arguments.Add('--outdated')
-        }
-
-        if ($Script:isolatedCheckBox.Checked) {
-            $null = $arguments.Add('--isolated')  # ignore user config
-            $null = $arguments.Add('--local')     # ignore global packages
         }
 
         $process = [ProcessWithPipedIO]::new($python_exe, $arguments)
@@ -4458,7 +4406,7 @@ Function global:Set-SelectedNRow($n) {
 
 Function global:SetSelectedRow($selectedRow) {
     $global:dataGridView.ClearSelection()
-    foreach ($vRow in $Script:dataGridView.Rows) {
+    foreach ($vRow in $global:dataGridView.Rows) {
         if ($vRow.DataBoundItem.Row -eq $selectedRow) {
             $vRow.Selected = $true
             $dataGridView.FirstDisplayedScrollingRowIndex = $vRow.Index
@@ -4617,7 +4565,11 @@ Function global:ExecutePipAction {
                 functionContext=$FunctionContext;
             }
 
-            $taskReport = $taskProcessDone.ContinueWith($continuationReport, $locals, $global:UI_SYNCHRONIZATION_CONTEXT)
+            $taskReport = $taskProcessDone.ContinueWith($continuationReport, $locals,
+                [System.Threading.CancellationToken]::None,
+                ([System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously -bor
+                    [System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent),
+                $global:UI_SYNCHRONIZATION_CONTEXT)
             return $taskReport
         })
 
@@ -4858,7 +4810,7 @@ Function global:Show-ConsoleWindow([bool] $show) {
     [Console.Window]::ShowWindow($consolePtr, $value)
 }
 
-Function Save-PipsSettings {
+Function global:SavePipsSettings {
     $settingsPath = "$($env:LOCALAPPDATA)\pips"
     $null = New-Item -Force -ItemType Directory -Path $settingsPath
     $userInterpreterRecords = $interpreters | Where-Object { $_.User }
@@ -4869,7 +4821,7 @@ Function Save-PipsSettings {
     }
 }
 
-Function Load-PipsSettings {
+Function global:LoadPipsSettings {
     $settingsFile = "$($env:LOCALAPPDATA)\pips\settings.json"
     $global:settings = @{}
     if (Exists-File $settingsFile) {
@@ -5049,13 +5001,13 @@ Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
                 $ScriptStackTrace = $Exception.ErrorRecord.ScriptStackTrace
                 if (-not [string]::IsNullOrWhiteSpace($ScriptStackTrace)) {
                     Write-Host $ScriptStackTrace @color
-                    Write-Host ('-' * 70) @color
                 }
+            } else {
+                Write-Host (Get-PSCallStack | Format-Table -AutoSize | Out-String) @color
             }
+            Write-Host ('-' * 70) @color
 
             Write-Host $Exception.StackTrace @color
-            Write-Host ('-' * 70) @color
-            Write-Host (Get-PSCallStack | Format-Table -AutoSize | Out-String) @color
             Write-Host ('=' * 70) @color
 
             Show-ConsoleWindow $true
@@ -5079,7 +5031,7 @@ Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
         Show-ConsoleWindow $false
     }
 
-    Load-PipsSettings
+    LoadPipsSettings
     Load-Plugins
 
     [System.Windows.Forms.Application]::EnableVisualStyles()
@@ -5091,7 +5043,7 @@ Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
             $plugin.Release()
         }
 
-        Save-PipsSettings
+        SavePipsSettings
 
         [System.Windows.Forms.Application]::Exit()
         if (-not [Environment]::UserInteractive) {
