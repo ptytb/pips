@@ -102,30 +102,30 @@ Function global:Recode($src, $dst, $text, [switch] $BOM, [switch] $AsBytes) {
     return ,$res
 }
 
-Function global:ApplyAsync([object] $Queue, [Func[object, object]] $Function, [delegate] $Finally) {
-    $delegate = New-RunspacedDelegate([Action[System.Threading.Tasks.Task[Tuple[object, delegate, Func[object, object], delegate]]]] {
-        param($task)
-        $queue, $delegate, $function = $task.Result.Item1, $task.Result.Item2, $task.Result.Item3
+Function global:ApplyAsync([object] $FunctionContext, [object] $Queue, [Func[object, object, System.Threading.Tasks.Task]] $Function, [delegate] $Finally) {
+
+    $iterator = New-RunspacedDelegate([Action[System.Threading.Tasks.Task, object]] {
+        param([System.Threading.Tasks.Task] $task, [object] $locals)
+        $queue = $locals.queue
         if ($queue.Count -gt 0) {
             $element = $queue.Dequeue()
-
-            $taskFromFunction = $function.Invoke(@{
-                Element=$element;
-                ApplyAsyncContext=$task.Result;
-                # ApplyAsyncContextType=($task.Result.GetType().ToString())
-            })
-
-            $null = $taskFromFunction.ContinueWith($delegate, $global:UI_SYNCHRONIZATION_CONTEXT)
+            $taskFromFunction = $locals.function.Invoke($element, $locals.FunctionContext)
+            $null = $taskFromFunction.ContinueWith($locals.iterator, $locals, $global:UI_SYNCHRONIZATION_CONTEXT)
         } else {
-            $finally = $task.Result.Item4
-            $null = $task.ContinueWith($finally, $global:UI_SYNCHRONIZATION_CONTEXT)
+            $null = $task.ContinueWith($locals.Finally, $locals.FunctionContext, $global:UI_SYNCHRONIZATION_CONTEXT)
         }
     })
 
-    $coldStart = [System.Threading.Tasks.TaskCompletionSource[Tuple[object, delegate, Func[object, object], delegate]]]::new();
-    $null = $coldStart.Task.ContinueWith($delegate, $global:UI_SYNCHRONIZATION_CONTEXT)
-    $coldStart.SetResult([Tuple[object, delegate, Func[object, object], delegate]]::new($Queue, $delegate, $Function, $Finally))
-    return $coldStart.Task
+    $locals = @{
+        functionContext=$FunctionContext;
+        queue=$Queue;
+        function=$Function;
+        finally=$Finally;
+        iterator=$iterator;
+    }
+
+    $t = [System.Threading.Tasks.Task]::FromResult(@{})
+    $null = $t.ContinueWith($iterator, $locals, $global:UI_SYNCHRONIZATION_CONTEXT)
 }
 
 
@@ -4518,10 +4518,6 @@ Function global:WidgetStateTransitionForCommandButton($button) {
 
 Function global:ExecutePipAction {
     $action = $global:actionsModel[$actionListComboBox.SelectedIndex]
-
-    $tasksOkay = 0
-    $tasksFailed = 0
-
     $queue = [System.Collections.Generic.Queue[object]]::new()
 
     for ($i = 0; $i -lt $global:dataModel.Rows.Count; $i++) {
@@ -4530,10 +4526,9 @@ Function global:ExecutePipAction {
        }
     }
 
-    $execActionTaskCompletionSource = [System.Threading.Tasks.TaskCompletionSource[object]]::new()
-
-    $reportBatchResults = New-RunspacedDelegate([Action[System.Threading.Tasks.Task]] {
-        $execActionTaskCompletionSource.SetResult($null)
+    $reportBatchResults = New-RunspacedDelegate([Action[System.Threading.Tasks.Task, object]] {
+        param([System.Threading.Tasks.Task] $task, [object] $FunctionContext)
+        $tasksOkay, $tasksFailed = $FunctionContext.tasksOkay, $FunctionContext.tasksFailed
 
         if (($tasksOkay -eq 0) -and ($tasksFailed -eq 0)) {
             WriteLog 'Nothing is selected.' -Background LightSalmon
@@ -4546,19 +4541,18 @@ Function global:ExecutePipAction {
             WriteLog '----'
             WriteLog ''
         }
-    }.GetNewClosure())
+
+        $FunctionContext.execActionTaskCompletionSource.SetResult($null)
+    })
 
     if ($action.TakesList) {
         $null = $action.Execute($queue.ToArray())
         return
     } else {
-        # ApplyAsync :: [DataRow] -> (ElementContext{ DataRow } -> int) -> DataRow )
-        $null = ApplyAsync $queue (New-RunspacedDelegate ([Func[object, object]] {
-            param($ElementContext)
-            $dataRow = $ElementContext.Element
-            $ApplyAsyncContext = $ElementContext.ApplyAsyncContext
-            # $ApplyAsyncContextType = ([System.Type] "System.Threading.Tasks.TaskCompletionSource[$($ElementContext.ApplyAsyncContextType)]")
-            # $taskCompletionSource = $ApplyAsyncContextType::new()
+        $iterator = New-RunspacedDelegate ([Func[object, object, System.Threading.Tasks.Task]] {
+            param([object] $element, [object] $FunctionContext)
+            $dataRow = $element
+            $action = $FunctionContext.action
             $name, $installed, $type = $dataRow.Package, $dataRow.Installed, $dataRow.Type
             $logFrom = GetLogLength
 
@@ -4577,9 +4571,7 @@ Function global:ExecutePipAction {
 
             $process = [ProcessWithPipedIO]::new('cat', @('D:\work\pyfmt-big.txt'))
             $taskProcessDone = $process.StartWithLogging($true, $true)
-            $continuationReport = New-RunspacedDelegate(
-                [Func[System.Threading.Tasks.Task[int], object, Tuple[object, delegate, Func[object, object], delegate]]] {
-
+            $continuationReport = New-RunspacedDelegate([Action[System.Threading.Tasks.Task[int], object]] {
                 param([System.Threading.Tasks.Task[int]] $task, [object] $locals)
 
                 if ($task.IsCompleted -and (-not $task.IsFaulted)) {
@@ -4595,26 +4587,27 @@ Function global:ExecutePipAction {
                 $logTo = (GetLogLength) - $locals.logFrom
                 $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $locals.logFrom
                 $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
-
-                # $null = $locals.taskCompletionSource.SetResult($locals.ApplyAsyncContext)
-                return $locals.ApplyAsyncContext
             })
 
-            $taskReport = $taskProcessDone.ContinueWith(
-                $continuationReport,
-                @{
-                    # taskCompletionSource=$taskCompletionSource;
-                    ApplyAsyncContext=$ApplyAsyncContext;
-                    dataRow=$dataRow;
-                    # process=$process;
-                    logFrom=$logFrom;
-                },
-                $global:UI_SYNCHRONIZATION_CONTEXT)
-
-            # return $taskCompletionSource.Task
+            $locals = @{
+                dataRow=$dataRow;
+                process=$process;
+                logFrom=$logFrom;
+            }
+            $taskReport = $taskProcessDone.ContinueWith($continuationReport, $locals, $global:UI_SYNCHRONIZATION_CONTEXT)
             return $taskReport
+        })
 
-        }.GetNewClosure())) $reportBatchResults
+        $execActionTaskCompletionSource = [System.Threading.Tasks.TaskCompletionSource[object]]::new()
+
+        $context = @{
+            action=$action;
+            tasksOkay=0;
+            tasksFailed=0;
+            execActionTaskCompletionSource=$execActionTaskCompletionSource;
+        }
+
+        $null = ApplyAsync $context $queue $iterator $reportBatchResults
     }
 
     return $execActionTaskCompletionSource.Task
