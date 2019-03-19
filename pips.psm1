@@ -3670,7 +3670,7 @@ class ProcessWithPipedIO {
         $ExitedCallback = New-RunspacedDelegate ([EventHandler] {
             param($Sender, $EventArgs)
             if (($self._timer -eq $null) -and $self._processOutputEnded -and $self._processErrorEnded) {
-                $null = $self._taskCompletionSource.TrySetResult($self._process.ExitCode)
+                $self._ConfirmExit($self._process.ExitCode)
             }
         }.GetNewClosure())
 
@@ -3744,7 +3744,7 @@ class ProcessWithPipedIO {
 
                 if ($self._process.HasExited -and $self._processOutputEnded -and -$self._processErrorEnded -and ($count -eq 0)) {
                     $Sender.Stop()
-                    $null = $self._taskCompletionSource.TrySetResult($self._process.ExitCode)
+                    $self._ConfirmExit($self._process.ExitCode)
                 }
             })
 
@@ -3767,6 +3767,16 @@ class ProcessWithPipedIO {
         }
 
         return $this._taskCompletionSource.Task
+    }
+
+    hidden _ConfirmExit([int] $ExitCode) {
+        $delegate = New-RunspacedDelegate ([Action[object]] {
+            param([object] $locals)
+            $self = $locals.self
+            $code = $locals.code
+            $null = $self._taskCompletionSource.TrySetResult($code)
+        })
+        [System.Threading.Tasks.Task]::Factory.StartNew($delegate, @{self=$this; code=$ExitCode})
     }
 
     Kill() {
@@ -4318,7 +4328,8 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
         $null = $allTasks.Add($taskPipList)
     }
 
-    $conda_exe = Get-CurrentInterpreter 'CondaExe' -Executable
+    # $conda_exe = Get-CurrentInterpreter 'CondaExe' -Executable
+    $conda_exe = $false
     if ($conda_exe) {
         $continuationAddCondaPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
             param([System.Threading.Tasks.Task] $task)
