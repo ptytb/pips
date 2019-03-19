@@ -113,13 +113,13 @@ Function global:ApplyAsync([object] $FunctionContext, [object] $Queue, [Func[obj
             $null = $taskFromFunction.ContinueWith($locals.iterator, $locals,
                 [System.Threading.CancellationToken]::None,
                 ([System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously -bor
-                    [System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent),
+                    [System.Threading.Tasks.TaskContinuationOptions]::DenyChildAttach),
                 $global:UI_SYNCHRONIZATION_CONTEXT)
         } else {
             $null = $task.ContinueWith($locals.Finally, $locals.FunctionContext,
                 [System.Threading.CancellationToken]::None,
                 ([System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously -bor
-                    [System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent),
+                    [System.Threading.Tasks.TaskContinuationOptions]::DenyChildAttach),
                 $global:UI_SYNCHRONIZATION_CONTEXT)
         }
     })
@@ -136,7 +136,7 @@ Function global:ApplyAsync([object] $FunctionContext, [object] $Queue, [Func[obj
     $null = $t.ContinueWith($iterator, $locals,
         [System.Threading.CancellationToken]::None,
         ([System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously -bor
-            [System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent),
+            [System.Threading.Tasks.TaskContinuationOptions]::DenyChildAttach),
             $global:UI_SYNCHRONIZATION_CONTEXT)
 }
 
@@ -161,8 +161,8 @@ $MemberDefinition='
 [DllImport("User32.dll")]public static extern int PostMessage(IntPtr hWnd, int uMsg, int wParam, int lParam);
 '
 $API = Add-Type -MemberDefinition $MemberDefinition -Name 'WinAPI_SendMessage' -PassThru
-${global:SendMessage} = $API::SendMessage
-${global:PostMessage} = $API::PostMessage
+${function:global:SendMessage} = { return $API::SendMessage.Invoke($args) }
+${function:global:PostMessage} = { return $API::PostMessage.Invoke($args) }
 
 
 $null = Add-Type -TypeDefinition @'
@@ -699,7 +699,7 @@ Function Add-Button ($name, $handler, [switch] $AsyncHandler) {
             $null = $task.ContinueWith($doReverseWidgetState, $widgetStateTransition,
                 [System.Threading.CancellationToken]::None,
                 ([System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously -bor
-                    [System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent),
+                    [System.Threading.Tasks.TaskContinuationOptions]::DenyChildAttach),
                     $global:UI_SYNCHRONIZATION_CONTEXT)
         }.GetNewClosure())
         $button.Add_Click($wrappedHandler)
@@ -1404,8 +1404,8 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
         $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::Suggest
 
-        $null = $PostMessage.Invoke($cb.Handle,  $WM_CHAR, 0x20, 0)
-        $null = $PostMessage.Invoke($cb.Handle,  $WM_CHAR, $VK_BACKSPACE, 0)
+        $null = PostMessage $cb.Handle $WM_CHAR 0x20 0  # write space...
+        $null = PostMessage $cb.Handle $WM_CHAR $VK_BACKSPACE 0  # and erase it to trigger completion pop-up
     })
 
     $FuncSetAutoCompleteMode = [EventHandler] {
@@ -1496,8 +1496,8 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
                 $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
                 $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
 
-                $null = $SendMessage.Invoke($cb.Handle,  $WM_CHAR, 0x20, 0)
-                $null = $SendMessage.Invoke($cb.Handle,  $WM_CHAR, $VK_BACKSPACE, 0)
+                $null = PostMessage $cb.Handle $WM_CHAR 0x20 0  # write space...
+                $null = PostMessage $cb.Handle $WM_CHAR $VK_BACKSPACE 0  # and erase it to trigger completion pop-up
             }
 
             Default { throw "Wrong completion mode: $mode $($mode.GetType())" }
@@ -2753,8 +2753,8 @@ Function Generate-Form {
                 [MaybeColor] $Foreground
             )
 
-            $null = $SendMessage.Invoke($logView.Handle, $WM_SETREDRAW, 0, 0)
-            $eventMask = $SendMessage.Invoke($logView.Handle, $EM_SETEVENTMASK, 0, 0)
+            $null = SendMessage $logView.Handle $WM_SETREDRAW 0 0
+            $eventMask = SendMessage $logView.Handle $EM_SETEVENTMASK 0 0
 
             if ($UpdateLastLine) {
                 $text = ($Lines -join ' ') -replace "`r|`n",''
@@ -2806,9 +2806,9 @@ Function Generate-Form {
             $textLength = $logView.TextLength
             $logView.Select($textLength, $textLength)
 
-            $null = $SendMessage.Invoke($logView.Handle, $WM_SETREDRAW, 1, 0)
-            $null = $SendMessage.Invoke($logView.Handle, $EM_SETEVENTMASK, 0, $eventMask)
-            $null = $PostMessage.Invoke($logView.Handle, $WM_VSCROLL, $SB_PAGEBOTTOM, 0)
+            $null = SendMessage $logView.Handle $WM_SETREDRAW 1 0
+            $null = SendMessage $logView.Handle $EM_SETEVENTMASK 0 $eventMask
+            $null = PostMessage $logView.Handle $WM_VSCROLL $SB_PAGEBOTTOM 0
         })
 
         $WritePipLogDelegate = New-RunspacedDelegate ([EventHandler] {
@@ -3526,42 +3526,42 @@ class TextBoxNavigationHook {
         $richTextBox.add_KeyDown({
             param($Sender)
             if ($_.KeyCode -eq 'H') {
-                $null = $SendMessage.Invoke($Sender.Handle, $WM_SCROLL, $SB_LINELEFT, 0)
+                $null = SendMessage $Sender.Handle $WM_SCROLL $SB_LINELEFT 0
                 $_.Handled = $true
             }
             if ($_.KeyCode -eq 'J') {
-                $null = $SendMessage.Invoke($Sender.Handle, $WM_VSCROLL, $SB_LINEDOWN, 0)
+                $null = SendMessage $Sender.Handle $WM_VSCROLL $SB_LINEDOWN 0
                 $_.Handled = $true
             }
             if ($_.KeyCode -eq 'K') {
-                $null = $SendMessage.Invoke($Sender.Handle, $WM_VSCROLL, $SB_LINEUP, 0)
+                $null = SendMessage $Sender.Handle $WM_VSCROLL $SB_LINEUP 0
                 $_.Handled = $true
             }
             if ($_.KeyCode -eq 'L') {
-                $null = $SendMessage.Invoke($Sender.Handle, $WM_SCROLL, $SB_LINERIGHT, 0)
+                $null = SendMessage $Sender.Handle $WM_SCROLL $SB_LINERIGHT 0
                 $_.Handled = $true
             }
             if (($_.KeyCode -eq 'G') -and (-not $_.Shift)) {
-                $null = $SendMessage.Invoke($Sender.Handle, $WM_VSCROLL, $SB_PAGETOP, 0)
+                $null = SendMessage $Sender.Handle $WM_VSCROLL $SB_PAGETOP 0
                 $richTextBox.Select(0, 0)
                 $_.Handled = $true
             }
             if (($_.KeyCode -eq 'G') -and $_.Shift) {
-                $null = $SendMessage.Invoke($Sender.Handle, $WM_VSCROLL, $SB_PAGEBOTTOM, 0)
+                $null = SendMessage $Sender.Handle $WM_VSCROLL $SB_PAGEBOTTOM 0
                 $textLength = $richTextBox.TextLength
                 $richTextBox.Select($textLength, $textLength)
                 $_.Handled = $true
             }
             if ($_.KeyCode -eq 'Space') {
-                $null = $SendMessage.Invoke($Sender.Handle, $WM_VSCROLL, $SB_PAGEDOWN, 0)
+                $null = SendMessage $Sender.Handle $WM_VSCROLL $SB_PAGEDOWN 0
                 $_.Handled = $true
             }
             if (($_.KeyCode -eq 'F') -and $_.Control) {
-                $null = $SendMessage.Invoke($Sender.Handle, $WM_VSCROLL, $SB_PAGEDOWN, 0)
+                $null = SendMessage $Sender.Handle $WM_VSCROLL $SB_PAGEDOWN 0
                 $_.Handled = $true
             }
             if (($_.KeyCode -eq 'B') -and $_.Control) {
-                $null = $SendMessage.Invoke($Sender.Handle, $WM_VSCROLL, $SB_PAGEUP, 0)
+                $null = SendMessage $Sender.Handle $WM_VSCROLL $SB_PAGEUP 0
                 $_.Handled = $true
             }
             if (($_.KeyCode -eq 'OemMinus') -and $_.Control) {
@@ -3596,7 +3596,6 @@ class ProcessWithPipedIO {
     hidden [System.Windows.Forms.Timer] $_timer
 
     ProcessWithPipedIO($Command, $Arguments) {
-        [System.GC]::KeepAlive($this)
         $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
 
         $startInfo.FileName = $Command
@@ -3769,7 +3768,7 @@ class ProcessWithPipedIO {
         })
         try {
             $taskRead = $this._process.StandardOutput.ReadToEndAsync()
-            $options = ([System.Threading.Tasks.TaskCreationOptions]::AttachedToParent -bor `
+            $options = ([System.Threading.Tasks.TaskCreationOptions]::DenyChildAttach -bor `
                 [System.Threading.Tasks.TaskCreationOptions]::HideScheduler -bor `
                 [System.Threading.Tasks.TaskCreationOptions]::LongRunning -bor `
                 [System.Threading.Tasks.TaskCreationOptions]::RunContinuationsAsynchronously)
@@ -4520,13 +4519,33 @@ Function global:ExecutePipAction {
             WriteLog ''
         }
 
-        $FunctionContext.execActionTaskCompletionSource.SetResult($null)
+        $null = $FunctionContext.execActionTaskCompletionSource.TrySetResult($null)
     })
 
     if ($action.TakesList) {
         $null = $action.Execute($queue.ToArray())
         return
     } else {
+        $continuationReportIteration = New-RunspacedDelegate([Action[System.Threading.Tasks.Task[int], object]] {
+            param([System.Threading.Tasks.Task[int]] $task, [object] $locals)
+
+            if ($task.IsCompleted -and (-not $task.IsFaulted)) {
+                $exitCode = $task.Result
+                WriteLog "Exited with code $exitCode" -Background DarkGreen -Foreground White
+                $locals.functionContext.tasksOkay += 1
+            } else {
+                $message = $task.Exception.InnerException
+                WriteLog "Failed: $message" -Background DarkRed -Foreground White
+                $locals.functionContext.tasksFailed += 1
+            }
+
+            # $global:dataModel.Columns['Status'].ReadOnly = $false
+            # $global:dataModel.Columns['Status'].ReadOnly = $true
+            # $logTo = (GetLogLength) - $locals.logFrom
+            # $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $locals.logFrom
+            # $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
+        })
+
         $iterator = New-RunspacedDelegate ([Func[object, object, System.Threading.Tasks.Task]] {
             param([object] $element, [object] $FunctionContext)
             $dataRow = $element
@@ -4547,26 +4566,6 @@ Function global:ExecutePipAction {
                 # (Get-CurrentInterpreter 'PythonExe')
             # }
 
-            $continuationReport = New-RunspacedDelegate([Action[System.Threading.Tasks.Task[int], object]] {
-                param([System.Threading.Tasks.Task[int]] $task, [object] $locals)
-
-                if ($task.IsCompleted -and (-not $task.IsFaulted)) {
-                    $exitCode = $task.Result
-                    WriteLog "Exited with code $exitCode" -Background DarkGreen -Foreground White
-                    $locals.functionContext.tasksOkay += 1
-                } else {
-                    $message = $task.Exception.InnerException
-                    WriteLog "Failed: $message" -Background DarkRed -Foreground White
-                    $locals.functionContext.tasksFailed += 1
-                }
-
-                # $global:dataModel.Columns['Status'].ReadOnly = $false
-                # $global:dataModel.Columns['Status'].ReadOnly = $true
-                # $logTo = (GetLogLength) - $locals.logFrom
-                # $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $locals.logFrom
-                # $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
-            }.GetNewClosure())
-
             $process = [ProcessWithPipedIO]::new('cat', @('D:\work\pyfmt-big.txt'))
             $taskProcessDone = $process.StartWithLogging($true, $true)
 
@@ -4577,13 +4576,13 @@ Function global:ExecutePipAction {
                 functionContext=$FunctionContext;
             }
 
-            $taskReport = $taskProcessDone.ContinueWith($continuationReport, $locals,
+            $taskReport = $taskProcessDone.ContinueWith($continuationReportIteration, $locals,
                 [System.Threading.CancellationToken]::None,
                 ([System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously -bor
-                    [System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent),
+                    [System.Threading.Tasks.TaskContinuationOptions]::DenyChildAttach),
                 $global:UI_SYNCHRONIZATION_CONTEXT)
             return $taskReport
-        })
+        }.GetNewClosure())
 
         $execActionTaskCompletionSource = [System.Threading.Tasks.TaskCompletionSource[object]]::new()
 
