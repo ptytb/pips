@@ -112,18 +112,18 @@ Function global:ApplyAsync([object] $Queue, [Func[object, object]] $Function, [d
             $taskFromFunction = $function.Invoke(@{
                 Element=$element;
                 ApplyAsyncContext=$task.Result;
-                ApplyAsyncContextType=($task.Result.GetType().ToString())
+                # ApplyAsyncContextType=($task.Result.GetType().ToString())
             })
 
-            $null = $taskFromFunction.ContinueWith($delegate, [System.Threading.Tasks.TaskScheduler]::FromCurrentSynchronizationContext())
+            $null = $taskFromFunction.ContinueWith($delegate, $global:UI_SYNCHRONIZATION_CONTEXT)
         } else {
             $finally = $task.Result.Item4
-            $null = $task.ContinueWith($finally, [System.Threading.Tasks.TaskScheduler]::FromCurrentSynchronizationContext())
+            $null = $task.ContinueWith($finally, $global:UI_SYNCHRONIZATION_CONTEXT)
         }
     })
 
     $coldStart = [System.Threading.Tasks.TaskCompletionSource[Tuple[object, delegate, Func[object, object], delegate]]]::new();
-    $null = $coldStart.Task.ContinueWith($delegate, [System.Threading.Tasks.TaskScheduler]::FromCurrentSynchronizationContext())
+    $null = $coldStart.Task.ContinueWith($delegate, $global:UI_SYNCHRONIZATION_CONTEXT)
     $coldStart.SetResult([Tuple[object, delegate, Func[object, object], delegate]]::new($Queue, $delegate, $Function, $Finally))
     return $coldStart.Task
 }
@@ -274,35 +274,6 @@ $continuation = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task[Obje
 
 $task.ContinueWith($continuation);
 $task.Start()
-
-
-$Global:FuncRPCSpellCheck = {
-    param([string] $text, [int] $distance)
-
-    if ([String]::IsNullOrEmpty($text) -or ($text.IndexOfAny('=@\/:') -ne -1)) {
-        return
-    }
-
-    if ($Global:SuggestionsWorking) {
-        return
-    } else {
-        $Global:SuggestionsWorking = $true
-    }
-
-    $text = $text.ToLower()
-    $request = @{ 'Request'=$text; 'Distance'=$distance; } | ConvertTo-Json -Depth 5 -Compress
-
-	$tw = $Global:sw.WriteLineAsync($request);
-	$continuation1 = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task]] {
-    	$tf = $Global:sw.FlushAsync();
-    	$continuation2 = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task]] {
-        	$tr = $Global:sr.ReadLineAsync()
-            $null = $tr.ContinueWith($global:FuncRPCSpellCheck_Callback);
-    	});
-        [void]$tf.ContinueWith($continuation2);
-	});
-    [void]$tw.ContinueWith($continuation1);
-}
 
 
 Function global:Get-Bin($command, [switch] $All) {
@@ -713,7 +684,7 @@ Function Add-Button ($name, $handler, [switch] $AsyncHandler) {
             $task = $handler.Invoke($args)
             $task.ContinueWith(([WidgetStateTransition]::ReverseAllAsync()),
                 $widgetStateTransition,
-                [System.Threading.Tasks.TaskScheduler]::FromCurrentSynchronizationContext())
+                $global:UI_SYNCHRONIZATION_CONTEXT)
         }.GetNewClosure())
     } else {
         $button.Add_Click([EventHandler] $handler)
@@ -1124,7 +1095,6 @@ x = Package doesn't exist in index
     $actionListComboBox = New-Object System.Windows.Forms.ComboBox
     $actionListComboBox.DataSource = $actionsModel
     $actionListComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-    $Script:actionListComboBox = $actionListComboBox
     Add-TopWidget $actionListComboBox 1.25
 
     return $actionListComboBox
@@ -2598,6 +2568,7 @@ Function Generate-Form {
     $null = Add-Buttons
 
     $actionListComboBox = Add-ComboBoxActions
+    $global:actionListComboBox = $actionListComboBox
 
     $group = New-Object System.Windows.Forms.Panel
     $group.Location = New-Object System.Drawing.Point 502,2
@@ -3029,6 +3000,38 @@ Function Generate-Form {
             }
         }
     }.GetNewClosure())
+
+    $form.add_HandleCreated({
+        $global:UI_SYNCHRONIZATION_CONTEXT = [System.Threading.Tasks.TaskScheduler]::FromCurrentSynchronizationContext()
+
+        $global:FuncRPCSpellCheck = {
+            param([string] $text, [int] $distance)
+
+            if ([String]::IsNullOrEmpty($text) -or ($text.IndexOfAny('=@\/:') -ne -1)) {
+                return
+            }
+
+            if ($global:SuggestionsWorking) {
+                return
+            } else {
+                $global:SuggestionsWorking = $true
+            }
+
+            $text = $text.ToLower()
+            $request = @{ 'Request'=$text; 'Distance'=$distance; } | ConvertTo-Json -Depth 5 -Compress
+
+        	$tw = $global:sw.WriteLineAsync($request);
+        	$continuation1 = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task]] {
+            	$tf = $global:sw.FlushAsync();
+            	$continuation2 = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task]] {
+                	$tr = $global:sr.ReadLineAsync()
+                    $null = $tr.ContinueWith($global:FuncRPCSpellCheck_Callback, $global:UI_SYNCHRONIZATION_CONTEXT);
+            	});
+                [void] $tf.ContinueWith($continuation2);
+        	});
+            [void] $tw.ContinueWith($continuation1);
+        }
+    })
 
     return ,$form
 }
@@ -4202,7 +4205,9 @@ Function Get-SearchResults($request) {
     return @{PipCount=$pipCount; CondaCount=$condaCount; GithubCount=$githubCount; PluginCount=$pluginCount; Total=($pipCount + $condaCount + $githubCount + $pluginCount)}
 }
 
-Function global:AddPackagesToTable($packages, $defaultType = [String]::Empty) {
+${global:FuncAddPackagesToTable} = {
+    param($packages, $defaultType = [String]::Empty)
+
     $global:dataModel.BeginLoadData()
     $headersSizeMode = $dataGridView.RowHeadersWidthSizeMode
     $columnsSizeMode = $dataGridView.AutoSizeColumnsMode
@@ -4252,7 +4257,7 @@ Function Get-PythonPackages($outdatedOnly = $true) {
 
         foreach ($tuple in $tuplesPackagesType) {
             $packages, $type = $tuple.Item1, $tuple.Item2
-            AddPackagesToTable $packages $type
+            & $global:FuncAddPackagesToTable $packages $type
         }
 
         # $global:outdatedOnly = $outdatedOnly
@@ -4265,8 +4270,8 @@ Function Get-PythonPackages($outdatedOnly = $true) {
 
         WriteLog 'Double click or [Ctrl+Enter] a table row to open package''s home page in browser'
 
-        $count = $global:dataModel.Rows.Count
-        WriteLog "Total $count packages: $builtinCount builtin, $pipCount pip, $condaCount conda, $otherCount other"
+        # $count = $global:dataModel.Rows.Count
+        # WriteLog "Total $count packages: $builtinCount builtin, $pipCount pip, $condaCount conda, $otherCount other"
     })
 
     $allTasks = [System.Collections.Generic.List[System.Threading.Tasks.Task[object]]]::new()
@@ -4279,9 +4284,13 @@ Function Get-PythonPackages($outdatedOnly = $true) {
 
             $csv = $task.Result -replace ' +',' '  # ConvertFrom-Csv understands only one space between columns
 
-            $pipPackages = $csv `
-                | ConvertFrom-Csv -Header $csv_header -Delimiter ' ' `
-                | Select-Object -Skip 2  # Ignore a header line and a separator line
+            $pipPackages = $csv | ConvertFrom-Csv -Header $csv_header -Delimiter ' '
+
+            if ($pipPackages -eq $null) {
+                throw [Exception]::new("Failed to parse CSV from pip: $csv")
+            }
+
+            $pipPackages = $pipPackages | Select-Object -Skip 2  # Ignore a header line and a separator line
 
             return [Tuple]::Create($pipPackages, 'pip')
         })
@@ -4322,9 +4331,8 @@ Function Get-PythonPackages($outdatedOnly = $true) {
     # WriteLog $allTasks -Background DarkCyan -Foreground Yellow
 
     try {
-        $taskAllDone = [System.Threading.Tasks.Task]::WhenAll($allTasks)
-        $taskAllDone.ContinueWith($continuationAllDone,
-            [System.Threading.Tasks.TaskScheduler]::FromCurrentSynchronizationContext())
+        $gathered = [System.Threading.Tasks.Task]::WhenAll($allTasks)
+        $taskAllDone = $gathered.ContinueWith($continuationAllDone, $global:UI_SYNCHRONIZATION_CONTEXT)
     } catch [System.AggregateException] {
         WriteLog "One or more tasks have failed" -Background DarkRed
     }
@@ -4464,8 +4472,7 @@ Function Check-PipDependencies {
             WriteLog $result
         }
     })
-    $taskReportLogged = $taskReadOutput.ContinueWith($continuationReport,
-        [System.Threading.Tasks.TaskScheduler]::FromCurrentSynchronizationContext())
+    $taskReportLogged = $taskReadOutput.ContinueWith($continuationReport, $global:UI_SYNCHRONIZATION_CONTEXT)
 
     $allTasks = [System.Collections.Generic.List[System.Threading.Tasks.Task]]::new()
     $null = $allTasks.Add($taskProcessDone)
@@ -4544,18 +4551,22 @@ Function global:Execute-PipAction {
         return
     } else {
         # ApplyAsync :: [DataRow] -> (ElementContext{ DataRow } -> int) -> DataRow )
-        $null = ApplyAsync $queue ([Func[object, object]] {
+        $null = ApplyAsync $queue (New-RunspacedDelegate ([Func[object, object]] {
             param($ElementContext)
             $dataRow = $ElementContext.Element
             $ApplyAsyncContext = $ElementContext.ApplyAsyncContext
-            $ApplyAsyncContextType = ([System.Type] "System.Threading.Tasks.TaskCompletionSource[$($ElementContext.ApplyAsyncContextType)]")
-
-            Set-SelectedRow $dataRow
+            # $ApplyAsyncContextType = ([System.Type] "System.Threading.Tasks.TaskCompletionSource[$($ElementContext.ApplyAsyncContextType)]")
+            # $taskCompletionSource = $ApplyAsyncContextType::new()
             $name, $installed, $type = $dataRow.Package, $dataRow.Installed, $dataRow.Type
+            $logFrom = GetLogLength
 
             WriteLog "$($action.Name) $name" -Background LightPink
 
-            $taskCompletionSource = $ApplyAsyncContextType::new()
+            # $taskUpdateUI = New-RunspacedDelegate([Action[System.Threading.Tasks.Task, object]] {
+            #     param([System.Threading.Tasks.Task] $task, [object] $locals)
+            #     Set-SelectedRow $locals.dataRow
+            # })
+            # $null = [System.Threading.Tasks.Task]::Factory.StartNew($taskUpdateUI, @{name=$name; action=$action; dataRow=$dataRow})
 
             # $result = $action.Execute($name, $type, $installed) -join "`n"
             if ($action) {
@@ -4563,8 +4574,10 @@ Function global:Execute-PipAction {
             }
 
             $process = [ProcessWithPipedIO]::new('cat', @('D:\work\pyfmt-big.txt'))
-            $task = $process.StartWithLogging($true, $true)
-            $continuation = New-RunspacedDelegate([Action[System.Threading.Tasks.Task[int], object]] {
+            $taskProcessDone = $process.StartWithLogging($true, $true)
+            $continuationReport = New-RunspacedDelegate(
+                [Func[System.Threading.Tasks.Task[int], object, Tuple[object, delegate, Func[object, object], delegate]]] {
+                    
                 param([System.Threading.Tasks.Task[int]] $task, [object] $locals)
 
                 if ($task.IsCompleted -and (-not $task.IsFaulted)) {
@@ -4581,23 +4594,25 @@ Function global:Execute-PipAction {
                 $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $locals.logFrom
                 $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
 
-                $null = $locals.taskCompletionSource.SetResult($locals.ApplyAsyncContext)
+                # $null = $locals.taskCompletionSource.SetResult($locals.ApplyAsyncContext)
+                return $locals.ApplyAsyncContext
             })
 
-            $null = $task.ContinueWith(
-                $continuation,
+            $taskReport = $taskProcessDone.ContinueWith(
+                $continuationReport,
                 @{
-                    taskCompletionSource=$taskCompletionSource;
+                    # taskCompletionSource=$taskCompletionSource;
                     ApplyAsyncContext=$ApplyAsyncContext;
                     dataRow=$dataRow;
-                    process=$process;
-                    logFrom=(GetLogLength);
+                    # process=$process;
+                    logFrom=$logFrom;
                 },
-                [System.Threading.Tasks.TaskScheduler]::FromCurrentSynchronizationContext())
+                $global:UI_SYNCHRONIZATION_CONTEXT)
 
-            return $taskCompletionSource.Task
+            # return $taskCompletionSource.Task
+            return $taskReport
 
-        }.GetNewClosure()) $reportBatchResults
+        }.GetNewClosure())) $reportBatchResults
     }
 
     return $execActionTaskCompletionSource.Task
