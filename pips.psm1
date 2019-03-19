@@ -679,13 +679,15 @@ Function Add-Button ($name, $handler, [switch] $AsyncHandler) {
     $button = New-Object Windows.Forms.Button
     $button.Text = $name
     if ($AsyncHandler) {
-        $button.Add_Click({
+        $wrappedHandler = New-RunspacedDelegate ([EventHandler] {
+            param($Sender, $EventArgs)
             $widgetStateTransition = WidgetStateTransitionForCommandButton $button
-            $task = $handler.Invoke($args)
+            $task = $handler.Invoke($Sender, $EventArgs)
             $task.ContinueWith(([WidgetStateTransition]::ReverseAllAsync()),
                 $widgetStateTransition,
                 $global:UI_SYNCHRONIZATION_CONTEXT)
         }.GetNewClosure())
+        $button.Add_Click($wrappedHandler)
     } else {
         $button.Add_Click([EventHandler] $handler)
     }
