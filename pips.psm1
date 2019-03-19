@@ -765,12 +765,12 @@ Function Add-Input ($handler) {
 
 Function Add-Buttons {
     $global:WIDGET_GROUP_COMMAND_BUTTONS = @(
-        Add-Button "Check Updates" { Get-PythonPackages } -AsyncHandler ;
-        Add-Button "List Installed" { Get-PythonPackages($false) } -AsyncHandler ;
-        Add-Button "Sel All Visible" { Select-VisiblePipPackages($true) } ;
-        Add-Button "Select None" { Select-PipPackages($false) } ;
-        Add-Button "Check Deps" { Check-PipDependencies } -AsyncHandler ;
-        Add-Button "Execute" { Execute-PipAction } -AsyncHandler ;
+        Add-Button "Check Updates" { GetPythonPackages } -AsyncHandler ;
+        Add-Button "List Installed" { GetPythonPackages($false) } -AsyncHandler ;
+        Add-Button "Sel All Visible" { SelectVisiblePipPackages($true) } ;
+        Add-Button "Select None" { SelectPipPackages($false) } ;
+        Add-Button "Check Deps" { CheckPipDependencies } -AsyncHandler ;
+        Add-Button "Execute" { ExecutePipAction } -AsyncHandler ;
     )
 }
 
@@ -1796,7 +1796,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
             return
         }
         Select-PipAction 'Install'
-        Execute-PipAction
+        ExecutePipAction
         $form.Close()
     }.GetNewClosure())
     $form.Controls.Add($install)
@@ -2989,7 +2989,7 @@ Function Generate-Form {
 
             if ($_.KeyCode -eq 'Return' -and $_.Shift) {
                 $_.Handled = $true
-                Execute-PipAction
+                ExecutePipAction
                 return
             }
 
@@ -4246,7 +4246,7 @@ ${global:FuncAddPackagesToTable} = {
     $global:dataModel.EndLoadData()
 }
 
-Function Get-PythonPackages($outdatedOnly = $true) {
+Function global:GetPythonPackages($outdatedOnly = $true) {
     Clear-Rows
     Init-PackageUpdateColumns $global:dataModel
 
@@ -4351,7 +4351,7 @@ Function Get-PythonPackages($outdatedOnly = $true) {
     }
 }
 
-Function Select-VisiblePipPackages($value) {
+Function global:SelectVisiblePipPackages($value) {
     $global:dataModel.BeginLoadData()
 
     $headersSizeMode = $dataGridView.RowHeadersWidthSizeMode
@@ -4372,7 +4372,7 @@ Function Select-VisiblePipPackages($value) {
     $global:dataModel.EndLoadData()
 }
 
-Function Select-PipPackages($value) {
+Function global:SelectPipPackages($value) {
     $global:dataModel.BeginLoadData()
 
     $headersSizeMode = $dataGridView.RowHeadersWidthSizeMode
@@ -4448,7 +4448,7 @@ Function global:Set-SelectedRow($selectedRow) {
     }
 }
 
-Function Check-PipDependencies {
+Function global:CheckPipDependencies {
     $python_exe = Get-CurrentInterpreter 'PythonExe' -Executable
     if (-not $python_exe) {
         WriteLog 'Python is not found!'
@@ -4514,7 +4514,7 @@ Function global:WidgetStateTransitionForCommandButton($button) {
     return $widgetStateTransition
 }
 
-Function global:Execute-PipAction {
+Function global:ExecutePipAction {
     $action = $global:actionsModel[$actionListComboBox.SelectedIndex]
 
     $tasksOkay = 0
@@ -4577,7 +4577,7 @@ Function global:Execute-PipAction {
             $taskProcessDone = $process.StartWithLogging($true, $true)
             $continuationReport = New-RunspacedDelegate(
                 [Func[System.Threading.Tasks.Task[int], object, Tuple[object, delegate, Func[object, object], delegate]]] {
-                    
+
                 param([System.Threading.Tasks.Task[int]] $task, [object] $locals)
 
                 if ($task.IsCompleted -and (-not $task.IsFaulted)) {
