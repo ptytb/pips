@@ -146,9 +146,10 @@ $global:SB_PAGETOP = [int] 0x06
 $global:SB_PAGEBOTTOM = [int] 0x07
 $MemberDefinition='
 [DllImport("User32.dll")]public static extern int SendMessage(IntPtr hWnd, int uMsg, int wParam, int lParam);
+[DllImport("User32.dll")]public static extern int PostMessage(IntPtr hWnd, int uMsg, int wParam, int lParam);
 '
 $API = Add-Type -MemberDefinition $MemberDefinition -Name 'WinAPI_SendMessage' -PassThru
-${global:SendMessage} = $API::SendMessage
+${global:SendMessage} = $API::PostMessage
 
 
 $null = Add-Type -TypeDefinition @'
@@ -329,7 +330,7 @@ Function global:Get-CurrentInterpreter($item, [switch] $Executable) {
     if (-not [string]::IsNullOrEmpty($item)) {
         $item = $Global:interpretersComboBox.SelectedItem."$item"
         if ($Executable) {
-            $item = Get-ExistingFilePathOrNull $item
+            $item = GetExistingFilePathOrNull $item
         }
         return $item
     } else {
@@ -419,7 +420,7 @@ Function global:Exists-Directory($path) {
     return [System.IO.Directory]::Exists($path)
 }
 
-Function Get-ExistingFilePathOrNull($path) {
+Function global:GetExistingFilePathOrNull($path) {
     if (Exists-File $path) {
         return $path
     } else {
@@ -427,7 +428,7 @@ Function Get-ExistingFilePathOrNull($path) {
     }
 }
 
-Function Get-ExistingPathOrNull($path) {
+Function global:GetExistingPathOrNull($path) {
     if (Exists-Directory $path) {
         return $path
     } else {
@@ -682,10 +683,9 @@ Function Add-Button ($name, $handler, [switch] $AsyncHandler) {
         $wrappedHandler = New-RunspacedDelegate ([EventHandler] {
             param($Sender, $EventArgs)
             $widgetStateTransition = WidgetStateTransitionForCommandButton $button
+            $doReverseWidgetState = [WidgetStateTransition]::ReverseAllAsync()
             $task = $handler.Invoke($Sender, $EventArgs)
-            $task.ContinueWith(([WidgetStateTransition]::ReverseAllAsync()),
-                $widgetStateTransition,
-                $global:UI_SYNCHRONIZATION_CONTEXT)
+            $null = $task.ContinueWith($doReverseWidgetState, $widgetStateTransition, $global:UI_SYNCHRONIZATION_CONTEXT)
         }.GetNewClosure())
         $button.Add_Click($wrappedHandler)
     } else {
@@ -1797,7 +1797,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         if ($cb.Text -ne [string]::Empty) {
             return
         }
-        Select-PipAction 'Install'
+        SelectPipAction 'Install'
         ExecutePipAction
         $form.Close()
     }.GetNewClosure())
@@ -1901,7 +1901,7 @@ Function Generate-FormSearch {
     WriteLog
 }
 
-Function Init-PackageGridViewProperties() {
+Function global:InitPackageGridViewProperties() {
     $dataGridView.MultiSelect = $false
     $dataGridView.SelectionMode = [System.Windows.Forms.SelectionMode]::One
     $dataGridView.ColumnHeadersVisible = $true
@@ -1916,7 +1916,7 @@ Function Init-PackageGridViewProperties() {
     $dataGridView.AutoSizeColumnsMode = [System.Windows.Forms.DataGridViewAutoSizeColumnsMode]::AllCells
 }
 
-Function Init-PackageUpdateColumns($dataTable) {
+Function global:InitPackageUpdateColumns($dataTable) {
     $dataTable.Columns.Clear()
     foreach ($c in $header) {
         if ($c -eq "Select") {
@@ -2106,7 +2106,7 @@ Function global:Request-FolderPathFromUser($text = [string]::Empty) {
     $selectFolderDialog.Description = $text
     $null = $selectFolderDialog.ShowDialog()
     $path = $selectFolderDialog.SelectedPath
-    $path = Get-ExistingPathOrNull $path
+    $path = GetExistingPathOrNull $path
     return $path
 }
 
@@ -2487,7 +2487,7 @@ Some packages may generate garbage or show windows, don't panic.
             IsAccessible = { $global:APP_MODE -eq [AppMode]::Idle };
             MenuText = 'Clear package list';
             Code = {
-                Clear-Rows
+                ClearRows
             };
         };
         @{
@@ -2643,7 +2643,7 @@ Function Generate-Form {
         }
 
         if ($selectedRow) {
-            Set-SelectedRow $selectedRow
+            SetSelectedRow $selectedRow
         }
 
         HighlightPythonPackages
@@ -2766,12 +2766,12 @@ Function Generate-Form {
         }
     }.GetNewClosure())
 
-    Init-PackageGridViewProperties
+    InitPackageGridViewProperties
 
     $dataModel = New-Object System.Data.DataTable
     $dataGridView.DataSource = $dataModel
     $global:dataModel = $dataModel
-    Init-PackageUpdateColumns $dataModel
+    InitPackageUpdateColumns $dataModel
 
     $form.Controls.Add($dataGridView)
 
@@ -3644,6 +3644,7 @@ class ProcessWithPipedIO {
     hidden [System.Windows.Forms.Timer] $_timer
 
     ProcessWithPipedIO($Command, $Arguments) {
+        [System.GC]::KeepAlive($this)
         $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
 
         $startInfo.FileName = $Command
@@ -3776,7 +3777,11 @@ class ProcessWithPipedIO {
             $code = $locals.code
             $null = $self._taskCompletionSource.TrySetResult($code)
         })
-        [System.Threading.Tasks.Task]::Factory.StartNew($delegate, @{self=$this; code=$ExitCode})
+        $token = [System.Threading.CancellationToken]::None
+        $options = ([System.Threading.Tasks.TaskCreationOptions]::DenyChildAttach -bor `
+            [System.Threading.Tasks.TaskCreationOptions]::HideScheduler -bor `
+            [System.Threading.Tasks.TaskCreationOptions]::LongRunning)
+        $null = [System.Threading.Tasks.Task]::Factory.StartNew($delegate, @{self=$this; code=$ExitCode}, $token, $options, [System.Threading.Tasks.TaskScheduler]::Default)
     }
 
     Kill() {
@@ -4196,7 +4201,7 @@ Function global:Get-GithubRepoTags($gitLinkInfo, $ContinueWith = $null) {
 
 Function Get-SearchResults($request) {
     $previousSelected = Store-CheckedPipSearchResults
-    Clear-Rows
+    ClearRows
     Init-PackageSearchColumns $global:dataModel
 
     $dataGridView.BeginInit()
@@ -4259,8 +4264,8 @@ ${global:FuncAddPackagesToTable} = {
 }
 
 Function global:GetPythonPackages($outdatedOnly = $true) {
-    Clear-Rows
-    Init-PackageUpdateColumns $global:dataModel
+    ClearRows
+    InitPackageUpdateColumns $global:dataModel
 
     $continuationAllDone = New-RunspacedDelegate ([Action[System.Threading.Tasks.Task]] {
         param([System.Threading.Tasks.Task] $task)
@@ -4333,6 +4338,9 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
         $continuationAddCondaPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
             param([System.Threading.Tasks.Task] $task)
             $condaPackages = $task.Result
+            if ($condaPackages -eq $null) {
+                throw [Exception]::new("Empty response from conda.")
+            }
             return [Tuple]::Create($condaPackages, 'conda')
         })
         $task = GetCondaPackagesAsync $outdatedOnly
@@ -4417,8 +4425,8 @@ Function Test-PackageInList($name) {
     return -1
 }
 
-Function Clear-Rows() {
-    $Script:outdatedOnly = $true
+Function global:ClearRows() {
+    $global:outdatedOnly = $true
     $global:inputFilter.Clear()
     $global:dataModel.DefaultView.RowFilter = $null
     $dataGridView.ClearSelection()
@@ -4448,8 +4456,8 @@ Function global:Set-SelectedNRow($n) {
     $dataGridView.CurrentCell = $dataGridView[0, $n]
 }
 
-Function global:Set-SelectedRow($selectedRow) {
-    $Script:dataGridView.ClearSelection()
+Function global:SetSelectedRow($selectedRow) {
+    $global:dataGridView.ClearSelection()
     foreach ($vRow in $Script:dataGridView.Rows) {
         if ($vRow.DataBoundItem.Row -eq $selectedRow) {
             $vRow.Selected = $true
@@ -4493,7 +4501,7 @@ Function global:CheckPipDependencies {
     return [System.Threading.Tasks.Task]::WhenAll($allTasks)
 }
 
-Function global:Select-PipAction($actionName) {
+Function global:SelectPipAction($actionName) {
     $n = 0
     foreach ($item in $global:actionsModel) {
         if ($item.Name -eq $actionName) {
@@ -4570,17 +4578,15 @@ Function global:ExecutePipAction {
 
             # $taskUpdateUI = New-RunspacedDelegate([Action[System.Threading.Tasks.Task, object]] {
             #     param([System.Threading.Tasks.Task] $task, [object] $locals)
-            #     Set-SelectedRow $locals.dataRow
+            #     SetSelectedRow $locals.dataRow
             # })
             # $null = [System.Threading.Tasks.Task]::Factory.StartNew($taskUpdateUI, @{name=$name; action=$action; dataRow=$dataRow})
 
             # $result = $action.Execute($name, $type, $installed) -join "`n"
-            if ($action) {
+            # if ($action) {
                 # (Get-CurrentInterpreter 'PythonExe')
-            }
+            # }
 
-            $process = [ProcessWithPipedIO]::new('cat', @('D:\work\pyfmt-big.txt'))
-            $taskProcessDone = $process.StartWithLogging($true, $true)
             $continuationReport = New-RunspacedDelegate([Action[System.Threading.Tasks.Task[int], object]] {
                 param([System.Threading.Tasks.Task[int]] $task, [object] $locals)
 
@@ -4594,12 +4600,15 @@ Function global:ExecutePipAction {
                     $locals.functionContext.tasksFailed += 1
                 }
 
-                $global:dataModel.Columns['Status'].ReadOnly = $false
-                $global:dataModel.Columns['Status'].ReadOnly = $true
-                $logTo = (GetLogLength) - $locals.logFrom
-                $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $locals.logFrom
-                $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
-            })
+                # $global:dataModel.Columns['Status'].ReadOnly = $false
+                # $global:dataModel.Columns['Status'].ReadOnly = $true
+                # $logTo = (GetLogLength) - $locals.logFrom
+                # $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $locals.logFrom
+                # $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
+            }.GetNewClosure())
+
+            $process = [ProcessWithPipedIO]::new('cat', @('D:\work\pyfmt-big.txt'))
+            $taskProcessDone = $process.StartWithLogging($true, $true)
 
             $locals = @{
                 dataRow=$dataRow;
@@ -4607,6 +4616,7 @@ Function global:ExecutePipAction {
                 logFrom=$logFrom;
                 functionContext=$FunctionContext;
             }
+
             $taskReport = $taskProcessDone.ContinueWith($continuationReport, $locals, $global:UI_SYNCHRONIZATION_CONTEXT)
             return $taskReport
         })
