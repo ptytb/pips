@@ -161,7 +161,8 @@ $MemberDefinition='
 [DllImport("User32.dll")]public static extern int PostMessage(IntPtr hWnd, int uMsg, int wParam, int lParam);
 '
 $API = Add-Type -MemberDefinition $MemberDefinition -Name 'WinAPI_SendMessage' -PassThru
-${global:SendMessage} = $API::PostMessage
+${global:SendMessage} = $API::SendMessage
+${global:PostMessage} = $API::PostMessage
 
 
 $null = Add-Type -TypeDefinition @'
@@ -571,7 +572,7 @@ $FuncSetWebClientWorkaround = {
 }
 
 & $FuncSetWebClientWorkaround
-Function global:Download-String($url, $ContinueWith = $null) {
+Function global:DownloadString($url, $ContinueWith = $null) {
     try {
         $wc = [System.Net.WebClient]::new()
         $wc.Headers['User-Agent'] = "Mozilla/5.0 (compatible; MSIE 6.0;)"
@@ -597,7 +598,7 @@ Function global:Download-String($url, $ContinueWith = $null) {
                 $null = $ContinueWith.Invoke($result)
             }.GetNewClosure())
             $wc.Add_DownloadStringCompleted($delegate)
-
+            # $result = $wc.DownloadStringTaskAsync($url)
             $result = $wc.DownloadStringAsync($url)
         } else {
             $result = $wc.DownloadString($url)
@@ -1403,8 +1404,8 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
         $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::Suggest
 
-        $null = $SendMessage.Invoke($cb.Handle,  $WM_CHAR, 0x20, 0)
-        $null = $SendMessage.Invoke($cb.Handle,  $WM_CHAR, $VK_BACKSPACE, 0)
+        $null = $PostMessage.Invoke($cb.Handle,  $WM_CHAR, 0x20, 0)
+        $null = $PostMessage.Invoke($cb.Handle,  $WM_CHAR, $VK_BACKSPACE, 0)
     })
 
     $FuncSetAutoCompleteMode = [EventHandler] {
@@ -1450,7 +1451,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
                 # }
 
                 $jsonUrl = "https://pypi.python.org/pypi/$packageName/json"
-                $null = Download-String $jsonUrl -ContinueWith {
+                $null = DownloadString $jsonUrl -ContinueWith {
                     param($json)
 
                     $info = ConvertFrom-Json -InputObject $json
@@ -1992,7 +1993,7 @@ Function global:Format-PythonPackageToolTip($info) {
 
 Function global:Download-PythonPackageDetails ($packageName) {
     $pypi_json_url = 'https://pypi.python.org/pypi/{0}/json'
-    $json = Download-String($pypi_json_url -f $packageName)
+    $json = DownloadString($pypi_json_url -f $packageName)
     if (-not [string]::IsNullOrEmpty($json)) {
         $info = $json | ConvertFrom-Json
         if ($info -ne $null) {
@@ -2807,7 +2808,7 @@ Function Generate-Form {
 
             $null = $SendMessage.Invoke($logView.Handle, $WM_SETREDRAW, 1, 0)
             $null = $SendMessage.Invoke($logView.Handle, $EM_SETEVENTMASK, 0, $eventMask)
-            $null = $SendMessage.Invoke($logView.Handle, $WM_VSCROLL, $SB_PAGEBOTTOM, 0)
+            $null = $PostMessage.Invoke($logView.Handle, $WM_VSCROLL, $SB_PAGEBOTTOM, 0)
         })
 
         $WritePipLogDelegate = New-RunspacedDelegate ([EventHandler] {
@@ -3766,10 +3767,21 @@ class ProcessWithPipedIO {
             param([System.Threading.Tasks.Task] $task, [object] $locals)
             $locals.self._processOutputEnded = $true
         })
-        $taskRead = $this._process.StandardOutput.ReadToEndAsync()
-        $taskSetOutputEnded = $taskRead.ContinueWith($continuationReadingDone, @{ self=$this; },
-            [System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously)
-        return $taskRead
+        try {
+            $taskRead = $this._process.StandardOutput.ReadToEndAsync()
+            $options = ([System.Threading.Tasks.TaskCreationOptions]::AttachedToParent -bor `
+                [System.Threading.Tasks.TaskCreationOptions]::HideScheduler -bor `
+                [System.Threading.Tasks.TaskCreationOptions]::LongRunning -bor `
+                [System.Threading.Tasks.TaskCreationOptions]::RunContinuationsAsynchronously)
+            $taskSetOutputEnded = $taskRead.ContinueWith($continuationReadingDone, @{ self=$this; }, $options)
+            return $taskRead
+        } catch {
+            $this._processOutputEnded = $true
+            $this._processErrorEnded = $true
+            $this._process.StandardOutput.Close()
+            $this._process.StandardError.Close()
+        }
+        return [System.Threading.Tasks.Task[string]]::FromResult($null)
     }
 
     WaitForExit() {
@@ -4068,7 +4080,7 @@ Function Get-CondaSearchResults($request) {
 }
 
 Function Get-GithubSearchResults ($request) {
-    $json = Download-String ($github_search_url -f [System.Web.HttpUtility]::UrlEncode($request))
+    $json = DownloadString ($github_search_url -f [System.Web.HttpUtility]::UrlEncode($request))
     $info = $json | ConvertFrom-Json
     $items = $info.'items'
     $count = 0
@@ -4132,7 +4144,7 @@ Function global:Get-GithubRepoTags($gitLinkInfo, $ContinueWith = $null) {
     $url = $github_tags_url -f $gitLinkInfo.User,$gitLinkInfo.Repo
 
     if ($ContinueWith) {
-        $null = Download-String $url -ContinueWith {
+        $null = DownloadString $url -ContinueWith {
             param($json)
             if (-not [string]::IsNullOrEmpty($json)) {
                 $tags = $json | ConvertFrom-Json | ForEach-Object { $_.Name }
@@ -4143,7 +4155,7 @@ Function global:Get-GithubRepoTags($gitLinkInfo, $ContinueWith = $null) {
         return
     }
 
-    $json = Download-String $url
+    $json = DownloadString $url
     if (-not [string]::IsNullOrEmpty($json)) {
         $tags = $json | ConvertFrom-Json | Select-Object -ExpandProperty Name # ForEach-Object { $_.Name }
         return $tags
