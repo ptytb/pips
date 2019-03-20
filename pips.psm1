@@ -113,13 +113,13 @@ Function global:ApplyAsync([object] $FunctionContext, [object] $Queue, [Func[obj
             $null = $taskFromFunction.ContinueWith($locals.iterator, $locals,
                 [System.Threading.CancellationToken]::None,
                 ([System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously -bor
-                    [System.Threading.Tasks.TaskContinuationOptions]::DenyChildAttach),
+                    [System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent),
                 $global:UI_SYNCHRONIZATION_CONTEXT)
         } else {
             $null = $task.ContinueWith($locals.Finally, $locals.FunctionContext,
                 [System.Threading.CancellationToken]::None,
                 ([System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously -bor
-                    [System.Threading.Tasks.TaskContinuationOptions]::DenyChildAttach),
+                    [System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent),
                 $global:UI_SYNCHRONIZATION_CONTEXT)
         }
     })
@@ -136,7 +136,7 @@ Function global:ApplyAsync([object] $FunctionContext, [object] $Queue, [Func[obj
     $null = $t.ContinueWith($iterator, $locals,
         [System.Threading.CancellationToken]::None,
         ([System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously -bor
-            [System.Threading.Tasks.TaskContinuationOptions]::DenyChildAttach),
+            [System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent),
             $global:UI_SYNCHRONIZATION_CONTEXT)
 }
 
@@ -699,7 +699,7 @@ Function Add-Button ($name, $handler, [switch] $AsyncHandler) {
             $null = $task.ContinueWith($doReverseWidgetState, $widgetStateTransition,
                 [System.Threading.CancellationToken]::None,
                 ([System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously -bor
-                    [System.Threading.Tasks.TaskContinuationOptions]::DenyChildAttach),
+                    [System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent),
                     $global:UI_SYNCHRONIZATION_CONTEXT)
         }.GetNewClosure())
         $button.Add_Click($wrappedHandler)
@@ -3732,7 +3732,8 @@ class ProcessWithPipedIO {
         $options = ([System.Threading.Tasks.TaskCreationOptions]::DenyChildAttach -bor `
             [System.Threading.Tasks.TaskCreationOptions]::HideScheduler -bor `
             [System.Threading.Tasks.TaskCreationOptions]::RunContinuationsAsynchronously)
-        $null = [System.Threading.Tasks.Task]::Factory.StartNew($delegate, @{self=$this; code=$ExitCode}, $token, $options, [System.Threading.Tasks.TaskScheduler]::Default)
+        $null = [System.Threading.Tasks.Task]::Factory.StartNew($delegate, @{self=$this; code=$ExitCode}, $token,
+            $options, [System.Threading.Tasks.TaskScheduler]::Default)
     }
 
     Kill() {
@@ -3767,10 +3768,10 @@ class ProcessWithPipedIO {
         })
         try {
             $taskRead = $this._process.StandardOutput.ReadToEndAsync()
-            $options = ([System.Threading.Tasks.TaskCreationOptions]::DenyChildAttach -bor `
-                [System.Threading.Tasks.TaskCreationOptions]::HideScheduler -bor `
-                [System.Threading.Tasks.TaskCreationOptions]::RunContinuationsAsynchronously)
-            $taskSetOutputEnded = $taskRead.ContinueWith($continuationReadingDone, @{ self=$this; }, $options)
+            $options = ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor `
+                [System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously)
+            $null = $taskRead.ContinueWith($continuationReadingDone, @{ self=$this; },
+                [System.Threading.CancellationToken]::None, $options, [System.Threading.Tasks.TaskScheduler]::Default)
             return $taskRead
         } catch {
             $this._processOutputEnded = $true
@@ -4539,7 +4540,7 @@ Function global:ExecutePipAction {
         $continuationReportIteration = New-RunspacedDelegate([Action[System.Threading.Tasks.Task[int], object]] {
             param([System.Threading.Tasks.Task[int]] $task, [object] $locals)
 
-            if ($task.IsCompleted -and (-not $task.IsFaulted)) {
+            if ($task.IsCompleted -and ((-not $task.IsFaulted) -or ($task.IsCanceled))) {
                 $exitCode = $task.Result
                 WriteLog "Exited with code $exitCode" -Background DarkGreen -Foreground White
                 $locals.functionContext.tasksOkay += 1
@@ -4560,7 +4561,7 @@ Function global:ExecutePipAction {
             # $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
         })
 
-        $iterator = New-RunspacedDelegate ([Func[object, object, System.Threading.Tasks.Task]] {
+        $function = New-RunspacedDelegate ([Func[object, object, System.Threading.Tasks.Task]] {
             param([object] $element, [object] $FunctionContext)
             $dataRow = $element
             $action = $FunctionContext.action
@@ -4592,8 +4593,8 @@ Function global:ExecutePipAction {
 
             $taskReport = $taskProcessDone.ContinueWith($continuationReportIteration, $locals,
                 [System.Threading.CancellationToken]::None,
-                ([System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously -bor
-                    [System.Threading.Tasks.TaskContinuationOptions]::DenyChildAttach),
+                ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
+                    [System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously),
                 $global:UI_SYNCHRONIZATION_CONTEXT)
             return $taskReport
         }.GetNewClosure())
@@ -4607,7 +4608,7 @@ Function global:ExecutePipAction {
             execActionTaskCompletionSource=$execActionTaskCompletionSource;
         }
 
-        $null = ApplyAsync $context $queue $iterator $reportBatchResults
+        $null = ApplyAsync $context $queue $function $reportBatchResults
     }
 
     return $execActionTaskCompletionSource.Task
