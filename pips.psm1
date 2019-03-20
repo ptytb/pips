@@ -3931,6 +3931,14 @@ class WidgetStateTransition {
         return $this
     }
 
+    [WidgetStateTransition] IrreversibleTransformWithMethodCall([object] $widget, $methodName, [object[]] $methodArguments) {
+        return $this
+    }
+
+    [WidgetStateTransition] CommitIrreversibleTransformations() {
+        return $this
+    }
+
 }
 
 
@@ -5065,6 +5073,6 @@ Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
     $form.Show()
     $form.Activate()
 
-    $appContext = New-Object System.Windows.Forms.ApplicationContext
+    $appContext = [System.Windows.Forms.ApplicationContext]::new($form)
     $null = [System.Windows.Forms.Application]::Run($appContext)
 }
