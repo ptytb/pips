@@ -3731,7 +3731,6 @@ class ProcessWithPipedIO {
         $token = [System.Threading.CancellationToken]::None
         $options = ([System.Threading.Tasks.TaskCreationOptions]::DenyChildAttach -bor `
             [System.Threading.Tasks.TaskCreationOptions]::HideScheduler -bor `
-            [System.Threading.Tasks.TaskCreationOptions]::LongRunning -bor `
             [System.Threading.Tasks.TaskCreationOptions]::RunContinuationsAsynchronously)
         $null = [System.Threading.Tasks.Task]::Factory.StartNew($delegate, @{self=$this; code=$ExitCode}, $token, $options, [System.Threading.Tasks.TaskScheduler]::Default)
     }
@@ -3770,7 +3769,6 @@ class ProcessWithPipedIO {
             $taskRead = $this._process.StandardOutput.ReadToEndAsync()
             $options = ([System.Threading.Tasks.TaskCreationOptions]::DenyChildAttach -bor `
                 [System.Threading.Tasks.TaskCreationOptions]::HideScheduler -bor `
-                [System.Threading.Tasks.TaskCreationOptions]::LongRunning -bor `
                 [System.Threading.Tasks.TaskCreationOptions]::RunContinuationsAsynchronously)
             $taskSetOutputEnded = $taskRead.ContinueWith($continuationReadingDone, @{ self=$this; }, $options)
             return $taskRead
@@ -4551,7 +4549,9 @@ Function global:ExecutePipAction {
                 $locals.functionContext.tasksFailed += 1
             }
 
-            # IrreversibleTransformWithMethodCall()
+            $null = $locals.process._process.Dispose()
+
+            # PostIrreversibleTransformWithMethodCall()
 
             # $global:dataModel.Columns['Status'].ReadOnly = $false
             # $global:dataModel.Columns['Status'].ReadOnly = $true
