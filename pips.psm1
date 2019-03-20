@@ -4527,9 +4527,9 @@ Function global:WidgetStateTransitionForCommandButton($button) {
     $null = $widgetStateTransition.Add($button).Transform(@{Text='Cancel';Enabled=$true;Click={
             $response = [System.Windows.Forms.MessageBox]::Show('Sure?', 'Cancel', [System.Windows.Forms.MessageBoxButtons]::YesNo)
             if ($response -eq 'Yes') {
-
+                $null = $widgetStateTransition.ReverseAll()
             }
-        }})
+        }.GetNewClosure();})
     $null = $widgetStateTransition.GlobalVariables(@{
             APP_MODE=([AppMode]::Working);
         })
