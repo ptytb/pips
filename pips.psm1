@@ -3616,6 +3616,7 @@ class ProcessWithPipedIO {
     hidden [System.Collections.Generic.List[string]] $_processError
     hidden [bool] $_processOutputEnded = $false
     hidden [bool] $_processErrorEnded = $false
+    hidden [bool] $_hasStarted = $false
     hidden [System.Windows.Forms.Timer] $_timer
 
     ProcessWithPipedIO($Command, $Arguments) {
@@ -3645,7 +3646,7 @@ class ProcessWithPipedIO {
         $ExitedCallback = New-RunspacedDelegate ([EventHandler] {
             param($Sender, $EventArgs)
             if (($self._timer -eq $null) -and $self._processOutputEnded -and $self._processErrorEnded) {
-                $self._ConfirmExit()
+                $self._ConfirmExit($null)
             }
         }.GetNewClosure())
 
@@ -3660,19 +3661,17 @@ class ProcessWithPipedIO {
 
         try {
             $started = $this._process.Start()
-
-            if (-not $started) {
-                throw [Exception]::new("Failed to start process $($this._process.StartInfo.FileName)")
-            }
-
         } catch {
-            $this._taskCompletionSource.SetException($_.Exception)
+            $this._ConfirmExit($_.Exception)
         }
 
         if ($started) {
             try {
                 $this._process.StandardInput.Close()
             } catch { }
+            $this._hasStarted = $started
+        } else {
+            $this._ConfirmExit([Exception]::new("Failed to start process $($this._process.StartInfo.FileName)"))
         }
 
         return $this._taskCompletionSource.Task
@@ -3719,7 +3718,7 @@ class ProcessWithPipedIO {
 
                 if ($self._process.HasExited -and $self._processOutputEnded -and -$self._processErrorEnded -and ($count -eq 0)) {
                     $Sender.Stop()
-                    $self._ConfirmExit()
+                    $self._ConfirmExit($null)
                 }
             })
 
@@ -3730,38 +3729,44 @@ class ProcessWithPipedIO {
 
         $null = $this.Start()
 
-        if ($LogOutput) {
-            $this._process.BeginOutputReadLine()
-        }
-        if ($LogErrors) {
-            $this._process.BeginErrorReadLine()
-        }
-
-        if ($LogOutput -or $LogErrors) {
-            $this._timer.Start()
+        if ($this._hasStarted) {
+            if ($LogOutput) {
+                $this._process.BeginOutputReadLine()
+            }
+            if ($LogErrors) {
+                $this._process.BeginErrorReadLine()
+            }
+            if ($LogOutput -or $LogErrors) {
+                $this._timer.Start()
+            }
         }
 
         return $this._taskCompletionSource.Task
     }
 
-    hidden _ConfirmExit() {
+    hidden _ConfirmExit([Exception] $exception) {
         $delegate = New-RunspacedDelegate ([Action[object]] {
             param([object] $locals)
             $self = $locals.self
-            try {
-                $code = $self._process.ExitCode
-            } catch {
-                $code = -1
-            } finally {
-                $null = $self._taskCompletionSource.TrySetResult($code)
-                $null = $self._process.Dispose()
+            $exception = $locals.exception
+            if ($exception -ne $null) {
+                $null = $self._taskCompletionSource.TrySetException($exception)
+            } else {
+                try {
+                    $code = $self._process.ExitCode
+                } catch {
+                    $code = -1
+                } finally {
+                    $null = $self._taskCompletionSource.TrySetResult($code)
+                    $null = $self._process.Dispose()
+                }
             }
         })
         $token = [System.Threading.CancellationToken]::None
         $options = ([System.Threading.Tasks.TaskCreationOptions]::DenyChildAttach -bor `
             [System.Threading.Tasks.TaskCreationOptions]::HideScheduler -bor `
             [System.Threading.Tasks.TaskCreationOptions]::RunContinuationsAsynchronously)
-        $null = [System.Threading.Tasks.Task]::Factory.StartNew($delegate, @{self=$this}, $token,
+        $null = [System.Threading.Tasks.Task]::Factory.StartNew($delegate, @{self=$this; exception=$exception}, $token,
             $options, [System.Threading.Tasks.TaskScheduler]::Default)
     }
 
@@ -5003,7 +5008,6 @@ Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
     $env:LC_CTYPE="UTF-8"
 
     if (-not $Debug) {
-       Show-ConsoleWindow $false
        Set-StrictMode -Off
        Set-PSDebug -Off
     } else {
