@@ -3731,6 +3731,7 @@ class ProcessWithPipedIO {
             $code = $self._process.ExitCode
             try {
                 $null = $self._process.WaitForExit()
+                $null = $self._process.Dispose()
             } finally {
                 $null = $self._taskCompletionSource.TrySetResult($code)
             }
