@@ -160,9 +160,9 @@ $MemberDefinition='
 [DllImport("User32.dll")]public static extern int SendMessage(IntPtr hWnd, int uMsg, int wParam, int lParam);
 [DllImport("User32.dll")]public static extern int PostMessage(IntPtr hWnd, int uMsg, int wParam, int lParam);
 '
-$API = Add-Type -MemberDefinition $MemberDefinition -Name 'WinAPI_SendMessage' -PassThru
-${function:global:SendMessage} = { return $API::SendMessage.Invoke($args) }
-${function:global:PostMessage} = { return $API::PostMessage.Invoke($args) }
+$global:WinAPI = Add-Type -MemberDefinition $MemberDefinition -Name 'WinAPI_SendMessage' -PassThru
+${function:global:SendMessage} = { return $global:WinAPI::SendMessage.Invoke($args) }
+${function:global:PostMessage} = { return $global:WinAPI::PostMessage.Invoke($args) }
 
 
 $null = Add-Type -TypeDefinition @'
@@ -286,8 +286,11 @@ $continuation = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task[Obje
     [bool] $Global:SuggestionsWorking = $false
 });
 
-$null = $task.ContinueWith($continuation);
-$task.Start()
+$null = $task.ContinueWith($continuation, [System.Threading.CancellationToken]::None, (
+    [System.Threading.Tasks.TaskContinuationOptions]::DenyChildAttach -bor
+    [System.Threading.Tasks.TaskContinuationOptions]::LongRunning),
+    [System.Threading.Tasks.TaskScheduler]::Default)
+$task.Start([System.Threading.Tasks.TaskScheduler]::Default)
 
 
 Function global:Get-Bin($command, [switch] $All) {
@@ -3622,7 +3625,7 @@ class ProcessWithPipedIO {
         $ExitedCallback = New-RunspacedDelegate ([EventHandler] {
             param($Sender, $EventArgs)
             if (($self._timer -eq $null) -and $self._processOutputEnded -and $self._processErrorEnded) {
-                $self._ConfirmExit($self._process.ExitCode)
+                $self._ConfirmExit()
             }
         }.GetNewClosure())
 
@@ -3696,7 +3699,7 @@ class ProcessWithPipedIO {
 
                 if ($self._process.HasExited -and $self._processOutputEnded -and -$self._processErrorEnded -and ($count -eq 0)) {
                     $Sender.Stop()
-                    $self._ConfirmExit($self._process.ExitCode)
+                    $self._ConfirmExit()
                 }
             })
 
@@ -3721,18 +3724,22 @@ class ProcessWithPipedIO {
         return $this._taskCompletionSource.Task
     }
 
-    hidden _ConfirmExit([int] $ExitCode) {
+    hidden _ConfirmExit() {
         $delegate = New-RunspacedDelegate ([Action[object]] {
             param([object] $locals)
             $self = $locals.self
-            $code = $locals.code
-            $null = $self._taskCompletionSource.TrySetResult($code)
+            $code = $self._process.ExitCode
+            try {
+                $null = $self._process.WaitForExit()
+            } finally {
+                $null = $self._taskCompletionSource.TrySetResult($code)
+            }
         })
         $token = [System.Threading.CancellationToken]::None
         $options = ([System.Threading.Tasks.TaskCreationOptions]::DenyChildAttach -bor `
             [System.Threading.Tasks.TaskCreationOptions]::HideScheduler -bor `
             [System.Threading.Tasks.TaskCreationOptions]::RunContinuationsAsynchronously)
-        $null = [System.Threading.Tasks.Task]::Factory.StartNew($delegate, @{self=$this; code=$ExitCode}, $token,
+        $null = [System.Threading.Tasks.Task]::Factory.StartNew($delegate, @{self=$this}, $token,
             $options, [System.Threading.Tasks.TaskScheduler]::Default)
     }
 
@@ -3768,7 +3775,7 @@ class ProcessWithPipedIO {
         })
         try {
             $taskRead = $this._process.StandardOutput.ReadToEndAsync()
-            $options = ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor `
+            $options = ([System.Threading.Tasks.TaskContinuationOptions]::DenyChildAttach -bor `
                 [System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously)
             $null = $taskRead.ContinueWith($continuationReadingDone, @{ self=$this; },
                 [System.Threading.CancellationToken]::None, $options, [System.Threading.Tasks.TaskScheduler]::Default)
@@ -4559,7 +4566,7 @@ Function global:ExecutePipAction {
             # $logTo = (GetLogLength) - $locals.logFrom
             # $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $locals.logFrom
             # $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
-        })
+        }.GetNewClosure())
 
         $function = New-RunspacedDelegate ([Func[object, object, System.Threading.Tasks.Task]] {
             param([object] $element, [object] $FunctionContext)
@@ -4978,6 +4985,7 @@ Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
     $env:LC_CTYPE="UTF-8"
 
     if (-not $Debug) {
+       Show-ConsoleWindow $false
        Set-StrictMode -Off
        Set-PSDebug -Off
     } else {
