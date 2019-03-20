@@ -3931,7 +3931,11 @@ class WidgetStateTransition {
         return $this
     }
 
-    [WidgetStateTransition] IrreversibleTransformWithMethodCall([object] $widget, $methodName, [object[]] $methodArguments) {
+    [WidgetStateTransition] PostIrreversibleTransform([hashtable] $properties) {
+        return $this
+    }
+
+    [WidgetStateTransition] PostIrreversibleTransformWithMethodCall($methodName, [object[]] $methodArguments) {
         return $this
     }
 
@@ -4546,6 +4550,8 @@ Function global:ExecutePipAction {
                 WriteLog "Failed: $message" -Background DarkRed -Foreground White
                 $locals.functionContext.tasksFailed += 1
             }
+
+            # IrreversibleTransformWithMethodCall()
 
             # $global:dataModel.Columns['Status'].ReadOnly = $false
             # $global:dataModel.Columns['Status'].ReadOnly = $true
