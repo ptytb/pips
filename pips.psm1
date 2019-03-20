@@ -43,9 +43,9 @@ $global:FRAMEWORK_VERSION = [version]([Runtime.InteropServices.RuntimeInformatio
 
 
 Function global:MakeEvent([hashtable] $properties) {
-    [EventArgs] $EventArgs = [EventArgs]::Empty
+    [EventArgs] $EventArgs = [EventArgs]::new()  # Always use new(), not [EventArgs]::Empty !
     foreach ($p in $properties.GetEnumerator()) {
-        Add-Member -InputObject $EventArgs -MemberType 'NoteProperty' -Name $p.Key -Value $p.Value -Force
+        $null = Add-Member -InputObject $EventArgs -Force -MemberType NoteProperty -Name $p.Key -Value $p.Value
     }
     return ,$EventArgs
 }
@@ -2814,9 +2814,9 @@ Function Generate-Form {
             $null = PostMessage $logView.Handle $WM_VSCROLL $SB_PAGEBOTTOM 0
         })
 
-        $WritePipLogDelegate = New-RunspacedDelegate ([EventHandler] {
+        $global:WritePipLogDelegate = New-RunspacedDelegate ([EventHandler] {
             param($Sender, $EventArgs)
-            $Arguments = $EventArgs.Arguments
+            $arguments = $EventArgs.arguments
             $null = FuncWriteLog @arguments
         })
 
@@ -2843,13 +2843,13 @@ Function Generate-Form {
 
             if ($logView.InvokeRequired) {
                 $EventArgs = MakeEvent @{
-                    Arguments=$arguments
+                    arguments=$arguments
                 }
-                $null = $logView.BeginInvoke($WritePipLogDelegate, ($logView, $EventArgs))
+                $null = $logView.BeginInvoke($global:WritePipLogDelegate, ($logView, $EventArgs))
             } else {
                 $null = FuncWriteLog @arguments
             }
-        }
+        }.GetNewClosure()
 
         ${function:global:ClearLog} = {
             $logView.Clear()
