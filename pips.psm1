@@ -639,7 +639,7 @@ Function Convert-Base64ToICO($base64Text) {
 }
 
 
-Function global:EnsureColor($color) {
+Function global:EnsureColor([object] $color) {
     if (($color -is [string]) -and (-not [string]::IsNullOrWhiteSpace($color))) {
         $color = [System.Drawing.Color]::FromKnownColor($color)
     } elseif ($color -isnot [System.Drawing.Color]) {
@@ -3784,8 +3784,6 @@ class ProcessWithPipedIO {
         } catch {
             $this._processOutputEnded = $true
             $this._processErrorEnded = $true
-            $this._process.StandardOutput.Close()
-            $this._process.StandardError.Close()
         }
         return [System.Threading.Tasks.Task[string]]::FromResult($null)
     }
