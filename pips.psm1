@@ -112,13 +112,13 @@ Function global:ApplyAsync([object] $FunctionContext, [object] $Queue, [Func[obj
             $taskFromFunction = $locals.function.Invoke($element, $locals.FunctionContext)
             $null = $taskFromFunction.ContinueWith($locals.iterator, $locals,
                 [System.Threading.CancellationToken]::None,
-                ([System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously -bor
+                ([System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously -bor
                     [System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent),
                 $global:UI_SYNCHRONIZATION_CONTEXT)
         } else {
             $null = $task.ContinueWith($locals.Finally, $locals.FunctionContext,
                 [System.Threading.CancellationToken]::None,
-                ([System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously -bor
+                ([System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously -bor
                     [System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent),
                 $global:UI_SYNCHRONIZATION_CONTEXT)
         }
@@ -135,7 +135,7 @@ Function global:ApplyAsync([object] $FunctionContext, [object] $Queue, [Func[obj
     $t = [System.Threading.Tasks.Task]::FromResult(@{})
     $null = $t.ContinueWith($iterator, $locals,
         [System.Threading.CancellationToken]::None,
-        ([System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously -bor
+        ([System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously -bor
             [System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent),
             $global:UI_SYNCHRONIZATION_CONTEXT)
 }
@@ -288,7 +288,7 @@ $continuation = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task[Obje
 
 $null = $task.ContinueWith($continuation, [System.Threading.CancellationToken]::None, (
     [System.Threading.Tasks.TaskContinuationOptions]::DenyChildAttach -bor
-    [System.Threading.Tasks.TaskContinuationOptions]::LongRunning),
+    [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
     [System.Threading.Tasks.TaskScheduler]::Default)
 $task.Start([System.Threading.Tasks.TaskScheduler]::Default)
 
@@ -701,7 +701,7 @@ Function Add-Button ($name, $handler, [switch] $AsyncHandler) {
             $task = $handler.Invoke($Sender, $EventArgs)
             $null = $task.ContinueWith($doReverseWidgetState, $widgetStateTransition,
                 [System.Threading.CancellationToken]::None,
-                ([System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously -bor
+                ([System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously -bor
                     [System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent),
                     $global:UI_SYNCHRONIZATION_CONTEXT)
         }.GetNewClosure())
@@ -2464,6 +2464,26 @@ Some packages may generate garbage or show windows, don't panic.
                 Open-LinkInBrowser "https://github.com/ptytb/pips/issues/new?title=$title&body=$hostInfo"
             };
         };
+        @{
+            Persistent=$true;
+            MenuText = "Binge spawn processes";
+            Code = {
+                $delegate = New-RunspacedDelegate([Action[System.Threading.Tasks.Task, object]] {
+                    $process = [ProcessWithPipedIO]::new('cat', @('D:\work\pyfmt-big.txt'))
+                    # $process = [ProcessWithPipedIO]::new('py', @('--help'))
+                    $taskProcessDone = $process.StartWithLogging($true, $true)
+                    # $taskReadOutput = $process.ReadOutputToEndAsync()
+                })
+                $task = [System.Threading.Tasks.Task]::FromResult(0)
+                while ($true) {
+                    $options = ([System.Threading.Tasks.TaskContinuationOptions]::DenyChildAttach -bor `
+                        [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously)
+                    $task = $task.ContinueWith($delegate, @{}, [System.Threading.CancellationToken]::None, $options,
+                        [System.Threading.Tasks.TaskScheduler]::Default)
+                    [System.Windows.Forms.Application]::DoEvents()
+                }
+            };
+        };
     )
 
     $menuArray = [System.Collections.ArrayList]::new()
@@ -3728,9 +3748,14 @@ class ProcessWithPipedIO {
         $delegate = New-RunspacedDelegate ([Action[object]] {
             param([object] $locals)
             $self = $locals.self
-            $code = $self._process.ExitCode
-            $null = $self._taskCompletionSource.TrySetResult($code)
-            $null = $self._process.Dispose()
+            try {
+                $code = $self._process.ExitCode
+            } catch {
+                $code = -1
+            } finally {
+                $null = $self._taskCompletionSource.TrySetResult($code)
+                $null = $self._process.Dispose()
+            }
         })
         $token = [System.Threading.CancellationToken]::None
         $options = ([System.Threading.Tasks.TaskCreationOptions]::DenyChildAttach -bor `
@@ -3773,7 +3798,7 @@ class ProcessWithPipedIO {
         try {
             $taskRead = $this._process.StandardOutput.ReadToEndAsync()
             $options = ([System.Threading.Tasks.TaskContinuationOptions]::DenyChildAttach -bor `
-                [System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously)
+                [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously)
             $null = $taskRead.ContinueWith($continuationReadingDone, @{ self=$this; },
                 [System.Threading.CancellationToken]::None, $options, [System.Threading.Tasks.TaskScheduler]::Default)
             return $taskRead
@@ -4594,7 +4619,7 @@ Function global:ExecutePipAction {
             $taskReport = $taskProcessDone.ContinueWith($continuationReportIteration, $locals,
                 [System.Threading.CancellationToken]::None,
                 ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
-                    [System.Threading.Tasks.TaskContinuationOptions]::RunContinuationsAsynchronously),
+                    [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
                 $global:UI_SYNCHRONIZATION_CONTEXT)
             return $taskReport
         }.GetNewClosure())
