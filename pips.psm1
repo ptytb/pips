@@ -3729,12 +3729,8 @@ class ProcessWithPipedIO {
             param([object] $locals)
             $self = $locals.self
             $code = $self._process.ExitCode
-            try {
-                $null = $self._process.WaitForExit(5000)
-                $null = $self._process.Dispose()
-            } finally {
-                $null = $self._taskCompletionSource.TrySetResult($code)
-            }
+            $null = $self._taskCompletionSource.TrySetResult($code)
+            $null = $self._process.Dispose()
         })
         $token = [System.Threading.CancellationToken]::None
         $options = ([System.Threading.Tasks.TaskCreationOptions]::DenyChildAttach -bor `
@@ -4555,8 +4551,6 @@ Function global:ExecutePipAction {
                 WriteLog "Failed: $message" -Background DarkRed -Foreground White
                 $locals.functionContext.tasksFailed += 1
             }
-
-            $null = $locals.process._process.Dispose()
 
             # PostIrreversibleTransformWithMethodCall()
 
