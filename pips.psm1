@@ -904,71 +904,94 @@ Function global:Get-PyDoc($request) {
     return $output
 }
 
-Function Get-PythonBuiltinPackages() {
-    $builtinLibs = New-Object System.Collections.ArrayList
-    $path = Get-CurrentInterpreter 'Path'
-    $libs = "${path}\Lib"
-    $ignore = [regex] '^__'
-    $filter = [regex] '\.py.?$'
+Function global:GetPythonBuiltinPackagesAsync() {
 
-    $trackDuplicates = New-Object System.Collections.Generic.HashSet[String]
+    $delegate = New-RunspacedDelegate ([Func[object, object]] {
+        param([object] $locals)
 
-    foreach ($item in dir $libs) {
-        if ($item -is [System.IO.DirectoryInfo]) {
-            $packageName = "$item"
-        } elseif ($item -is [System.IO.FileInfo]) {
-            $packageName = "$item" -replace $filter,''
-        }
-        if (($packageName -cmatch $ignore) -or ($trackDuplicates.Contains($packageName))) {
-            continue
-        }
-        $null = $trackDuplicates.Add("$packageName")
-        $null = $builtinLibs.Add([PSCustomObject] @{Package=$packageName; Type='builtin'})
-    }
+        $builtinLibs = [System.Collections.Generic.List[PSObject]]::new()
+        $path = Get-CurrentInterpreter 'Path'
+        $libs = "${path}\Lib"
+        $ignore = [regex] '^__'
+        $filter = [regex] '\.py.?$'
 
-    $getBuiltinsScript = "import sys; print(','.join(sys.builtin_module_names))"
-    $sys_builtin_module_names = & (Get-CurrentInterpreter 'PythonExe') -c $getBuiltinsScript
-    $modules = $sys_builtin_module_names.Split(',')
-    foreach ($builtinModule in $modules) {
-        if ($trackDuplicates.Contains("$builtinModule")) {
-            continue
-        }
-        $null = $builtinLibs.Add([PSCustomObject] @{Package=$builtinModule; Type='builtin'})
-    }
+        $trackDuplicates = New-Object System.Collections.Generic.HashSet[String]
 
-    return ,$builtinLibs
-}
-
-Function Get-PythonOtherPackages {
-    $otherLibs = New-Object System.Collections.ArrayList
-    $path = Get-CurrentInterpreter 'Path'
-    $libs = "${path}\Lib\site-packages"
-    $ignore = [regex] '\.dist-info$|\.egg-info$|\.egg$|^__pycache__$'
-    $filter = [regex] '\.py.?$'
-
-    if (Exists-Directory $libs) {
         foreach ($item in dir $libs) {
             if ($item -is [System.IO.DirectoryInfo]) {
-                if (-not (Exists-File "$libs\$item\__init__.py")) {
-                    continue
-                }
                 $packageName = "$item"
             } elseif ($item -is [System.IO.FileInfo]) {
-                if ($packageName -notmatch $filter) {
-                    continue
-                }
                 $packageName = "$item" -replace $filter,''
             }
-            if (($packageName -match $ignore) `
-                -or ((Test-PackageInList $packageName) -ne -1)`
-                -or ((Test-PackageInList ($packageName -replace '_','-')) -ne -1)) {
+            if (($packageName -cmatch $ignore) -or ($trackDuplicates.Contains($packageName))) {
                 continue
             }
-            $null = $otherLibs.Add([PSCustomObject] @{Package=$packageName; Type='other'})
+            $null = $trackDuplicates.Add("$packageName")
+            $null = $builtinLibs.Add([PSCustomObject] @{Package=$packageName; Type='builtin'})
         }
-    }
 
-    return ,$otherLibs
+        $getBuiltinsScript = "import sys; print(','.join(sys.builtin_module_names))"
+        $sys_builtin_module_names = & (Get-CurrentInterpreter 'PythonExe') -c $getBuiltinsScript
+        $modules = $sys_builtin_module_names.Split(',')
+        foreach ($builtinModule in $modules) {
+            if ($trackDuplicates.Contains("$builtinModule")) {
+                continue
+            }
+            $null = $builtinLibs.Add([PSCustomObject] @{Package=$builtinModule; Type='builtin'})
+        }
+
+        return ,$builtinLibs
+    })
+
+    $token = [System.Threading.CancellationToken]::None
+    $options = ([System.Threading.Tasks.TaskCreationOptions]::AttachedToParent)
+    $taskGetBuiltinPackages = [System.Threading.Tasks.Task]::Factory.StartNew($delegate, @{}, $token, $options,
+        $global:UI_SYNCHRONIZATION_CONTEXT)
+
+    return $taskGetBuiltinPackages
+}
+
+Function global:GetPythonOtherPackagesAsync {
+    $delegate = New-RunspacedDelegate([Func[object, object]] {
+        param([object] $locals)
+
+        $otherLibs = [System.Collections.Generic.List[PSCustomObject]]::new()
+        $path = Get-CurrentInterpreter 'Path'
+        $libs = "${path}\Lib\site-packages"
+        $ignore = [regex] '\.dist-info$|\.egg-info$|\.egg$|^__pycache__$'
+        $filter = [regex] '\.py.?$'
+
+        if (Exists-Directory $libs) {
+            foreach ($item in dir $libs) {
+                if ($item -is [System.IO.DirectoryInfo]) {
+                    if (-not (Exists-File "$libs\$item\__init__.py")) {
+                        continue
+                    }
+                    $packageName = "$item"
+                } elseif ($item -is [System.IO.FileInfo]) {
+                    if ($packageName -notmatch $filter) {
+                        continue
+                    }
+                    $packageName = "$item" -replace $filter,''
+                }
+                if (($packageName -match $ignore) `
+                    -or ((Test-PackageInList $packageName) -ne -1)`
+                    -or ((Test-PackageInList ($packageName -replace '_','-')) -ne -1)) {
+                    continue
+                }
+                $null = $otherLibs.Add([PSCustomObject] @{Package=$packageName; Type='other'})
+            }
+        }
+
+        return ,$otherLibs
+    })
+
+    $token = [System.Threading.CancellationToken]::None
+    $options = ([System.Threading.Tasks.TaskCreationOptions]::AttachedToParent)
+    $taskGetOtherPackages = [System.Threading.Tasks.Task]::Factory.StartNew($delegate, @{}, $token, $options,
+        $global:UI_SYNCHRONIZATION_CONTEXT)
+
+    return $taskGetOtherPackages
 }
 
 Function global:GetCondaJsonAsync([bool] $outdatedOnly) {
@@ -2007,10 +2030,14 @@ Function global:HighlightPythonPackages {
 
     $dataGridView.BeginInit()
     foreach ($row in $dataGridView.Rows) {
-        if ($row.DataBoundItem.Row.Type -eq 'builtin') {
-            $row.DefaultCellStyle.BackColor = [Drawing.Color]::LightGreen
-        } elseif ($row.DataBoundItem.Row.Type -eq 'other') {
-            $row.DefaultCellStyle.BackColor = [Drawing.Color]::LightPink
+        $color = switch ($row.DataBoundItem.Row.Type) {
+            'builtin' { [Drawing.Color]::LightGreen }
+            'other' { [Drawing.Color]::LightPink }
+            'conda' { [Drawing.Color]::LightGoldenrodYellow }
+            Default { $null }
+        }
+        if ($color) {
+            $row.DefaultCellStyle.BackColor = $color
         }
     }
     $dataGridView.EndInit()
@@ -4314,6 +4341,7 @@ Function global:AddPackagesToTable {
 Function global:GetPythonPackages($outdatedOnly = $true) {
     ClearRows
     InitPackageUpdateColumns $global:dataModel
+    $global:outdatedOnly = $outdatedOnly
 
     $continuationAllDone = New-RunspacedDelegate ([Action[System.Threading.Tasks.Task]] {
         param([System.Threading.Tasks.Task] $task)
@@ -4325,8 +4353,7 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
             AddPackagesToTable $packages $type
         }
 
-        # $global:outdatedOnly = $outdatedOnly
-        # HighlightPythonPackages
+        HighlightPythonPackages
 
         $pipCount = 0
         $condaCount = 0
@@ -4335,7 +4362,7 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
 
         WriteLog 'Double click or [Ctrl+Enter] a table row to open package''s home page in browser'
 
-        # $count = $global:dataModel.Rows.Count
+        $count = $global:dataModel.Rows.Count
         # WriteLog "Total $count packages: $builtinCount builtin, $pipCount pip, $condaCount conda, $otherCount other"
     })
 
@@ -4372,7 +4399,11 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
         $process = [ProcessWithPipedIO]::new($python_exe, $arguments)
         $taskProcessDone  = $process.StartWithLogging($false, $true)
         $taskReadOutput = $process.ReadOutputToEndAsync()
-        $taskPipList = $taskReadOutput.ContinueWith($continuationParsePipOutput, $global:UI_SYNCHRONIZATION_CONTEXT)
+        $taskPipList = $taskReadOutput.ContinueWith($continuationParsePipOutput,
+            [System.Threading.CancellationToken]::None,
+            ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
+                [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
+            $global:UI_SYNCHRONIZATION_CONTEXT)
         $null = $allTasks.Add($taskPipList)
     }
 
@@ -4387,9 +4418,47 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
             return [Tuple]::Create($condaPackages, 'conda')
         })
         $task = GetCondaPackagesAsync $outdatedOnly
-        $taskCondaList = $task.ContinueWith($continuationAddCondaPackages, $global:UI_SYNCHRONIZATION_CONTEXT)
+        $taskCondaList = $task.ContinueWith($continuationAddCondaPackages,
+            [System.Threading.CancellationToken]::None,
+            ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
+                [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
+            $global:UI_SYNCHRONIZATION_CONTEXT)
         $null = $allTasks.Add($taskCondaList)
     }
+
+    $continuationAddBuiltinPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
+        param([System.Threading.Tasks.Task] $task)
+        $builtinPackages = $task.Result
+        if ($builtinPackages -eq $null) {
+            throw [Exception]::new("Empty response from builtin packages.")
+        }
+        return [Tuple]::Create($builtinPackages, 'builtin')
+    })
+    $taskGetBuiltinPackages = GetPythonBuiltinPackagesAsync
+    $taskAddBuiltinPackages = $taskGetBuiltinPackages.ContinueWith($continuationAddBuiltinPackages,
+        [System.Threading.CancellationToken]::None,
+        ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
+            [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
+        $global:UI_SYNCHRONIZATION_CONTEXT)
+    $null = $allTasks.Add($taskAddBuiltinPackages)
+
+    # other packages are packages that were found but do not belong to any other list
+
+    $continuationAddOtherPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
+        param([System.Threading.Tasks.Task] $task)
+        $otherPackages = $task.Result
+        if ($otherPackages -eq $null) {
+            throw [Exception]::new("Empty response from other packages.")
+        }
+        return [Tuple]::Create($otherPackages, 'other')
+    })
+    $taskGetOtherPackages = GetPythonOtherPackagesAsync
+    $taskAddOtherPackages = $taskGetOtherPackages.ContinueWith($continuationAddOtherPackages,
+        [System.Threading.CancellationToken]::None,
+        ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
+            [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
+        $global:UI_SYNCHRONIZATION_CONTEXT)
+    $null = $allTasks.Add($taskAddOtherPackages)
 
     # WriteLog $allTasks -Background DarkCyan -Foreground Yellow
 
@@ -4403,11 +4472,9 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
     return $taskAllDone
 
     if (-not $outdatedOnly) {
-        $builtinPackages = Get-PythonBuiltinPackages
+        $builtinPackages = GetPythonBuiltinPackages
         Add-PackagesToTable $builtinPackages 'builtin'
 
-        $otherPackages = Get-PythonOtherPackages
-        Add-PackagesToTable $otherPackages 'other'
 
         $builtinCount = $builtinPackages.Count
         $otherCount = $otherPackages.Count
