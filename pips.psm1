@@ -3721,7 +3721,7 @@ class ProcessWithPipedIO {
                 $count = $self.FlushBuffersToLog()
 
                 if ($self._hasFinished -and $self._processOutputEnded -and -$self._processErrorEnded -and ($count -eq 0)) {
-                    WriteLog "Timer exiting <5>"
+                    WriteLog "Timer exiting normally <5>"
                     $self._ConfirmExit($null)
                 } else {
                     if ($count) {
@@ -3732,12 +3732,23 @@ class ProcessWithPipedIO {
                         if ($Sender.Interval -eq $throttlingInterval) { # already throttling, is it alive?
                             # Process.Refresh() wipes its state entirely then possibly gets filled in from alive proc; WaitForExit() may lock and is not an option
                             $p = try { [System.Diagnostics.Process]::GetProcessById($self._pid) } catch { $null }
-                            $self._hasFinished = $p -eq $null
+                            $actuallyDead = $p -eq $null
                             if ($p) { $p.Dispose() }
-                            if ($self._hasFinished) {
+
+                            WriteLog "Throttling status: exited_evt=$($self._hasFinished) now_dead=$actuallyDead code=$($self._exitCode) out_end=$($self._processOutputEnded) err_end=$($self._processErrorEnded)" -Background LightPink
+
+                            if ($actuallyDead) {
+                                if (-not $self._hasFinished) {
+                                    $self._exitCode = 0  # lean towards false positive on successful termination
+                                }
+
+                                # it is dead and pipes have been dry for seconds; we'll dispose potentially hung async readers
+
                                 $self._processOutputEnded = $true
                                 $self._processErrorEnded = $true
                             }
+
+                            $self._hasFinished = $actuallyDead
                         } else {
                             $Sender.Interval = $throttlingInterval  # our child process is silent, we'll throttle
                         }
