@@ -4347,23 +4347,20 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
         param([System.Threading.Tasks.Task] $task)
 
         [object[]] $tuplesPackagesType = $task.Result
+        $stats = @{}
 
         foreach ($tuple in $tuplesPackagesType) {
             $packages, $type = $tuple.Item1, $tuple.Item2
             AddPackagesToTable $packages $type
+            $null = $stats.Add($type, $packages.Count)
         }
 
         HighlightPythonPackages
 
-        $pipCount = 0
-        $condaCount = 0
-        $builtinCount = 0
-        $otherCount = 0
-
         WriteLog 'Double click or [Ctrl+Enter] a table row to open package''s home page in browser'
-
-        $count = $global:dataModel.Rows.Count
-        # WriteLog "Total $count packages: $builtinCount builtin, $pipCount pip, $condaCount conda, $otherCount other"
+        $total = $global:dataModel.Rows.Count
+        $stats = ($stats.GetEnumerator() | ForEach-Object { "$($_.Value) $($_.Key)"  }) -join ', '
+        WriteLog "Total $total packages: $stats" -Background LightGreen
     })
 
     $allTasks = [System.Collections.Generic.List[System.Threading.Tasks.Task[object]]]::new()
