@@ -62,6 +62,7 @@ RequiredAssemblies = @(
 	'System.Windows.Forms',
 	'System.Text.RegularExpressions',
 	'System.Collections',
+	'System.Collections.Concurrent',
 	'System.Web',
 	'System.Net'
 	)
@@ -134,4 +135,3 @@ HelpInfoURI = 'https://github.com/ptytb/pips'
 # DefaultCommandPrefix = ''
 
 }
-

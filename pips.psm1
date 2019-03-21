@@ -29,6 +29,7 @@ $global:FRAMEWORK_VERSION = [version]([Runtime.InteropServices.RuntimeInformatio
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Collections.ArrayList")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Collections.Generic")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Collections.Generic.HashSet")
+[Void][Reflection.Assembly]::LoadWithPartialName("System.Collections.Concurrent")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Web")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Web.HttpUtility")
 [Void][Reflection.Assembly]::LoadWithPartialName("System.Net")
@@ -3610,14 +3611,16 @@ class TextBoxNavigationHook {
 
 
 class ProcessWithPipedIO {
-    hidden [System.Diagnostics.Process] $_process
+    hidden [System.Diagnostics.Process] $_process = $null
     hidden [System.Threading.Tasks.TaskCompletionSource[int]] $_taskCompletionSource  # Keeps the exit code of a process
-    hidden [System.Collections.Generic.List[string]] $_processOutput
-    hidden [System.Collections.Generic.List[string]] $_processError
+    hidden [System.Collections.Concurrent.ConcurrentQueue[string]] $_processOutput = $null
+    hidden [System.Collections.Concurrent.ConcurrentQueue[string]] $_processError = $null
     hidden [bool] $_processOutputEnded = $false
     hidden [bool] $_processErrorEnded = $false
     hidden [bool] $_hasStarted = $false
-    hidden [System.Windows.Forms.Timer] $_timer
+    hidden [bool] $_hasFinished = $false
+    hidden [int] $_exitCode = -1
+    hidden [System.Windows.Forms.Timer] $_timer = $null
 
     ProcessWithPipedIO($Command, $Arguments) {
         $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
@@ -3645,6 +3648,10 @@ class ProcessWithPipedIO {
 
         $ExitedCallback = New-RunspacedDelegate ([EventHandler] {
             param($Sender, $EventArgs)
+            $self._hasFinished = $true
+            try {
+                $self._exitCode = $self._process.ExitCode
+            } catch { }
             if (($self._timer -eq $null) -and $self._processOutputEnded -and $self._processErrorEnded) {
                 $self._ConfirmExit($null)
             }
@@ -3680,22 +3687,24 @@ class ProcessWithPipedIO {
     [System.Threading.Tasks.Task[int]] StartWithLogging([bool] $LogOutput, [bool] $LogErrors) {
         $self = $this
 
+        WriteLog "StartWithLogging <1>"
+
         if ($LogOutput) {  # ReadOutputToEndAsync() is supposed to be called otherwise!
-            $this._processOutput = [System.Collections.Generic.List[string]]::new()
+            $this._processOutput = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
             $OutputCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
                 param($Sender, $EventArgs)
                 $line = $EventArgs.Data
                 if ($line -eq $null) {  # IMPORTANT
                     $self._processOutputEnded = $true
                 } else {
-                    $null = $self._processOutput.Add($line)
+                    $null = $self._processOutput.Enqueue($line)
                 }
             }.GetNewClosure())
             $this._process.add_OutputDataReceived($OutputCallback)
         }
 
         if ($LogErrors) {
-            $this._processError = [System.Collections.Generic.List[string]]::new()
+            $this._processError = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
         }
         $ErrorCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
             param($Sender, $EventArgs)
@@ -3703,7 +3712,7 @@ class ProcessWithPipedIO {
             if ($line -eq $null) {  # IMPORTANT
                 $self._processErrorEnded = $true
             } elseif ($LogErrors) {
-                $null = $self._processError.Add($line)
+                $null = $self._processError.Enqueue($line)
             }
         }.GetNewClosure())
         $this._process.add_ErrorDataReceived($ErrorCallback)
@@ -3713,12 +3722,15 @@ class ProcessWithPipedIO {
 
             $delegate = New-RunspacedDelegate ([EventHandler] {
                 param([System.Windows.Forms.Timer] $Sender)
+                $Sender.Enabled = $false
                 $self = $Sender.Tag
                 $count = $self.FlushBuffersToLog()
 
-                if ($self._process.HasExited -and $self._processOutputEnded -and -$self._processErrorEnded -and ($count -eq 0)) {
-                    $Sender.Stop()
+                if ($self._hasFinished -and $self._processOutputEnded -and -$self._processErrorEnded -and ($count -eq 0)) {
+                    WriteLog "Timer exiting <5>"
                     $self._ConfirmExit($null)
+                } else {
+                    $Sender.Enabled = $true
                 }
             })
 
@@ -3727,7 +3739,9 @@ class ProcessWithPipedIO {
             $this._timer.add_Tick($delegate)
         }
 
+        WriteLog "StartWithLogging <2>"
         $null = $this.Start()
+        WriteLog "StartWithLogging <3>"
 
         if ($this._hasStarted) {
             if ($LogOutput) {
@@ -3741,25 +3755,22 @@ class ProcessWithPipedIO {
             }
         }
 
+        WriteLog "StartWithLogging <4>"
         return $this._taskCompletionSource.Task
     }
 
     hidden _ConfirmExit([Exception] $exception) {
+        WriteLog "_ConfirmExit E='$exception' OUT=$($this._processOutputEnded) ERR=$($this._processErrorEnded)"
         $delegate = New-RunspacedDelegate ([Action[object]] {
             param([object] $locals)
             $self = $locals.self
             $exception = $locals.exception
-            if ($exception -ne $null) {
+            if (($exception -ne $null) -or ($self._exitCode -eq -1)) {
                 $null = $self._taskCompletionSource.TrySetException($exception)
             } else {
-                try {
-                    $code = $self._process.ExitCode
-                } catch {
-                    $code = -1
-                } finally {
-                    $null = $self._taskCompletionSource.TrySetResult($code)
-                    $null = $self._process.Dispose()
-                }
+                $null = $self._taskCompletionSource.TrySetResult($self._exitCode)
+                $null = $self._process.Dispose()
+                $self._process = $null
             }
         })
         $token = [System.Threading.CancellationToken]::None
@@ -3778,13 +3789,17 @@ class ProcessWithPipedIO {
 
     hidden [int] _FlushContainerToLog($container, $color) {
         $count = 0
-        if ($container) {
-            $count = $container.Count
-            if ($count -gt 0) {
-                $lines = $container -join [Environment]::NewLine
-                $container.Clear()
-                WriteLog $lines -Background $color
+        if ($container -and (-not $container.IsEmpty)) {
+            $buffer = [System.Text.StringBuilder]::new()
+            [string] $line = [string]::Empty
+            while ($container.TryDequeue([ref] $line)) {
+                if ($buffer.Length -gt 0) {
+                    $null = $buffer.Append([Environment]::NewLine)
+                }
+                $null = $buffer.Append($line)
+                ++$count
             }
+            WriteLog $buffer.ToString() -Background $color
         }
         return $count
     }
@@ -3809,7 +3824,6 @@ class ProcessWithPipedIO {
             return $taskRead
         } catch {
             $this._processOutputEnded = $true
-            $this._processErrorEnded = $true
         }
         return [System.Threading.Tasks.Task[string]]::FromResult($null)
     }
@@ -4527,7 +4541,7 @@ Function global:WidgetStateTransitionForCommandButton($button) {
     $null = $widgetStateTransition.Add($button).Transform(@{Text='Cancel';Enabled=$true;Click={
             $response = [System.Windows.Forms.MessageBox]::Show('Sure?', 'Cancel', [System.Windows.Forms.MessageBoxButtons]::YesNo)
             if ($response -eq 'Yes') {
-                $null = $widgetStateTransition.ReverseAll()
+                $null = $script:widgetStateTransition.ReverseAll()
             }
         }.GetNewClosure();})
     $null = $widgetStateTransition.GlobalVariables(@{
@@ -4611,7 +4625,7 @@ Function global:ExecutePipAction {
                 # (Get-CurrentInterpreter 'PythonExe')
             # }
 
-            $process = [ProcessWithPipedIO]::new('cat', @('D:\work\pyfmt-big.txt'))
+            $process = [ProcessWithPipedIO]::new('py', @('--help'))
             $taskProcessDone = $process.StartWithLogging($true, $true)
 
             $locals = @{
@@ -4621,7 +4635,7 @@ Function global:ExecutePipAction {
                 functionContext=$FunctionContext;
             }
 
-            $taskReport = $taskProcessDone.ContinueWith($continuationReportIteration, $locals,
+            $taskReport = $taskProcessDone.ContinueWith($script:continuationReportIteration, $locals,
                 [System.Threading.CancellationToken]::None,
                 ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
                     [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
@@ -5045,8 +5059,9 @@ Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
                 BackgroundColor=$color;
                 ForegroundColor=(15 - $color);
             }
-
             Write-Host ('=' * 70) @color
+            Write-Host 'Managed TID=' ([System.Threading.Thread]::CurrentThread.ManagedThreadId) ', is POOL=' ([System.Threading.Thread]::CurrentThread.IsThreadPoolThread) ', is BACKGRND=' ([System.Threading.Thread]::CurrentThread.IsBackground) -BackgroundColor White -ForegroundColor Black
+            Write-Host ('-' * 70) @color
             Write-Host $Exception.GetType() @color
             Write-Host ('-' * 70) @color
             Write-Host $Exception.Message @color
