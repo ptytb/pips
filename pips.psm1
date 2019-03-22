@@ -3845,8 +3845,9 @@ class ProcessWithPipedIO {
         $count = 0
         if ($container -and (-not $container.IsEmpty)) {
             $buffer = [System.Text.StringBuilder]::new()
-            [string] $line = [string]::Empty
-            while ($container.TryDequeue([ref] $line)) {
+            [string] $line = $null
+            [ref] $lineRef = [ref] $line
+            while ($container.TryDequeue($lineRef)) {
                 if ($buffer.Length -gt 0) {
                     $null = $buffer.Append([Environment]::NewLine)
                 }
@@ -3915,7 +3916,7 @@ class WidgetStateTransition {
             $widgetState = @{}
             foreach ($property in $properties.GetEnumerator()) {
                 # Write-Host $property.Key '=' $property.Value ' of ' $property.Value.GetType()
-                if ($property.Value -isnot [ScriptBlock]) {
+                if (($property.Value -isnot [ScriptBlock]) -and ($property.Value -isnot [delegate])) {
                     $null = $widgetState.Add($property.Key, $control."$($property.Key)")
                     $control."$($property.Key)" = $property.Value
                 } else {
@@ -3936,7 +3937,7 @@ class WidgetStateTransition {
 
             switch ($widgetState.Key) {
 
-                { $_ -is [System.Windows.Forms.Control] } {
+                { ($_ -is [System.Windows.Forms.Control]) -or ($_ -is [System.Windows.Forms.Form]) } {
                     $control, $properties = $widgetState.Key, $widgetState.Value
                     foreach ($property in $properties.GetEnumerator()) {
                         # Write-Host 'REV ' $property.Key '=' $property.Value ' of ' $property.Value.GetType()
@@ -3982,9 +3983,26 @@ class WidgetStateTransition {
         return $this
     }
 
-    static [delegate[]] SpliceEventHandlers([System.Windows.Forms.Control] $control, [string] $event, $handlers) {
+    static hidden [string] FormatInternalEventName([type] $type, [string] $event) {
+        $name = switch ($type) {
+            { $_ -eq [System.Windows.Forms.Form] } { "EVENT_$event".ToUpper() ; break }
+            { $_ -eq [System.Windows.Forms.Control] } { "Event$event" ; break }
+        }
+        return $name
+    }
 
+    static [delegate[]] SpliceEventHandlers([object] $control, [string] $event, $handlers) {
+
+        $old = [System.Collections.Generic.List[delegate]]::new()
         $type = $control.GetType()
+        $baseType = switch ($control) {
+            { $_ -is [System.Windows.Forms.Form] } { [System.Windows.Forms.Form] ; break }
+            { $_ -is [System.Windows.Forms.Control] } { [System.Windows.Forms.Control] ; break }
+        }
+        $internalEventName = [WidgetStateTransition]::FormatInternalEventName($baseType, $event)
+
+        WriteLog $type -Background Pink
+        WriteLog $baseType -Background Pink
 
         $propertyInfo = $type.GetProperty('Events',
             [System.Reflection.BindingFlags]::Instance -bor
@@ -3993,7 +4011,7 @@ class WidgetStateTransition {
 
         $eventHandlerList = $propertyInfo.GetValue($control)
 
-        $fieldInfo = [System.Windows.Forms.Control].GetField("Event$event",
+        $fieldInfo = $baseType.GetField($internalEventName,
             [System.Reflection.BindingFlags]::Static -bor
             [System.Reflection.BindingFlags]::NonPublic)
 
@@ -4001,19 +4019,19 @@ class WidgetStateTransition {
 
         $eventHandler = $eventHandlerList[$eventKey]
 
-        $old = [System.Collections.Generic.List[delegate]]::new()
-
         if ($eventHandler) {
             $invocationList = @($eventHandler.GetInvocationList())
 
             foreach ($handler in $invocationList) {
                 $null = $old.Add($handler)
                 $control."remove_$event"($handler)
+                WriteLog "EVENT REMOVE $event $control $handler" -Background Red
             }
         }
 
         foreach ($handler in $handlers) {
             $control."add_$event"($handler)
+            WriteLog "EVENT ADD $event $control $handler" -Background Green
         }
 
         return $old
@@ -4039,6 +4057,22 @@ class WidgetStateTransition {
     }
 
     [WidgetStateTransition] CommitIrreversibleTransformations() {
+        return $this
+    }
+
+    [WidgetStateTransition] AllocateStatusLine([ref] $statusLineToken) {
+        return $this
+    }
+
+    [WidgetStateTransition] FreeStatusLine([object] $statusLineToken) {
+        return $this
+    }
+
+    [WidgetStateTransition] SetStatusLineText([object] $statusLineToken, [string] $text) {
+        return $this
+    }
+
+    [WidgetStateTransition] AppendStatusLineText([object] $statusLineToken, [string] $text) {
         return $this
     }
 
@@ -4621,6 +4655,26 @@ Function global:SelectPipAction($actionName) {
 
 Function global:WidgetStateTransitionForCommandButton($button) {
     $widgetStateTransition = [WidgetStateTransition]::new()
+
+    $RequestUserAppExit = [System.Windows.Forms.FormClosingEventHandler] {
+        param([object] $Sender, [System.Windows.Forms.FormClosingEventArgs] $EventArgs)
+        $response = [System.Windows.Forms.MessageBox]::Show('Sure?', 'Cancel', [System.Windows.Forms.MessageBoxButtons]::YesNo)
+        if ($response -eq [System.Windows.Forms.DialogResult]::Yes) {
+            $null = $script:widgetStateTransition.ReverseAll()
+        } else {
+            $EventArgs.Cancel = $true
+        }
+    }.GetNewClosure()
+
+    $RequestUserConfirmCancel = {
+        param([object] $Sender, [EventArgs] $EventArgs)
+        $response = [System.Windows.Forms.MessageBox]::Show('Sure?', 'Cancel', [System.Windows.Forms.MessageBoxButtons]::YesNo)
+        if ($response -eq [System.Windows.Forms.DialogResult]::Yes) {
+            $null = $script:widgetStateTransition.ReverseAll()
+        }
+    }.GetNewClosure()
+
+    $null = $widgetStateTransition.Add($form).Transform(@{FormClosing=$RequestUserAppExit})
     $disableThemWhileWorking = @(
         $WIDGET_GROUP_COMMAND_BUTTONS ;
         $WIDGET_GROUP_ENV_BUTTONS ;
@@ -4629,12 +4683,7 @@ Function global:WidgetStateTransitionForCommandButton($button) {
         $actionListComboBox
     )
     $null = $widgetStateTransition.AddRange($disableThemWhileWorking).Transform(@{Enabled=$false})
-    $null = $widgetStateTransition.Add($button).Transform(@{Text='Cancel';Enabled=$true;Click={
-            $response = [System.Windows.Forms.MessageBox]::Show('Sure?', 'Cancel', [System.Windows.Forms.MessageBoxButtons]::YesNo)
-            if ($response -eq 'Yes') {
-                $null = $script:widgetStateTransition.ReverseAll()
-            }
-        }.GetNewClosure();})
+    $null = $widgetStateTransition.Add($button).Transform(@{Text='Cancel';Enabled=$true;Click=$RequestUserConfirmCancel})
     $null = $widgetStateTransition.GlobalVariables(@{
             APP_MODE=([AppMode]::Working);
         })
@@ -5212,7 +5261,7 @@ Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
     [System.Windows.Forms.Application]::EnableVisualStyles()
 
     $global:form = Generate-Form
-    $form.Add_Closing({
+    $form.Add_FormClosing({
 
         foreach ($plugin in $global:plugins) {
             $plugin.Release()
