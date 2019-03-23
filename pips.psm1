@@ -45,6 +45,13 @@ enum AppMode {
     Working
 }
 
+enum MainFormModes {
+    Default;
+    AltModeA;
+    AltModeB;
+    AltModeC;
+}
+
 [AppMode] $global:APP_MODE = [AppMode]::Idle
 
 $global:packageTypes = [System.Collections.ArrayList]::new()
@@ -804,25 +811,40 @@ Function NewLine-TopLayout() {
     $Script:lastWidgetLeft = 5
 }
 
-Function Add-Button ($name, $handler, [switch] $AsyncHandler) {
-    $button = New-Object Windows.Forms.Button
+Function Add-Button {
+    [CmdletBinding()]
+    param($name, $handler, [switch] $AsyncHandlers, [Parameter(Mandatory=$false)] [hashtable] $Modes)
+
+    $button = [System.Windows.Forms.Button]::new()
     $button.Text = $name
-    if ($AsyncHandler) {
-        $wrappedHandler = New-RunspacedDelegate ([EventHandler] {
-            param($Sender, $EventArgs)
-            $widgetStateTransition = WidgetStateTransitionForCommandButton $button
-            $doReverseWidgetState = [WidgetStateTransition]::ReverseAllAsync()
-            $task = $handler.GetNewClosure().Invoke($Sender, $EventArgs)
-            $null = $task.ContinueWith($doReverseWidgetState, $widgetStateTransition,
-                [System.Threading.CancellationToken]::None,
-                ([System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously -bor
-                    [System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent),
-                    $global:UI_SYNCHRONIZATION_CONTEXT)
-        }.GetNewClosure())
-        $button.Add_Click($wrappedHandler)
-    } else {
-        $button.Add_Click([EventHandler] $handler)
+
+    $button.Tag = if ($Modes) { $Modes } else { @{} }
+    $button.Tag.Add([MainFormModes]::Default, @{ Click=$handler })
+
+    if ($AsyncHandlers) {
+        foreach ($transformationForMode in $button.Tag.GetEnumerator()) {
+            $mode, $transformation = $transformationForMode.Key, $transformationForMode.Value
+            $local:handler = $transformation.Item('Click')
+
+            $wrappedHandler = New-RunspacedDelegate ([EventHandler] {
+                param($Sender, $EventArgs)
+                $widgetStateTransition = WidgetStateTransitionForCommandButton $button
+                $doReverseWidgetState = [WidgetStateTransition]::ReverseAllAsync()
+                $task = $handler.GetNewClosure().InvokeReturnAsIs($Sender, $EventArgs)
+                $null = $task.ContinueWith($doReverseWidgetState, $widgetStateTransition,
+                    [System.Threading.CancellationToken]::None,
+                    ([System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously -bor
+                        [System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent),
+                        $global:UI_SYNCHRONIZATION_CONTEXT)
+            }.GetNewClosure())
+
+            $transformation.Remove('Click')
+            $transformation.Add('Click', $wrappedHandler)
+        }
     }
+
+    $button.Add_Click($button.Tag.Item([MainFormModes]::Default).Item('Click'))
+
     Add-TopWidget $button
     return $button
 }
@@ -899,12 +921,16 @@ Function Add-Input ($handler) {
 
 Function Add-Buttons {
     $global:WIDGET_GROUP_COMMAND_BUTTONS = @(
-        Add-Button "Check Updates" ${function:GetPythonPackages} -AsyncHandler ;
-        Add-Button "List Installed" { GetPythonPackages($false) } -AsyncHandler ;
+        Add-Button "Check Updates" ${function:GetPythonPackages} -AsyncHandlers ;
+        Add-Button "List Installed" { GetPythonPackages($false) } -AsyncHandlers ;
         Add-Button "Sel All Visible" { SetVisiblePackageCheckboxes($true) } ;
         Add-Button "Select None" { SetAllPackageCheckboxes($false) } ;
-        Add-Button "Check Deps" ${function:CheckDependencies} -AsyncHandler ;
-        Add-Button "Execute" ${function:ExecuteAction} -AsyncHandler ;
+        Add-Button "Check Deps" ${function:CheckDependencies} -AsyncHandlers ;
+        Add-Button "Execute" ${function:ExecuteAction} -AsyncHandlers -Modes @{
+                ([MainFormModes]::AltModeA)=@{Text='Show command'; Click={ WriteLog 'AltModeA' -Foreground Red ; [System.Threading.Tasks.Task]::FromResult(@{}) }};
+                ([MainFormModes]::AltModeB)=@{Text='Execute...'; Click={ WriteLog 'AltModeB' -Foreground Green ; [System.Threading.Tasks.Task]::FromResult(@{}) }};
+                ([MainFormModes]::AltModeC)=@{Text='Do a barrel roll'; Click={ WriteLog 'AltModeC' -Foreground Blue ; [System.Threading.Tasks.Task]::FromResult(@{}) }};
+            };
     )
 }
 
@@ -2783,25 +2809,37 @@ Function CreateMainForm {
             }
         }
 
+        $wst = $alternateFunctionality_WidgetStateTransition
+        $mode = [MainFormModes]::Default
         if ($_.Shift) {
-            $wst = $alternateFunctionality_WidgetStateTransition
-            $null = $wst.Add($WIDGET_GROUP_COMMAND_BUTTONS[-1]).Transform(@{Text='What if?'})
+            $mode = [MainFormModes]::AltModeA
+        } elseif ($_.Alt) {
+            $mode = [MainFormModes]::AltModeB
+        } elseif ($_.Control) {
+            $mode = [MainFormModes]::AltModeC
+        }
+        [bool] $hasEntered = $false
+        $null = $wst.EnterMode($mode, [ref] $hasEntered)
+        if ($hasEntered) {
+            foreach ($button in $WIDGET_GROUP_COMMAND_BUTTONS) {
+                [hashtable] $buttonModes = $button.Tag
+                if ($buttonModes.ContainsKey($mode)) {
+                    [hashtable] $modeTransformation = $buttonModes[$mode]
+                    $null = $wst.Add($button).Transform($modeTransformation)
+                }
+            }
         }
 
     }.GetNewClosure())
 
     $form.add_KeyUp({
-        if (-not $_.Shift) {
-            $wst = $alternateFunctionality_WidgetStateTransition
-            $null = $wst.ReverseAll()
-        }
+        $wst = $alternateFunctionality_WidgetStateTransition
+        $null = $wst.ReverseAll().ExitMode()
     }.GetNewClosure())
 
     $form.add_Deactivate({
-        if (-not $_.Shift) {
-            $wst = $alternateFunctionality_WidgetStateTransition
-            $null = $wst.ReverseAll()
-        }
+        $wst = $alternateFunctionality_WidgetStateTransition
+        $null = $wst.ReverseAll().ExitMode()
     }.GetNewClosure())
 
     $dataGridView = New-Object System.Windows.Forms.DataGridView
@@ -3904,10 +3942,12 @@ class WidgetStateTransition {
     hidden [System.Collections.Generic.Stack[hashtable]] $_states
     hidden [System.Collections.Generic.List[System.Windows.Forms.Control]] $_controls
     hidden [System.Collections.Generic.HashSet[Action]] $_actions
+    hidden [System.Collections.Generic.Stack[object]] $_modes
 
     WidgetStateTransition () {
         $this._states = [System.Collections.Generic.Stack[hashtable]]::new()
         $this._controls = [System.Collections.Generic.List[System.Windows.Forms.Control]]::new()
+        $this._modes = [System.Collections.Generic.Stack[object]]::new()
     }
 
     [WidgetStateTransition] Add([System.Windows.Forms.Control] $control) {
@@ -4083,6 +4123,27 @@ class WidgetStateTransition {
     }
 
     [WidgetStateTransition] AppendStatusLineText([object] $statusLineToken, [string] $text) {
+        return $this
+    }
+
+    [WidgetStateTransition] EnterMode([object] $mode, [ref] $successRef) {
+        $success = ($this._modes.Count -eq 0) -or ($this._modes.Peek() -ne $mode)
+        if ($success) {
+            $this._modes.Push($mode)
+        }
+        if ($successRef -ne $null) {
+            $successRef.Value = $success
+        }
+        return $this
+    }
+
+    [WidgetStateTransition] GetMode([ref] $mode) {
+        $mode.Value = $this._modes.Peek()
+        return $this
+    }
+
+    [WidgetStateTransition] ExitMode() {
+        $null = ($this._modes.Count -eq 0) -or $this._modes.Pop()
         return $this
     }
 
