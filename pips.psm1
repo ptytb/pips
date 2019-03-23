@@ -1,46 +1,115 @@
 ﻿$PSDefaultParameterValues['*:Encoding'] = 'UTF8'
+$null = Set-StrictMode -Version latest
 
-
-$pips_pipe_instance = [System.IO.Directory]::GetFiles("\\.\\pipe\\") | Where-Object { $_ -match 'pips_spelling_server'}
-if ($pips_pipe_instance) {
-    [System.Windows.Forms.MessageBox]::Show(
-        "There's another pips instance running, exiting.",
-        "pips",
-        [System.Windows.Forms.MessageBoxButtons]::OK)
-    ${function:global:Start-Main} = { Exit }
-    Return
-}
+$null = [PSObject].Assembly.GetType("System.Management.Automation.TypeAccelerators")::add(
+    'MaybeColor', [Nullable[System.Drawing.Color]])
 
 
 $global:FRAMEWORK_VERSION = [version]([Runtime.InteropServices.RuntimeInformation]::FrameworkDescription -replace '^.[^\d.]*','')
 
-[Void][Reflection.Assembly]::LoadWithPartialName("System")
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Drawing")
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Drawing.Size")
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Drawing.Point")
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Windows")
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms.MessageBox")
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Windows.FontStyle")
-[Void][Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms.VisualStyles')
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Text")
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Text.RegularExpressions")
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Collections")
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Collections.ArrayList")
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Collections.Generic")
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Collections.Generic.HashSet")
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Collections.Concurrent")
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Web")
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Web.HttpUtility")
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Net")
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Net.WebClient")
+$global:PIPS_SPELLING_PIPE = 'pips_spelling_server'
+$pypi_url = 'https://pypi.python.org/pypi/'
+$anaconda_url = 'https://anaconda.org/search?q='
+$peps_url = 'https://www.python.org/dev/peps/'
+$github_search_url = 'https://api.github.com/search/repositories?q={0}+language:python&sort=stars&order=desc'
+$github_url = 'https://github.com'
+$python_releases = 'https://www.python.org/downloads/windows/'
 
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Management")
-[Void][Reflection.Assembly]::LoadWithPartialName("System.Management.Automation")
+$lastWidgetLeft = 5
+$lastWidgetTop = 5
+$widgetLineHeight = 23
+$global:dataGridView = $null
+$global:logView = $null
+$global:inputFilter = $null
+$global:actionsModel = $null
+$global:dataModel = $null  # [DataRow] keeps actual rows for the table of packages
+$global:header = ("Select", "Package", "Installed", "Latest", "Type", "Status")
+$global:csv_header = ("Package", "Installed", "Latest", "Type", "Status")
+$global:search_columns = ("Select", "Package", "Installed", "Description", "Type", "Status")
+$global:outdatedOnly = $true
+$global:interpreters = $null
+$global:autoCompleteIndex = $null
+$Global:interpretersComboBox = $null
 
+enum InstallAutoCompleteMode {
+  Name;
+  Version;
+  Directory;
+  GitTag;
+  WheelFile;
+  None
+}
 
-[PSObject].Assembly.GetType("System.Management.Automation.TypeAccelerators")::add(
-    'MaybeColor', [Nullable[System.Drawing.Color]])
+enum AppMode {
+    Idle;
+    Working
+}
+
+[AppMode] $global:APP_MODE = [AppMode]::Idle
+
+$global:packageTypes = [System.Collections.ArrayList]::new()
+$global:packageTypes.AddRange(@('pip', 'conda', 'git', 'wheel', 'https'))
+$Global:PyPiPackageJsonCache = New-Object 'System.Collections.Generic.Dictionary[string,PSCustomObject]'
+
+$global:actionCommands = @{
+    common=@{
+        documentation  = @{ Command={ (ShowDocView $package).Show() } };
+        copy_reqs      = @{ Command={ CopyAsRequirementsTxt($queue) } };
+        deps_tree      = @{ Command={ } };
+    };
+    other=@{
+        files          = @{ Command= { Get-ChildItem -Recurse "$(py 'SitePackagesDir')\$package" | ForEach-Object { WriteLog $_.FullName } } };
+    }
+    pip=@{
+        info           = @{ Command='PythonExe'; Args={ ('-m', 'pip', 'show', $package)                 }; Validate={ $exitCode -eq 0 }; };
+        files          = @{ Command='PythonExe'; Args={ ('-m', 'pip', 'show', '--files', $package)      }; Validate={ $exitCode -eq 0 }; };
+        update         = @{ Command='PythonExe'; Args={ ('-m', 'pip', 'install', '-U', $package)        }; Validate={ $output -match "Successfully installed (?:[^\s]+\s+)*$package" } };
+        install        = @{ Command='PythonExe'; Args={ ('-m', 'pip', 'install', $package)              }; Validate={ } };
+        install_dry    = $null;
+        install_nodeps = @{ Command='PythonExe'; Args={ ('-m', 'pip', 'install', '--no-deps', $package) }; Validate={ } };
+        download       = @{ Command='PythonExe'; Args={ ('-m', 'pip', 'download', $package)             }; Validate={ } };
+        uninstall      = @{ Command='PythonExe'; Args={ ('-m', 'pip', 'uninstall', '--yes', $package)   }; Validate={ } };
+        deps_reverse   = {
+            $di = GetPackageDistributionInfo
+            $packages = $di | Get-Member -Type NoteProperty | Select-Object -ExpandProperty Name
+            foreach ($p in $packages) {
+                    $deps = $di."$p".deps | Get-Member -Type NoteProperty | Select-Object -ExpandProperty Name
+                    if ($package -in $deps) {
+                        "$p"
+                    }
+            }
+        };
+    };
+    conda=@{
+        info          = @{ Command='CondaExe'; Args= { ('list', '--prefix', (py 'Path'), '-v', '--json', $package) } };
+        documentation = @{ Command={ $null = (ShowDocView $pkg).Show();     } };
+        files         = @{ Command={
+            $path = "$(GetCurrentInterpreter 'Path')\conda-meta"
+            $query = "$args*.json"
+            $file = Get-ChildItem -Path $path $query
+            $json = Get-Content "$path\$($file.Name)" | ConvertFrom-Json
+            WriteLog $json.files
+        } };
+        update        = @{ Command='CondaExe'; Args={ ('update', '--prefix', (py 'Path'), '--yes', '-q', $package) } };
+        install       = @{ Command='CondaExe'; Args={ ('install', (Get-PipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--yes', '-q', '--no-shortcuts', $package) } };
+        install_dry   = @{ Command='CondaExe'; Args={ ('install', (Get-PipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--dry-run', $package) } };
+        install_nodep = @{ Command='CondaExe'; Args={ ('install', (Get-PipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--yes', '-q', '--no-shortcuts', '--no-deps', '--no-update-dependencies', $package) } };
+        download      = $null;
+        uninstall     = @{ Command='CondaExe'; Args={ ('uninstall', '--prefix', (py 'Path'), '--yes', $package) } };
+        reverseDependencies = { Command={
+            WriteLog (& (py 'CondaExe') search --json --reverse-dependency $args 2>&1) `
+                | ConvertFrom-Json `
+                | Get-Member -Type NoteProperty `
+                | Select-Object -ExpandProperty Name
+        } };
+    }
+}
+$actionCommands.wheel   = $actionCommands.pip
+$actionCommands.sdist   = $actionCommands.pip
+$actionCommands.builtin = $actionCommands.pip
+# $actionCommands.other   = $actionCommands.pip
+$actionCommands.git     = $actionCommands.pip
+$actionCommands.https   = $actionCommands.pip
 
 
 Function global:MakeEvent([hashtable] $properties) {
@@ -142,6 +211,21 @@ Function global:ApplyAsync([object] $FunctionContext, [object] $Queue, [Func[obj
             $global:UI_SYNCHRONIZATION_CONTEXT)
 }
 
+Function global:InvokeWithContext([scriptblock] $function, [hashtable] $functions, [hashtable] $variables, [object[]] $arguments) {
+    $vs = [System.Collections.Generic.List[psvariable]]::new()
+    $null = $variables.GetEnumerator().ForEach({ $vs.Add([psvariable]::new($_.Key, $_.Value)) })
+    $fs = [System.Collections.Generic.Dictionary[string,ScriptBlock]]::new()
+    $null = $functions.GetEnumerator().ForEach({ $fs[$_.Key] = $_.Value })
+    return $function.InvokeWithContext($fs, $vs, $arguments)
+}
+
+Function global:BindWithContext([scriptblock] $function, [hashtable] $functions, [hashtable] $variables, [object[]] $arguments) {
+    $vs = [System.Collections.Generic.List[psvariable]]::new()
+    $null = $variables.GetEnumerator().ForEach({ $vs.Add([psvariable]::new($_.Key, $_.Value)) })
+    $fs = [System.Collections.Generic.Dictionary[string,ScriptBlock]]::new()
+    $null = $functions.GetEnumerator().ForEach({ $fs[$_.Key] = $_.Value })
+    return { return $function.InvokeWithContext($fs, $vs, ($arguments + $args)) }.GetNewClosure()
+}
 
 $global:WM_USER = [int] 0x0400
 $global:WM_SETREDRAW = [int] 0x0B
@@ -159,10 +243,13 @@ $global:SB_PAGEDOWN = [int] 0x03
 $global:SB_PAGETOP = [int] 0x06
 $global:SB_PAGEBOTTOM = [int] 0x07
 $MemberDefinition='
-[DllImport("User32.dll")]public static extern int SendMessage(IntPtr hWnd, int uMsg, int wParam, int lParam);
-[DllImport("User32.dll")]public static extern int PostMessage(IntPtr hWnd, int uMsg, int wParam, int lParam);
+[DllImport("user32.dll")]public static extern int SendMessage(IntPtr hWnd, int uMsg, int wParam, int lParam);
+[DllImport("user32.dll")]public static extern int PostMessage(IntPtr hWnd, int uMsg, int wParam, int lParam);
+[DllImport("user32.dll", CharSet=CharSet.Auto, ExactSpelling=true)] public static extern short GetAsyncKeyState(int virtualKeyCode);
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, Int32 nCmdShow);
+[DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
 '
-$global:WinAPI = Add-Type -MemberDefinition $MemberDefinition -Name 'WinAPI_SendMessage' -PassThru
+$global:WinAPI = Add-Type -MemberDefinition $MemberDefinition -Name 'WinAPI' -PassThru
 ${function:global:SendMessage} = { return $global:WinAPI::SendMessage.Invoke($args) }
 ${function:global:PostMessage} = { return $global:WinAPI::PostMessage.Invoke($args) }
 
@@ -193,7 +280,7 @@ public class RichTextBoxEx : System.Windows.Forms.RichTextBox
 $global:RichTextBox_t = [RichTextBoxEx]
 
 
-Add-Type -Name TerminateGracefully -Namespace Console -MemberDefinition @'
+$null = Add-Type -Name TerminateGracefully -Namespace Console -MemberDefinition @'
 // https://stackoverflow.com/questions/813086/can-i-send-a-ctrl-c-sigint-to-an-application-on-windows
 // https://docs.microsoft.com/en-us/windows/console/generateconsolectrlevent
 
@@ -256,43 +343,57 @@ Function global:TryTerminateGracefully([System.Diagnostics.Process] $process) {
 }
 
 
-Import-Module -Global .\PSRunspacedDelegate\PSRunspacedDelegate
+Function CheckPipsAlreadyRunning {
+    [CmdletBinding()]
+    param()
 
-
-$startServer = New-RunspacedDelegate ( [Func[Object]] {
-    Write-Host Start server
-    Start-Process -WindowStyle Hidden -FilePath powershell -ArgumentList "-ExecutionPolicy Bypass $PSScriptRoot\pips-spelling-server.ps1"
-    Write-Host Server started.
-});
-$task = [System.Threading.Tasks.Task[Object]]::new($startServer);
-$continuation = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task[Object]]] {
-    Write-Host Connecting.
-
-    $pipe = $null
-    while (-not $pipe -or -not $pipe.IsConnected) {
-        $pipe = new-object System.IO.Pipes.NamedPipeClientStream("\\.\pipe\pips_spelling_server");
-        if ($pipe) {
-            $milliseconds = 250
-            try {
-                $pipe.Connect($milliseconds);
-            } catch {
-            }
-        } else {
-            Write-Host reconnecting
-        }
+    $pips_pipe_instance = [System.IO.Directory]::GetFiles("\\.\\pipe\\") | Where-Object { $_ -match "$PIPS_SPELLING_PIPE"}
+    if ($pips_pipe_instance) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "There's another pips instance running, exiting.",
+            "pips",
+            [System.Windows.Forms.MessageBoxButtons]::OK)
     }
-    Write-Host connected!
-    $Global:sw = new-object System.IO.StreamWriter($pipe);
-    $Global:sr = new-object System.IO.StreamReader($pipe);
-    $Global:sw.AutoFlush = $false
-    [bool] $Global:SuggestionsWorking = $false
-});
+    return [bool] $pips_pipe_instance
+}
 
-$null = $task.ContinueWith($continuation, [System.Threading.CancellationToken]::None, (
-    [System.Threading.Tasks.TaskContinuationOptions]::DenyChildAttach -bor
-    [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
-    [System.Threading.Tasks.TaskScheduler]::Default)
-$task.Start([System.Threading.Tasks.TaskScheduler]::Default)
+Function StartPipsSpellingServer {
+    $startServer = New-RunspacedDelegate ( [Func[Object]] {
+        Write-Information "Start spellchecker on pipe \\.\pipe\$PIPS_SPELLING_PIPE"
+        Start-Process -WindowStyle Hidden -FilePath powershell -ArgumentList "-ExecutionPolicy Bypass $PSScriptRoot\pips-spelling-server.ps1"
+        Write-Information 'Server started.'
+    });
+    $task = [System.Threading.Tasks.Task[Object]]::new($startServer);
+    $continuation = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task[Object]]] {
+        Write-Information 'Connecting.'
+
+        $pipe = $null
+        while (-not $pipe -or -not $pipe.IsConnected) {
+            $pipe = [System.IO.Pipes.NamedPipeClientStream]::new("\\.\pipe\$PIPS_SPELLING_PIPE");
+
+            if ($pipe) {
+                $milliseconds = 250
+                try {
+                    $pipe.Connect($milliseconds);
+                } catch {
+                }
+            } else {
+                Write-Information 'Waiting for spellchecker pipe...'
+            }
+        }
+        Write-Information 'Connected!'
+        $Global:sw = new-object System.IO.StreamWriter($pipe);
+        $Global:sr = new-object System.IO.StreamReader($pipe);
+        $Global:sw.AutoFlush = $false
+        [bool] $Global:SuggestionsWorking = $false
+    });
+
+    $null = $task.ContinueWith($continuation, [System.Threading.CancellationToken]::None, (
+        [System.Threading.Tasks.TaskContinuationOptions]::DenyChildAttach -bor
+        [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
+        [System.Threading.Tasks.TaskScheduler]::Default)
+    $task.Start([System.Threading.Tasks.TaskScheduler]::Default)
+}
 
 
 Function global:Get-Bin($command, [switch] $All) {
@@ -317,7 +418,7 @@ Function global:Get-Bin($command, [switch] $All) {
     return ,$found
 }
 
-Function global:Guess-EnvPath ($path, $fileName, [switch] $directory, [switch] $Executable) {
+Function global:GuessEnvPath ($path, $fileName, [switch] $directory, [switch] $Executable) {
     $subdirs = @('\'; '\Scripts\'; '\.venv\Scripts\'; '\.venv\'; '\env\Scripts\'; '\env\'; '\bin\')
     foreach ($tryPath in $subdirs) {
         $target = "${path}${tryPath}${fileName}"
@@ -344,7 +445,7 @@ Function global:Guess-EnvPath ($path, $fileName, [switch] $directory, [switch] $
     return $null
 }
 
-Function global:Get-CurrentInterpreter($item, [switch] $Executable) {
+Function global:GetCurrentInterpreter($item, [switch] $Executable) {
     if (-not [string]::IsNullOrEmpty($item)) {
         $item = $Global:interpretersComboBox.SelectedItem."$item"
         if ($Executable) {
@@ -356,13 +457,13 @@ Function global:Get-CurrentInterpreter($item, [switch] $Executable) {
     }
 }
 
-Function global:Delete-CurrentInterpreter() {
-    if (-not (Get-CurrentInterpreter 'User')) {
+Function global:DeleteCurrentInterpreter() {
+    if (-not (GetCurrentInterpreter 'User')) {
         WriteLog 'Can only delete venv which was added manually with env:Open or env:Create.'
         return
     }
 
-    $path = Get-CurrentInterpreter 'Path'
+    $path = GetCurrentInterpreter 'Path'
     $failedToRemove = $false
 
     $response = ([System.Windows.Forms.MessageBox]::Show(
@@ -391,7 +492,7 @@ Function global:Delete-CurrentInterpreter() {
         WriteLog "Removed venv '${path}' from list."
 
         $interpretersComboBox.SelectedIndex = 0
-        WriteLog "Switching to '$(Get-CurrentInterpreter 'Path')'"
+        WriteLog "Switching to '$(GetCurrentInterpreter 'Path')'"
     }
 }
 
@@ -454,82 +555,7 @@ Function global:GetExistingPathOrNull($path) {
     }
 }
 
-$pypi_url = 'https://pypi.python.org/pypi/'
-$anaconda_url = 'https://anaconda.org/search?q='
-$peps_url = 'https://www.python.org/dev/peps/'
-$github_search_url = 'https://api.github.com/search/repositories?q={0}+language:python&sort=stars&order=desc'
-$github_url = 'https://github.com'
-$python_releases = 'https://www.python.org/downloads/windows/'
-
-$lastWidgetLeft = 5
-$lastWidgetTop = 5
-$widgetLineHeight = 23
-$global:dataGridView = $null
-$global:logView = $null
-$global:inputFilter = $null
-$global:actionsModel = $null
-$global:dataModel = $null  # [DataRow] keeps actual rows for the table of packages
-$global:header = ("Select", "Package", "Installed", "Latest", "Type", "Status")
-$global:csv_header = ("Package", "Installed", "Latest", "Type", "Status")
-$global:search_columns = ("Select", "Package", "Installed", "Description", "Type", "Status")
-$global:outdatedOnly = $true
-$global:interpreters = $null
-$global:autoCompleteIndex = $null
-$Global:interpretersComboBox = $null
-
-enum InstallAutoCompleteMode {
-  Name;
-  Version;
-  Directory;
-  GitTag;
-  WheelFile;
-  None
-}
-
-enum AppMode {
-    Idle;
-    Working
-}
-
-[AppMode] $global:APP_MODE = [AppMode]::Idle
-
-$global:packageTypes = [System.Collections.ArrayList]::new()
-$global:packageTypes.AddRange(@('pip', 'conda', 'git', 'wheel', 'https'))
-
-
-$iconBase64_DownArrow = @'
-iVBORw0KGgoAAAANSUhEUgAAAAsAAAALCAYAAACprHcmAAAABGdBTUEAALGPC/xhBQAAAAlwSFlz
-AAAOvAAADrwBlbxySQAAABp0RVh0U29mdHdhcmUAUGFpbnQuTkVUIHYzLjUuMTAw9HKhAAAAP0lE
-QVQoU42KQQ4AIAzC9v9Po+Pi3MB4aAKFAPCNlA4pHVI6TtjRMc4s7ZRcey0U5sitC0pxTIZ4IaVD
-Sg1iAai9ScU7YisTAAAAAElFTkSuQmCC
-'@
-
-$iconBase64_Snakes = @'
-AAABAAEAEBAAAAAAAABoBAAAFgAAACgAAAAQAAAAIAAAAAEAIAAAAAAAQAQAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYAAAAaAAAAIQAAACEAAAAYAAAABQAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAODg4CPw8PDD/Pz8+P/////7+/v44uLizVtbW1AA
-AAAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD9/f24s/X//13j//9I2f//SdP//6Dm
-///i4uLPAAAAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA////9mXt//9c6P//UeD/
-/9X2//8/0P///Pz8+QAAACgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYAAAAZAAAAIf////9i7f//
-Ye3//1rn//9P3v//RNb///////8AAAA7AAAAIAAAABcAAAAFAAAAAN/f3yPw8PDC/Pz8+P//////
-////Yu3//2Lt//++9/////////////////////////v7+/ji4uLNWlpaUAAAAAb9/f25zLql/4hq
-Rv99ZEX//////2Pt//9i7f//Yu3//2Dr//9W4///S9v//0DS//85y///neT//+Li4s8AAAAd////
-9qF6S/+PbEH/hGdD//Hu6v+b9P//Y+3//2Lt//9i7f//Xur//1Ti//9J2f//PtH//0DM///8/Pz5
-AAAAKf////+kdj3/mXE//41rQv+jjnT/8O7q/////////////////+39//+F7f//UuD//0fY//88
-z////////wAAACr////1soJH/6J1Pf+Wb0D/i2pC/4BlRP98Y0X/fGNF/31kRv+snIn/7f3//1vn
-//9P3///UNn///v7+/gAAAAh////ttzCov+tfD//oHQ+/5RuQP+JaUL/fmRF/3xjRf98Y0X/fWVH
-//////9h7P//XOb//6zv///r6+vEAAAACwAAAAD///+4////9//////////////////////JvrH/
-fGNF/3xjRf////////////7+/vX6+vq4v7+/JQAAAAAAAAAAAAAAAAAAAAAAAAAA/////5tyP/+Q
-bEH/hWdD/31jRf98Y0X//////wAAACkAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//
-//WmeUD/6N/T/45rQf+CZkT/f2ZJ//v7+/gAAAAhAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAD///+22MCj/6h9Sf+XcED/k3NN/8S3qP/r6+vEAAAACwAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAP///7j////3//////7+/vX6+vq5v7+/JQAAAAAAAAAAAAAAAAAAAAAA
-AAAA+B8AAPAPAADwDwAA8A8AAIABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAQAA8A8AAPAP
-AADwDwAA+B8AAA==
-'@
-
-
-$FuncSetWebClientWorkaround = {
+Function SetWebClientWorkaround {
     Function Set-UseUnsafeHeaderParsing {
         param(
             [Parameter(Mandatory,ParameterSetName='Enable')]
@@ -577,7 +603,6 @@ $FuncSetWebClientWorkaround = {
     Set-UseUnsafeHeaderParsing -Enable
 }
 
-& $FuncSetWebClientWorkaround
 Function global:DownloadString($url, $ContinueWith = $null) {
     try {
         $wc = [System.Net.WebClient]::new()
@@ -653,7 +678,7 @@ Function global:EnsureColor([object] $color) {
 
 $global:_WritePipLogBacklog = [System.Collections.Generic.List[hashtable]]::new()
 
-Function global:FuncWriteLog {
+Function global:WriteLogHelper {
     param(
         [object[]] $Lines,
         [bool] $UpdateLastLine,
@@ -665,8 +690,10 @@ Function global:FuncWriteLog {
     $null = SendMessage $logView.Handle $WM_SETREDRAW 0 0
     $eventMask = SendMessage $logView.Handle $EM_SETEVENTMASK 0 0
 
+    $text = $Lines -join ' '
+
     if ($UpdateLastLine) {
-        $text = ($Lines -join ' ') -replace "`r|`n",''
+        $text = $text -replace "`r|`n",''
 
         $cr = $lastLineCharIndex = $logView.Find("`r", 0, $logView.TextLength,
             [System.Windows.Forms.RichTextBoxFinds]::Reverse)
@@ -690,11 +717,7 @@ Function global:FuncWriteLog {
         $logTo = $logView.TextLength
     } else {
         $logFrom = $logView.TextLength
-
-        foreach ($obj in $Lines) {
-            $logView.AppendText("$obj")
-        }
-
+        $null = $logView.AppendText($text)
         $logTo = $logView.TextLength
 
         if (-not $NoNewline) {
@@ -719,12 +742,6 @@ Function global:FuncWriteLog {
     $null = SendMessage $logView.Handle $EM_SETEVENTMASK 0 $eventMask
     $null = PostMessage $logView.Handle $WM_VSCROLL $SB_PAGEBOTTOM 0
 }
-
-$global:WritePipLogDelegate = New-RunspacedDelegate ([EventHandler] {
-    param($Sender, $EventArgs)
-    $arguments = $EventArgs.arguments
-    $null = FuncWriteLog @arguments
-})
 
 Function global:WriteLog {
     [CmdletBinding()]
@@ -758,7 +775,7 @@ Function global:WriteLog {
         }
         $null = $logView.BeginInvoke($global:WritePipLogDelegate, ($logView, $EventArgs))
     } else {
-        $null = FuncWriteLog @arguments
+        $null = WriteLogHelper @arguments
     }
 }
 
@@ -882,22 +899,26 @@ Function Add-Input ($handler) {
 
 Function Add-Buttons {
     $global:WIDGET_GROUP_COMMAND_BUTTONS = @(
-        Add-Button "Check Updates" { GetPythonPackages } -AsyncHandler ;
+        Add-Button "Check Updates" ${function:GetPythonPackages} -AsyncHandler ;
         Add-Button "List Installed" { GetPythonPackages($false) } -AsyncHandler ;
-        Add-Button "Sel All Visible" { SelectVisiblePipPackages($true) } ;
-        Add-Button "Select None" { SelectPipPackages($false) } ;
-        Add-Button "Check Deps" { CheckPipDependencies } -AsyncHandler ;
-        Add-Button "Execute" { ExecutePipAction } -AsyncHandler ;
+        Add-Button "Sel All Visible" { SetVisiblePackageCheckboxes($true) } ;
+        Add-Button "Select None" { SetAllPackageCheckboxes($false) } ;
+        Add-Button "Check Deps" ${function:CheckDependencies} -AsyncHandler ;
+        Add-Button "Execute" ${function:ExecuteAction} -AsyncHandler ;
     )
 }
 
-Function global:Get-PyDoc($request) {
+Function global:GetPyDoc($request) {
     $requestNormalized = $request -replace '-','_'
-    $output = & (Get-CurrentInterpreter 'PythonExe') -m pydoc $requestNormalized
+    $output = & (GetCurrentInterpreter 'PythonExe') -m pydoc $requestNormalized
 
     if ("$output".StartsWith('No Python documentation found')) {
-        $output = & (Get-CurrentInterpreter 'PythonExe') -m pydoc ($requestNormalized).ToLower()
+        $output = & (GetCurrentInterpreter 'PythonExe') -m pydoc ($requestNormalized).ToLower()
     }
+
+    # TODO: pass 'em to ProcessWithPipedIO
+    # $env:PYTHONIOENCODING="UTF-8"
+    # $env:LC_CTYPE="UTF-8"
 
     # $output = Recode ([Text.Encoding]::UTF8) ([Text.Encoding]::Unicode) $output
 
@@ -910,7 +931,7 @@ Function global:GetPythonBuiltinPackagesAsync() {
         param([object] $locals)
 
         $builtinLibs = [System.Collections.Generic.List[PSObject]]::new()
-        $path = Get-CurrentInterpreter 'Path'
+        $path = GetCurrentInterpreter 'Path'
         $libs = "${path}\Lib"
         $ignore = [regex] '^__'
         $filter = [regex] '\.py.?$'
@@ -931,7 +952,7 @@ Function global:GetPythonBuiltinPackagesAsync() {
         }
 
         $getBuiltinsScript = "import sys; print(','.join(sys.builtin_module_names))"
-        $sys_builtin_module_names = & (Get-CurrentInterpreter 'PythonExe') -c $getBuiltinsScript
+        $sys_builtin_module_names = & (GetCurrentInterpreter 'PythonExe') -c $getBuiltinsScript
         $modules = $sys_builtin_module_names.Split(',')
         foreach ($builtinModule in $modules) {
             if ($trackDuplicates.Contains("$builtinModule")) {
@@ -956,7 +977,7 @@ Function global:GetPythonOtherPackagesAsync {
         param([object] $locals)
 
         $otherLibs = [System.Collections.Generic.List[PSCustomObject]]::new()
-        $path = Get-CurrentInterpreter 'Path'
+        $path = GetCurrentInterpreter 'Path'
         $libs = "${path}\Lib\site-packages"
         $ignore = [regex] '\.dist-info$|\.egg-info$|\.egg$|^__pycache__$'
         $filter = [regex] '\.py.?$'
@@ -995,7 +1016,7 @@ Function global:GetPythonOtherPackagesAsync {
 }
 
 Function global:GetCondaJsonAsync([bool] $outdatedOnly) {
-    $conda_exe = Get-CurrentInterpreter 'CondaExe' -Executable
+    $conda_exe = GetCurrentInterpreter 'CondaExe' -Executable
     $arguments = New-Object System.Collections.ArrayList
 
     if ($outdatedOnly) {
@@ -1010,7 +1031,7 @@ Function global:GetCondaJsonAsync([bool] $outdatedOnly) {
 
     $null = $arguments.Add('--json')
     $null = $arguments.Add('--prefix')
-    $null = $arguments.Add((Get-CurrentInterpreter 'Path'))
+    $null = $arguments.Add((GetCurrentInterpreter 'Path'))
 
     $process = [ProcessWithPipedIO]::new($conda_exe, $arguments)
     $taskProcessDone = $process.StartWithLogging($false, $true)
@@ -1088,56 +1109,7 @@ Function global:GetCondaPackagesAsync([bool] $outdatedOnly) {
     return $taskProcessJson
 }
 
-$actionCommands = @{
-    pip=@{
-        info          = { return (& (Get-CurrentInterpreter 'PythonExe') -m pip  show              $args 2>&1) };
-        documentation = { $null = (Show-DocView $pkg).Show(); return ''    };
-        files         = { return (& (Get-CurrentInterpreter 'PythonExe') -m pip  show    --files   $args 2>&1) };
-        update        = { return (& (Get-CurrentInterpreter 'PythonExe') -m pip  install -U        $args 2>&1) };
-        install       = { return (& (Get-CurrentInterpreter 'PythonExe') -m pip  install           $args 2>&1) };
-        install_dry   = { return 'Not supported on pip'                        };
-        install_nodep = { return (& (Get-CurrentInterpreter 'PythonExe') -m pip  install --no-deps $args 2>&1) };
-        download      = { return (& (Get-CurrentInterpreter 'PythonExe') -m pip  download          $args 2>&1) };
-        uninstall     = { return (& (Get-CurrentInterpreter 'PythonExe') -m pip  uninstall --yes   $args 2>&1) };
-        reverseDependencies = {
-            param($pkg)
-            $di = Get-PipDistributionInfo
-            $packages = $di | Get-Member -Type NoteProperty | Select-Object -ExpandProperty Name
-            foreach ($package in $packages) {
-                    $deps = $di."$package".deps | Get-Member -Type NoteProperty | Select-Object -ExpandProperty Name
-                    if ($pkg -in $deps) {
-                        "$package"
-                    }
-            }
-        };
-    };
-    conda=@{
-        info          = { return (& (Get-CurrentInterpreter 'CondaExe') list --prefix (Get-CurrentInterpreter 'Path') -v --json $args 2>&1) };
-        documentation = { $null = (Show-DocView $pkg).Show(); return ''    };
-        files         = {
-            $path = "$(Get-CurrentInterpreter 'Path')\conda-meta"
-            $query = "$args*.json"
-            $file = Get-ChildItem -Path $path $query
-            $json = Get-Content "$path\$($file.Name)" | ConvertFrom-Json
-            return $json.files
-        };
-        update        = { return (& (Get-CurrentInterpreter 'CondaExe') update --prefix (Get-CurrentInterpreter 'Path') --yes -q $args 2>&1) };
-        install       = { return (& (Get-CurrentInterpreter 'CondaExe') install (Get-PipsSetting 'CondaChannels' -AsArgs -First) --prefix (Get-CurrentInterpreter 'Path') --yes -q --no-shortcuts $args 2>&1) };
-        install_dry   = { return (& (Get-CurrentInterpreter 'CondaExe') install (Get-PipsSetting 'CondaChannels' -AsArgs -First) --prefix (Get-CurrentInterpreter 'Path') --dry-run $args 2>&1) };
-        install_nodep = { return (& (Get-CurrentInterpreter 'CondaExe') install (Get-PipsSetting 'CondaChannels' -AsArgs -First) --prefix (Get-CurrentInterpreter 'Path') --yes -q --no-shortcuts --no-deps --no-update-dependencies   $args 2>&1) };
-        download      = { return 'Not supported on conda' };
-        uninstall     = { return (& (Get-CurrentInterpreter 'CondaExe') uninstall --prefix (Get-CurrentInterpreter 'Path') --yes $args 2>&1) };
-        reverseDependencies = { return (& (Get-CurrentInterpreter 'CondaExe') search --json --reverse-dependency $args 2>&1) | ConvertFrom-Json | Get-Member -Type NoteProperty | Select-Object -ExpandProperty Name };
-    };
-}
-$actionCommands.wheel   = $actionCommands.pip
-$actionCommands.sdist   = $actionCommands.pip
-$actionCommands.builtin = $actionCommands.pip
-$actionCommands.other   = $actionCommands.pip
-$actionCommands.git     = $actionCommands.pip
-$actionCommands.https   = $actionCommands.pip
-
-Function Copy-AsRequirementsTxt($list) {
+Function CopyAsRequirementsTxt($list) {
     $requirements = New-Object System.Text.StringBuilder
     foreach ($item in $list) {
         $null = $requirements.AppendLine("$($item.Package)==$($item.Installed)")
@@ -1146,49 +1118,88 @@ Function Copy-AsRequirementsTxt($list) {
     WriteLog "Copied $($list.Count) items to clipboard."
 }
 
-$actionItemCount = 0
-Function Make-PipActionItem($name, $code, $validator, $takesList = $false) {
-    $action = New-Object psobject -Property @{Name=$name; TakesList=$takesList; Id=(++$Script:actionItemCount);}
-    $action | Add-Member -MemberType ScriptMethod -Name ToString -Value { "$($this.Name) [F$($this.Id)]" } -Force
+Function Make-PipActionItem($name, $code, $validator, $takesList = $false, $id = $null) {
+    $action = New-Object psobject -Property @{Name=$name; TakesList=$takesList; Index=(++$Script:actionItemCount);}
     $action | Add-Member -MemberType ScriptMethod -Name Execute  -Value $code -Force
     $action | Add-Member -MemberType ScriptMethod -Name Validate -Value $validator -Force
+    $action | Add-Member -MemberType NoteProperty -Name Id       -Value $id -Force
     return $action
 }
 
 Function Add-ComboBoxActions {
     $actionsModel = New-Object System.Collections.ArrayList
-    $Add = { param($a) $null = $actionsModel.Add($a) }
+    Set-Variable -Name index -Value 1 -Option AllScope
+    Function AddAction {
+        <#
+        .PARAMETER Bulk
+        Bulked command processes all the packages of the same type at once, for each of all distinct package types (pip, conda, ...)
+        #>
+        param([hashtable] $actionProperties, [switch] $Bulk, [switch] $Synchronous)
+        $action = New-Object PSObject -Property $actionProperties
+        $action | Add-Member -MemberType NoteProperty -Name Bulk -Value $Bulk -Force
+        $action | Add-Member -MemberType NoteProperty -Name Synchronous -Value $Synchronous -Force
+        $action | Add-Member -MemberType NoteProperty -Name Index -Value $index -Force
+        $action | Add-Member -MemberType ScriptMethod -Name ToString -Value { "$($this.Name) [F$($this.Index)]" } -Force
+        $null = $actionsModel.Add($action)
+        ++$index
+    }
 
-    & $Add (Make-PipActionItem 'Show Info' `
-        { param($pkg,$type); $actionCommands[$type].info.Invoke($pkg) } `
-        { param($pkg,$out); $out -match $pkg } )
+    AddAction @{ Name='Show information'; Id='info'; }
+    AddAction @{ Name='Show documentation'; Id='documentation'; }
+    AddAction @{ Name='Show dependency tree'; Id='deps_tree'; }
+    AddAction @{ Name='Show dependent packages'; Id='deps_reverse'; }
+    AddAction @{ Name='Update'; Id='update'; } -Bulk
+    AddAction @{ Name='Install'; Id='install'; } -Bulk
+    AddAction @{ Name='Install without dependencies'; Id='install_nodeps'; } -Bulk
+    AddAction @{ Name='Uninstall'; Id='uninstall'; } -Bulk
+    AddAction @{ Name='Install (dry run)'; Id='install_dry'; } -Bulk
+    AddAction @{ Name='Download'; Id='download'; } -Bulk
+    AddAction @{ Name='Copy as requirements'; Id='copy_reqs'; } -Bulk -Synchronous
+    AddAction @{ Name='List files'; Id='files'; }
 
-    & $Add (Make-PipActionItem 'Documentation' `
-        { param($pkg,$type); $actionCommands[$type].documentation.Invoke($pkg) } `
-        { param($pkg,$out); $out -match '.*' } )
+    $global:actionsModel = $actionsModel
+
+    $actionListComboBox = New-Object System.Windows.Forms.ComboBox
+    $actionListComboBox.DataSource = $actionsModel
+    $actionListComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    Add-TopWidget $actionListComboBox 2.0
+
+    return $actionListComboBox
+
+    # & $Add (Make-PipActionItem 'Show Info' `
+    #     { param($pkg,$type); $actionCommands[$type].info.Invoke($pkg) } `
+    #     { param($pkg,$out); $out -match $pkg } `
+    #     $false `
+    #     'info')
+
+    # & $Add (Make-PipActionItem 'Documentation' `
+    #     { param($pkg,$type); $actionCommands[$type].documentation.Invoke($pkg) } `
+    #     { param($pkg,$out); $out -match '.*' } `
+    #     $false `
+    #     'documentation')
 
     & $Add (Make-PipActionItem 'List Files' `
         {
             param($pkg,$type);
             if ($type -eq 'other') {
-                Get-ChildItem -Recurse "$(Get-CurrentInterpreter "SitePackagesDir")\$pkg" | ForEach-Object { $_.FullName }
+                Get-ChildItem -Recurse "$(GetCurrentInterpreter "SitePackagesDir")\$pkg" | ForEach-Object { $_.FullName }
             } else {
                 $actionCommands[$type].files.Invoke($pkg)
             }
         } `
         { param($pkg,$out); $out -match $pkg } )
 
-    & $Add (Make-PipActionItem 'Update' `
-        { param($pkg,$type); $actionCommands[$type].update.Invoke($pkg) } `
-        { param($pkg,$out); $out -match "Successfully installed (?:[^\s]+\s+)*$pkg" } )
+    # & $Add (Make-PipActionItem 'Update' `
+    #     { param($pkg,$type); $actionCommands[$type].update.Invoke($pkg) } `
+    #     { param($pkg,$out); $out -match "Successfully installed (?:[^\s]+\s+)*$pkg" } )
 
-    & $Add (Make-PipActionItem 'Install (Dry Run)' `
-        { param($pkg,$type); $actionCommands[$type].install_dry.Invoke($pkg) } `
-        { param($pkg,$out); $out -match "Successfully installed (?:[^\s]+\s+)*$pkg" } )
+    # & $Add (Make-PipActionItem 'Install (Dry Run)' `
+    #     { param($pkg,$type); $actionCommands[$type].install_dry.Invoke($pkg) } `
+    #     { param($pkg,$out); $out -match "Successfully installed (?:[^\s]+\s+)*$pkg" } )
 
-    & $Add (Make-PipActionItem 'Install (No Deps)' `
-        { param($pkg,$type); $actionCommands[$type].install_nodep.Invoke($pkg) } `
-        { param($pkg,$out); $out -match "Successfully installed (?:[^\s]+\s+)*$pkg" } )
+    # & $Add (Make-PipActionItem 'Install (No Deps)' `
+    #     { param($pkg,$type); $actionCommands[$type].install_nodep.Invoke($pkg) } `
+    #     { param($pkg,$out); $out -match "Successfully installed (?:[^\s]+\s+)*$pkg" } )
 
     & $Add (Make-PipActionItem 'Install' {
             param($pkg,$type,$version)
@@ -1202,18 +1213,18 @@ Function Add-ComboBoxActions {
             $actionCommands[$type].install.Invoke($pkg) } `
         { param($pkg,$out); ($out -match "Successfully installed (?:[^\s]+\s+)*$pkg") } )
 
-    & $Add (Make-PipActionItem 'Download' `
-        { param($pkg,$type); $actionCommands[$type].download.Invoke($pkg) } `
-        { param($pkg,$out); $out -match 'Successfully downloaded ' } )
+    # & $Add (Make-PipActionItem 'Download' `
+    #     { param($pkg,$type); $actionCommands[$type].download.Invoke($pkg) } `
+    #     { param($pkg,$out); $out -match 'Successfully downloaded ' } )
 
-    & $Add (Make-PipActionItem 'Uninstall' `
-        { param($pkg,$type); $actionCommands[$type].uninstall.Invoke($pkg) } `
-        { param($pkg,$out); $out -match ('Successfully uninstalled ' + $pkg) } )
+    # & $Add (Make-PipActionItem 'Uninstall' `
+    #     { param($pkg,$type); $actionCommands[$type].uninstall.Invoke($pkg) } `
+    #     { param($pkg,$out); $out -match ('Successfully uninstalled ' + $pkg) } )
 
-    & $Add (Make-PipActionItem 'As requirements.txt' `
-        { param($list); Copy-AsRequirementsTxt($list) } `
-        { param($pkg,$out); $out -match '.*' } `
-        $true )  # Yes, take a whole list of packages
+    # & $Add (Make-PipActionItem 'As requirements.txt' `
+    #     { param($list); CopyAsRequirementsTxt($list) } `
+    #     { param($pkg,$out); $out -match '.*' } `
+    #     $true )  # Yes, take a whole list of packages
 
     $PIPTREE_LEGEND = "
 Tree legend:
@@ -1226,18 +1237,10 @@ x = Package doesn't exist in index
         { param($list); $Script:PIPTREE_LEGEND; Get-DependencyAsciiGraph $list; WriteLog "`n" }.GetNewClosure() `
         { param($pkg,$out); $out -match '.*' } )
 
-    & $Add (Make-PipActionItem 'Reverse dependencies' `
-        { param($pkg,$type); $actionCommands[$type].reverseDependencies.Invoke($pkg) } `
-        { param($pkg,$out); $out -match '.*' } )
+    # & $Add (Make-PipActionItem 'Reverse dependencies' `
+    #     { param($pkg,$type); $actionCommands[$type].reverseDependencies.Invoke($pkg) } `
+    #     { param($pkg,$out); $out -match '.*' } )
 
-    $global:actionsModel = $actionsModel
-
-    $actionListComboBox = New-Object System.Windows.Forms.ComboBox
-    $actionListComboBox.DataSource = $actionsModel
-    $actionListComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-    Add-TopWidget $actionListComboBox 2.0
-
-    return $actionListComboBox
 }
 
 
@@ -1259,29 +1262,42 @@ Function Get-InterpreterRecord($path, $items, $user = $false) {
         return
     }
 
-    $python = Guess-EnvPath $path 'python' -Executable
+    $python = GuessEnvPath $path 'python' -Executable
     if (-not $python) {
         return
     }
-    $versionString = & $python --version 2>&1
+
+    Write-Information "Found python at $python"
+
+    # Maybe in future; let it be KISS for now...
+    # $process = [ProcessWithPipedIO]::new()
+    # $taskProcessDone = $process.Start()
+    # $taskReadOutput = $process.ReadOutputToEndAsync()
+    # $taskReadError = $process.ReadErrorToEndAsync()
+    # $allTasks = [System.Collections.Generic.List[System.Threading.Tasks.Task[string]]]::new()
+    # $gathered = [System.Threading.Tasks.Task[string]]::WhenAll($allTasks)
+    # $taskAllDone = $gathered.ContinueWith()
+
+    $versionString = (& $python --version 2>&1).ToString()  # redirection from stderr produces Error object instead of string
+
     $version = [regex]::Match($versionString, '\s+(\d+\.\d+)').Groups[1]
     $arch = (Test-is64Bit $python).FileType
 
-    $action = New-Object psobject -Property @{
+    $action = New-Object PSObject -Property @{
         Path                 = $path;
         Version              = "$version";
         Arch                 = $arch;
         Bits                 = @{"x64"="64"; "x86"="32";}[$arch];
         PythonExe            = $python;
-        PipExe               = Guess-EnvPath $path 'pip' -Executable;
-        CondaExe             = Guess-EnvPath $path 'conda' -Executable;
-        VirtualenvExe        = Guess-EnvPath $path 'virtualenv' -Executable;
-        VenvActivate         = Guess-EnvPath $path 'activate' -Executable;
-        PipenvExe            = Guess-EnvPath $path 'pipenv' -Executable;
-        RequirementsTxt      = Guess-EnvPath $path 'requirements.txt';
-        Pipfile              = Guess-EnvPath $path 'Pipfile';
-        PipfileLock          = Guess-EnvPath $path 'Pipfile.lock';
-        SitePackagesDir      = Guess-EnvPath $path 'Lib\site-packages' -directory;
+        PipExe               = GuessEnvPath $path 'pip' -Executable;
+        CondaExe             = GuessEnvPath $path 'conda' -Executable;
+        VirtualenvExe        = GuessEnvPath $path 'virtualenv' -Executable;
+        VenvActivate         = GuessEnvPath $path 'activate' -Executable;
+        PipenvExe            = GuessEnvPath $path 'pipenv' -Executable;
+        RequirementsTxt      = GuessEnvPath $path 'requirements.txt';
+        Pipfile              = GuessEnvPath $path 'Pipfile';
+        PipfileLock          = GuessEnvPath $path 'Pipfile.lock';
+        SitePackagesDir      = GuessEnvPath $path 'Lib\site-packages' -directory;
         User                 = $user;
         EnvironmentVariables = $null;
     }
@@ -1462,7 +1478,7 @@ Function global:Prepare-PackageAutoCompletion {
     }
 }
 
-Function global:GenerateFormInstall {
+Function global:CreateInstallForm {
     Prepare-PackageAutoCompletion
 
     $form = New-Object System.Windows.Forms.Form
@@ -1536,7 +1552,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
 
         [InstallAutoCompleteMode] $mode = $EventArgs.Mode
 
-        # Write-Host "ACTIVATING MODE !!! $mode"
+        # Write-Information "ACTIVATING MODE !!! $mode"
 
         $cb = $Sender
         $FuncAfterDownload = $script:FuncAfterDownload
@@ -1551,11 +1567,11 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         switch ($mode)
         {
             ([InstallAutoCompleteMode]::Name) {
-                # Write-Host '<###### 1>=' $cb.Handle
+                # Write-Information '<###### 1>=' $cb.Handle
                 $cb.AutoCompleteCustomSource = $global:autoCompleteIndex
                 $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::Suggest
                 $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
-                # Write-Host '<###### 2>=' $cb.Handle
+                # Write-Information '<###### 2>=' $cb.Handle
             }
 
             ([InstallAutoCompleteMode]::Directory) {
@@ -1607,11 +1623,11 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
             }
 
             ([InstallAutoCompleteMode]::WheelFile) {
-                # Write-Host 'PP='$possibleDirectoryPath
+                # Write-Information 'PP='$possibleDirectoryPath
                 $autoCompleteWheels = [System.Windows.Forms.AutoCompleteStringCollection]::new()
                 $wheelFiles = Get-ChildItem -Path $possibleDirectoryPath -Filter '*.whl' -File -Depth 0
                 foreach ($wheel in $wheelFiles) {
-                    # Write-Host 'WHEEL=' $($wheel.Name)
+                    # Write-Information 'WHEEL=' $($wheel.Name)
                     [void] $autoCompleteWheels.Add("$possibleDirectoryPath$($wheel.Name)")
                 }
 
@@ -1717,7 +1733,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
                 $oldVersion = [string]::Empty
             }
 
-            #Write-Host "old='$oldVersion', new='$version'"
+            #Write-Information "old='$oldVersion', new='$version'"
 
             $IsDifferentVersion = $version -ne $oldVersion
             $IsDifferentType = ((-not [string]::IsNullOrEmpty($type)) -and ($type -ne $oldRow.Type)) -or ((-not [string]::IsNullOrEmpty($oldRow.Type)) -and [string]::IsNullOrEmpty($type))
@@ -1806,9 +1822,9 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         $text = $cb.Text
 
         $guessedCompletionMode = & $FuncGuessAutoCompleteMode
-        # Write-Host 'MODE GUESS=' $guessedCompletionMode
+        # Write-Information 'MODE GUESS=' $guessedCompletionMode
         if ($guessedCompletionMode -ne $form.currentInstallAutoCompleteMode) {
-            # Write-Host 'MODE WAS=' $form.currentInstallAutoCompleteMode 'CHANGE TO=' $guessedCompletionMode
+            # Write-Information 'MODE WAS=' $form.currentInstallAutoCompleteMode 'CHANGE TO=' $guessedCompletionMode
 
             $form.currentInstallAutoCompleteMode = $guessedCompletionMode
 
@@ -1878,7 +1894,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
             return
         }
         SelectPipAction 'Install'
-        ExecutePipAction
+        ExecuteAction
         $form.Close()
     }.GetNewClosure())
     $form.Controls.Add($install)
@@ -1895,7 +1911,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
     $null = $form.ShowDialog()
 }
 
-Function global:Request-UserString($message, $title, $default, $completionItems = $null, [ref] $ControlKeysState) {
+Function global:RequestUserString($message, $title, $default, $completionItems = $null, [ref] $ControlKeysState) {
     $Form                            = New-Object system.Windows.Forms.Form
     $Form.ClientSize                 = '421,247'
     $Form.text                       = $title
@@ -1964,12 +1980,12 @@ Function global:Request-UserString($message, $title, $default, $completionItems 
     }
 }
 
-Function global:GenerateFormSearch {
+Function global:CreateSearchForm {
     $pluginNames = ($global:plugins | ForEach-Object { $_.GetPluginName() }) -join ', '
     $message = "Enter keywords to search with PyPi, Conda, Github and plugins: $pluginNames`n`nChecked items will be kept in the search list"
     $title = "pip, conda, github search"
     $default = ""
-    $input = Request-UserString $message $title $default
+    $input = RequestUserString $message $title $default
     if (-not $input) {
         return
     }
@@ -2022,7 +2038,7 @@ Function global:InitPackageSearchColumns($dataTable) {
     }
 }
 
-Function global:HighlightPythonPackages {
+Function global:HighlightPackages {
     # $global:outdatedOnly is needed because when row filter changes, we need to colorize rows again
     if ($outdatedOnly) {
         return
@@ -2043,61 +2059,13 @@ Function global:HighlightPythonPackages {
     $dataGridView.EndInit()
 }
 
-Function global:Open-LinkInBrowser($url) {
+Function global:OpenLinkInBrowser($url) {
     if ((-not [string]::IsNullOrWhiteSpace($url)) -and ($url -match '^https?://')) {
         $url = [System.Uri]::EscapeUriString($url)
         Start-Process -FilePath $url
     }
 }
 
-$Global:jobCounter = 0
-$Global:jobTimer = New-Object System.Windows.Forms.Timer
-$Global:jobTimer.Interval = 250
-$Global:jobTimer.add_Tick({ $null | Out-Null })  # this hack forces processing of two different event loops: window & PS object events
-[int] $Global:jobSemaphore = 0
-Function Run-SubProcessWithCallback($code, $callback, $params) {
-    $Global:jobCounter++
-    $n = $Global:jobCounter
-
-    if ($Global:jobSemaphore -eq 0) {
-        $Global:jobTimer.Start()
-        # Write-Host 'run timer'
-        }
-    $Global:jobSemaphore++;
-
-    Register-EngineEvent -SourceIdentifier "Custom.RaisedEvent$n" -Action $callback
-
-    $codeString = $code.ToString()
-
-    $job = Start-Job {
-            param($codeString, $params, $n)
-            $code = [scriptblock]::Create($codeString)
-            $result = $code.Invoke($params)
-            Register-EngineEvent "Custom.RaisedEvent$n" -Forward
-            New-Event "Custom.RaisedEvent$n" -EventArguments @{Result=$result; Id=$n; Params=$params}
-    } -Name "Job$n" -ArgumentList $codeString, $params, $n
-
-    $null = Register-ObjectEvent $job -EventName StateChanged -SourceIdentifier "JobEnd$n" -MessageData @{Id=$n} `
-        -Action {
-            if($sender.State -eq 'Completed')  {
-                $n = $event.MessageData.Id
-                Unregister-Event -SourceIdentifier "JobEnd$n"
-                Unregister-Event -SourceIdentifier "Custom.RaisedEvent$n"
-                Get-Job -Name "Job$n" | Wait-Job | Remove-Job
-                Get-Job -Name "JobEnd$n" | Wait-Job | Remove-Job
-                Get-Job -Name "Custom.RaisedEvent$n" | Wait-Job | Remove-Job
-
-                $Global:jobSemaphore--;
-                if ($Global:jobSemaphore -eq 0) {
-                    $Global:jobTimer.Stop()
-                    # Write-Host 'stop timer'
-                }
-                # Write-Host "*** Cleaned up $n sem=$Global:jobSemaphore"
-            }
-        }
-}
-
-$Global:PyPiPackageJsonCache = New-Object 'System.Collections.Generic.Dictionary[string,PSCustomObject]'
 
 Function global:Format-PythonPackageToolTip($info) {
     $name = "$($info.info.name)`n`n"
@@ -2219,10 +2187,10 @@ Function Add-CreateEnvButtonMenu {
             MenuText = 'with virtualenv';
             Code = {
                 param($path)
-                $output = & (Get-CurrentInterpreter 'VirtualenvExe') --python="$(Get-CurrentInterpreter 'PythonExe')" $path 2>&1
+                $output = & (GetCurrentInterpreter 'VirtualenvExe') --python="$(GetCurrentInterpreter 'PythonExe')" $path 2>&1
                 return $output
             };
-            IsAccessible = { [bool] (Get-CurrentInterpreter 'VirtualenvExe' -Executable) };
+            IsAccessible = { [bool] (GetCurrentInterpreter 'VirtualenvExe' -Executable) };
         };
         @{
             MenuText = 'with pipenv';
@@ -2230,40 +2198,40 @@ Function Add-CreateEnvButtonMenu {
                 param($path)
                 $env:PIPENV_VENV_IN_PROJECT = 1
                 Set-Location -Path $path
-                $output = & (Get-CurrentInterpreter 'PipenvExe') --python "$(Get-CurrentInterpreter 'Version')" install 2>&1
+                $output = & (GetCurrentInterpreter 'PipenvExe') --python "$(GetCurrentInterpreter 'Version')" install 2>&1
                 return $output
             };
-            IsAccessible = { [bool] (Get-CurrentInterpreter 'PipenvExe' -Executable) };
+            IsAccessible = { [bool] (GetCurrentInterpreter 'PipenvExe' -Executable) };
         };
         @{
             MenuText = 'with conda';
             Code = {
                 param($path)
-                $version = Get-CurrentInterpreter 'Version'
-                $output = & (Get-CurrentInterpreter 'CondaExe') create -y -q --prefix $path python=$version 2>&1
+                $version = GetCurrentInterpreter 'Version'
+                $output = & (GetCurrentInterpreter 'CondaExe') create -y -q --prefix $path python=$version 2>&1
                 return $output
             };
-            IsAccessible = { [bool] (Get-CurrentInterpreter 'CondaExe' -Executable) };
+            IsAccessible = { [bool] (GetCurrentInterpreter 'CondaExe' -Executable) };
         };
         @{
             NoTargetPath = $true;
             MenuText = '(tool required) Install virtualenv';
             Code = {
                 param($path)
-                $output = & (Get-CurrentInterpreter 'PythonExe') -m pip install virtualenv 2>&1
+                $output = & (GetCurrentInterpreter 'PythonExe') -m pip install virtualenv 2>&1
                 return $output
             };
-            IsAccessible = { -not [bool] (Get-CurrentInterpreter 'VirtualenvExe') };
+            IsAccessible = { -not [bool] (GetCurrentInterpreter 'VirtualenvExe') };
         };
         @{
             NoTargetPath = $true;
             MenuText = '(tool required) Install pipenv';
             Code = {
                 param($path)
-                $output = & (Get-CurrentInterpreter 'PythonExe') -m pip install pipenv 2>&1
+                $output = & (GetCurrentInterpreter 'PythonExe') -m pip install pipenv 2>&1
                 return $output
             };
-            IsAccessible = { -not [bool] (Get-CurrentInterpreter 'PipenvExe') };
+            IsAccessible = { -not [bool] (GetCurrentInterpreter 'PipenvExe') };
         };
         @{
             NoTargetPath = $true;
@@ -2272,23 +2240,23 @@ Function Add-CreateEnvButtonMenu {
                 param($path)
                 # menuinst, cytoolz are required by conda to run
                 $menuinst = Validate-GitLink "https://github.com/ContinuumIO/menuinst@1.4.8"
-                $output_0 = & (Get-CurrentInterpreter 'PythonExe') -m pip install $menuinst 2>&1
-                $output_1 = & (Get-CurrentInterpreter 'PythonExe') -m pip install cytoolz conda 2>&1
-                $CondaExe = Guess-EnvPath (Get-CurrentInterpreter 'Path') 'conda' -Executable
+                $output_0 = & (GetCurrentInterpreter 'PythonExe') -m pip install $menuinst 2>&1
+                $output_1 = & (GetCurrentInterpreter 'PythonExe') -m pip install cytoolz conda 2>&1
+                $CondaExe = GuessEnvPath (GetCurrentInterpreter 'Path') 'conda' -Executable
 
                 # conda needs a little caress to run together with pip
-                $path = (Get-CurrentInterpreter 'Path')
+                $path = (GetCurrentInterpreter 'Path')
                 $stub = "$path\Lib\site-packages\conda\cli\pip_warning.py"
                 $main = "$path\Lib\site-packages\conda\cli\main.py"
                 Move-Item $stub "${stub}_"
                 Copy-Item $main $stub
                 # New-Item -Path $stub -ItemType SymbolicLink -Value $main
 
-                $record = Get-CurrentInterpreter
+                $record = GetCurrentInterpreter
                 $record.CondaExe = $CondaExe
                 return @($output_0, $output_1) | ForEach-Object { $_ }
             };
-            IsAccessible = { -not [bool] (Get-CurrentInterpreter 'CondaExe' -Executable) };
+            IsAccessible = { -not [bool] (GetCurrentInterpreter 'CondaExe' -Executable) };
         };
         @{
             Persistent = $true;
@@ -2303,7 +2271,7 @@ Function Add-CreateEnvButtonMenu {
         Set-ActiveInterpreterWithPath $path
 
         $ruleName = "pip env $path"
-        $pythonExe = (Get-CurrentInterpreter 'PythonExe')
+        $pythonExe = (GetCurrentInterpreter 'PythonExe')
         $firewallUserResponse = ([System.Windows.Forms.MessageBox]::Show(
             "Create a firewall rule for the new environment?`n`nRule name: '$ruleName'`nPath: '$pythonExe'`nAllow outgoing connections`n`n" +
             "You can edit the rule by running wf.msc",
@@ -2328,7 +2296,7 @@ Function Add-CreateEnvButtonMenu {
     }
 
     $FuncGetPythonInfo = {
-        return (Get-CurrentInterpreter 'Version')
+        return (GetCurrentInterpreter 'Version')
     }
 
     $menuclick = {
@@ -2355,30 +2323,30 @@ Function Add-EnvToolButtonMenu {
         @{
             Persistent = $true;
             MenuText = 'Python REPL';
-            Code = { Start-Process -FilePath (Get-CurrentInterpreter 'PythonExe') -WorkingDirectory (Get-CurrentInterpreter 'Path') };
+            Code = { Start-Process -FilePath (GetCurrentInterpreter 'PythonExe') -WorkingDirectory (GetCurrentInterpreter 'Path') };
         };
         @{
             MenuText = 'Shell with Virtualenv Activated';
-            Code = { Start-Process -FilePath cmd.exe -WorkingDirectory (Get-CurrentInterpreter 'Path') -ArgumentList "/K $(Get-CurrentInterpreter 'VenvActivate')" };
-            IsAccessible = { (Get-CurrentInterpreter 'VenvActivate') };
+            Code = { Start-Process -FilePath cmd.exe -WorkingDirectory (GetCurrentInterpreter 'Path') -ArgumentList "/K $(GetCurrentInterpreter 'VenvActivate')" };
+            IsAccessible = { (GetCurrentInterpreter 'VenvActivate') };
         };
         @{
             Persistent = $true;
             MenuText = 'Open IDLE'
-            Code = { Start-Process -FilePath (Get-CurrentInterpreter 'PythonExe') -WorkingDirectory (Get-CurrentInterpreter 'Path') -ArgumentList '-m idlelib.idle' -WindowStyle Hidden };
+            Code = { Start-Process -FilePath (GetCurrentInterpreter 'PythonExe') -WorkingDirectory (GetCurrentInterpreter 'Path') -ArgumentList '-m idlelib.idle' -WindowStyle Hidden };
         };
         @{
             MenuText = 'pipenv shell'
-            Code = { Start-Process -FilePath (Get-Bin 'pipenv.exe') -WorkingDirectory (Get-CurrentInterpreter 'Path') -ArgumentList 'shell' };
-            IsAccessible = { [bool] (Get-Bin 'pipenv.exe') -and [bool] (Get-CurrentInterpreter 'Pipfile') };
+            Code = { Start-Process -FilePath (Get-Bin 'pipenv.exe') -WorkingDirectory (GetCurrentInterpreter 'Path') -ArgumentList 'shell' };
+            IsAccessible = { [bool] (Get-Bin 'pipenv.exe') -and [bool] (GetCurrentInterpreter 'Pipfile') };
         };
         @{
             Persistent = $true;
             MenuText = 'Environment variables...';
             Code = {
-                $interpreter = Get-CurrentInterpreter
+                $interpreter = GetCurrentInterpreter
                 if ($interpreter.User) {
-                    Generate-FormEnvironmentVariables $interpreter
+                    CreateMainFormEnvironmentVariables $interpreter
                 } else {
                     $path = $interpreter.Path
                     WriteLog "$path is not a venv. Editing system-wide environment variables." -Background 'LightSalmon'
@@ -2389,15 +2357,15 @@ Function Add-EnvToolButtonMenu {
         @{
             Persistent = $true;
             MenuText = 'Open containing directory'
-            Code = { Start-Process -FilePath 'explorer.exe' -ArgumentList "$(Get-CurrentInterpreter 'Path')" };
+            Code = { Start-Process -FilePath 'explorer.exe' -ArgumentList "$(GetCurrentInterpreter 'Path')" };
         };
         @{
             Persistent = $false;
             MenuText = 'Remove environment...'
             Code = {
-                Delete-CurrentInterpreter
+                DeleteCurrentInterpreter
             };
-            IsAccessible = { [bool] (Get-CurrentInterpreter 'User') };
+            IsAccessible = { [bool] (GetCurrentInterpreter 'User') };
         };
     )
 
@@ -2410,8 +2378,8 @@ Function Add-EnvToolButtonMenu {
     return $buttonEnvTools
 }
 
-Function global:Get-PyDocTopics() {
-    $pythonExe = Get-CurrentInterpreter 'PythonExe'
+Function global:GetPyDocTopics() {
+    $pythonExe = GetCurrentInterpreter 'PythonExe'
     if ([string]::IsNullOrEmpty($pythonExe)) {
         WriteLog 'No python executable found.'
         return
@@ -2425,8 +2393,8 @@ Function global:Get-PyDocTopics() {
     }
 }
 
-Function global:Get-PyDocApropos($request) {
-    $pythonExe = Get-CurrentInterpreter 'PythonExe'
+Function global:GetPyDocApropos($request) {
+    $pythonExe = GetCurrentInterpreter 'PythonExe'
     if ([string]::IsNullOrEmpty($pythonExe)) {
         WriteLog 'No python executable found.'
         return
@@ -2457,12 +2425,12 @@ or keyword like 'elif'
 "
                 $title = "View PyDoc"
                 $default = ""
-                $topics = Get-PyDocTopics
-                $input = Request-UserString $message $title $default $topics
+                $topics = GetPyDocTopics
+                $input = RequestUserString $message $title $default $topics
                 if (-not $input) {
                     return
                 }
-                (Show-DocView $input).Show()
+                (ShowDocView $input).Show()
             };
         };
         @{
@@ -2477,15 +2445,15 @@ Some packages may generate garbage or show windows, don't panic.
 "
                 $title = "PyDoc apropos"
                 $default = ""
-                $input = Request-UserString $message $title $default
+                $input = RequestUserString $message $title $default
                 if (-not $input) {
                     return
                 }
                 WriteLog "Searching apropos for $input"
-                $apropos = Get-PyDocApropos $input
+                $apropos = GetPyDocApropos $input
                 if ($apropos -and $apropos.Count -gt 0) {
                     WriteLog "Found $($apropos.Count) topics"
-                    $docView = Show-DocView -SetContent ($apropos -join "`n") -Highlight $Script:pyRegexNameChain -NoDefaultHighlighting
+                    $docView = ShowDocView -SetContent ($apropos -join "`n") -Highlight $Script:pyRegexNameChain -NoDefaultHighlighting
                     $docView.Show()
                 } else {
                     WriteLog 'Nothing found.'
@@ -2496,9 +2464,9 @@ Some packages may generate garbage or show windows, don't panic.
             Persistent=$true;
             MenuText = 'Set as default Python';
             Code = {
-                $version = Get-CurrentInterpreter 'Version'
-                $arch = Get-CurrentInterpreter 'Arch'
-                $bits = Get-CurrentInterpreter 'Bits'
+                $version = GetCurrentInterpreter 'Version'
+                $arch = GetCurrentInterpreter 'Arch'
+                $bits = GetCurrentInterpreter 'Bits'
                 $fileLines = New-Object System.Collections.ArrayList
                 $fileLines.Add("[defaults]")
                 $fileLines.Add("python=$version -$bits")
@@ -2515,7 +2483,7 @@ Some packages may generate garbage or show windows, don't panic.
             MenuText = 'Edit conda channels';
             Code = {
                 $channels = $global:settings.condaChannels -join ' '
-                $list = Request-UserString "Enter conda channels, separated with space.`n`nLeave empty to use defaults.`n`nPopular channels: conda-forge anaconda defaults bioconda`n`nThe first channel is for installing, the others are for searching only." 'Edit conda channels' $channels
+                $list = RequestUserString "Enter conda channels, separated with space.`n`nLeave empty to use defaults.`n`nPopular channels: conda-forge anaconda defaults bioconda`n`nThe first channel is for installing, the others are for searching only." 'Edit conda channels' $channels
                 if ($list -eq $null) {
                     return
                 }
@@ -2536,9 +2504,9 @@ Some packages may generate garbage or show windows, don't panic.
                 foreach ($type in @('pip', 'wheel')) {
                     $getCacheFolderScript_b10 = "from pip.utils.appdirs import user_cache_dir; print(user_cache_dir('$type'))"
                     $getCacheFolderScript_a10 = "from pip._internal.utils.appdirs import user_cache_dir; print(user_cache_dir('$type'))"
-                    $cacheFolder = & (Get-CurrentInterpreter 'PythonExe') -c $getCacheFolderScript_b10
+                    $cacheFolder = & (GetCurrentInterpreter 'PythonExe') -c $getCacheFolderScript_b10
                     if ([string]::IsNullOrWhiteSpace($cacheFolder)) {
-                        $cacheFolder = & (Get-CurrentInterpreter 'PythonExe') -c $getCacheFolderScript_a10
+                        $cacheFolder = & (GetCurrentInterpreter 'PythonExe') -c $getCacheFolderScript_a10
                     }
                     if ([string]::IsNullOrWhiteSpace($cacheFolder)) {
                         WriteLog "Could not determine $type cache location."
@@ -2585,7 +2553,7 @@ Some packages may generate garbage or show windows, don't panic.
                 $pipsHash = & (Get-Bin 'git') --git-dir=$pipsGitPath --work-tree=$pipsPath rev-parse --short HEAD 2>&1
                 $hostInfo = "``````$powerShellInfo```````n.NET $FRAMEWORK_VERSION`npips $pipsHash`n`nDescribe your issue here"
                 $issue = [System.Web.HttpUtility]::UrlPathEncode($hostInfo)
-                Open-LinkInBrowser "https://github.com/ptytb/pips/issues/new?title=$title&body=$hostInfo"
+                OpenLinkInBrowser "https://github.com/ptytb/pips/issues/new?title=$title&body=$hostInfo"
             };
         };
         @{
@@ -2644,7 +2612,7 @@ Function global:Show-CurrentPackageInBrowser() {
         }
 
         if ($packageHomepageFromPlugin) {
-            Open-LinkInBrowser "$packageHomepageFromPlugin"
+            OpenLinkInBrowser "$packageHomepageFromPlugin"
             return
         } elseif ($row.Type -eq 'conda') {
             $url = $anaconda_url
@@ -2655,11 +2623,11 @@ Function global:Show-CurrentPackageInBrowser() {
         } else {
             $url = $pypi_url
         }
-        Open-LinkInBrowser "${url}${urlName}"
+        OpenLinkInBrowser "${url}${urlName}"
     }
 }
 
-Function Generate-Form {
+Function CreateMainForm {
     $form = New-Object Windows.Forms.Form
     $form.Text = "pips - python package browser"
     $form.Size = New-Object Drawing.Point 1125, 840
@@ -2683,8 +2651,8 @@ Function Generate-Form {
     $form.Controls.Add($group)
 
     $global:WIDGET_GROUP_INSTALL_BUTTONS = @(
-        Add-Button "Search..." { GenerateFormSearch } ;
-        Add-Button "Install..." { GenerateFormInstall }
+        Add-Button "Search..." ${function:CreateSearchForm} ;
+        Add-Button "Install..." ${function:CreateInstallForm} ;
     )
     $null = Add-ToolsButtonMenu
 
@@ -2734,7 +2702,7 @@ Function Generate-Form {
             $query = "$subQueryPackage"
         }
 
-        #Write-Host $query
+        #Write-Information $query
 
         if ($searchText.Length -gt 0) {
             $global:dataModel.DefaultView.RowFilter = $query
@@ -2746,7 +2714,7 @@ Function Generate-Form {
             SetSelectedRow $selectedRow
         }
 
-        HighlightPythonPackages
+        HighlightPackages
     }.GetNewClosure()
 
     $global:inputFilter = $global:inputFilter
@@ -2800,16 +2768,39 @@ Function Generate-Form {
 
     $interpreters = $Script:interpreters
     $trackDuplicateInterpreters = $Script:trackDuplicateInterpreters
+
+    $alternateFunctionality_WidgetStateTransition = [WidgetStateTransition]::new()
+
     $form.add_KeyDown({
         if ($Global:interpretersComboBox.Focused) {
             if (($_.KeyCode -eq 'C') -and $_.Control) {
-                $python_exe = Get-CurrentInterpreter 'PythonExe'
+                $python_exe = GetCurrentInterpreter 'PythonExe'
                 Set-Clipboard $python_exe
                 WriteLog "Copied to clipboard: $python_exe"
             }
             if ($_.KeyCode -eq 'Delete') {
-                Delete-CurrentInterpreter
+                DeleteCurrentInterpreter
             }
+        }
+
+        if ($_.Shift) {
+            $wst = $alternateFunctionality_WidgetStateTransition
+            $null = $wst.Add($WIDGET_GROUP_COMMAND_BUTTONS[-1]).Transform(@{Text='What if?'})
+        }
+
+    }.GetNewClosure())
+
+    $form.add_KeyUp({
+        if (-not $_.Shift) {
+            $wst = $alternateFunctionality_WidgetStateTransition
+            $null = $wst.ReverseAll()
+        }
+    }.GetNewClosure())
+
+    $form.add_Deactivate({
+        if (-not $_.Shift) {
+            $wst = $alternateFunctionality_WidgetStateTransition
+            $null = $wst.ReverseAll()
         }
     }.GetNewClosure())
 
@@ -2820,7 +2811,7 @@ Function Generate-Form {
     $dataGridView.Location = New-Object Drawing.Point 7,($Script:lastWidgetTop + $Script:widgetLineHeight)
     $dataGridView.Size = New-Object Drawing.Point 800,450
     $dataGridView.ShowCellToolTips = $false
-    $dataGridView.Add_Sorted({ HighlightPythonPackages })
+    $dataGridView.Add_Sorted({ HighlightPackages })
 
     $dataGridToolTip = New-Object System.Windows.Forms.ToolTip
 
@@ -2891,8 +2882,14 @@ Function Generate-Form {
         $logView = $Sender
         $global:logView = $logView
 
+        $global:WritePipLogDelegate = New-RunspacedDelegate ([EventHandler] {
+            param($Sender, $EventArgs)
+            $arguments = $EventArgs.arguments
+            $null = WriteLogHelper @arguments
+        })
+
         foreach ($arguments in $global:_WritePipLogBacklog) {
-            WriteLog @arguments
+            WriteLogHelper @arguments
         }
         $_WritePipLogBacklog = $null
         Remove-Variable -Scope Global _WritePipLogBacklog
@@ -2900,7 +2897,7 @@ Function Generate-Form {
 
     $logView.Add_LinkClicked({
         param($Sender, $EventArgs)
-        Open-LinkInBrowser $EventArgs.LinkText
+        OpenLinkInBrowser $EventArgs.LinkText
     })
 
     $FuncHighlightLogFragment = {
@@ -2944,9 +2941,9 @@ Function Generate-Form {
     }.GetNewClosure()
 
     $null = & $FuncResizeForm
-    $form.Add_Resize({ & $FuncResizeForm }.GetNewClosure())
+    $form.Add_Resize($FuncResizeForm)
     $form.Add_Shown({
-        WriteLog "`n" 'Hold Shift and hover the rows to fetch the detailed package info form PyPi'
+        WriteLog "`nHold Shift and hover the rows to fetch the detailed package info form PyPi"
         $form.BringToFront()
     })
 
@@ -2979,7 +2976,7 @@ Function Generate-Form {
 
             if ($_.KeyCode -eq 'Return' -and $_.Shift) {
                 $_.Handled = $true
-                ExecutePipAction
+                ExecuteAction
                 return
             }
 
@@ -3026,7 +3023,7 @@ Function Generate-Form {
     return ,$form
 }
 
-Function Generate-FormEnvironmentVariables($interpreterRecord) {
+Function CreateMainFormEnvironmentVariables($interpreterRecord) {
     $Form                            = New-Object system.Windows.Forms.Form
     $Form.ClientSize                 = '659,653'
     $Form.Text                       = "Environment Variables"
@@ -3327,7 +3324,7 @@ class DocView {
                 if ($selectedLength -gt 0) {
                     $clickedWord = $self.docView.Text.Substring($begin, $selectedLength)
 
-                    $childViewer = Show-DocView "$($self.PackageName).${clickedWord}"
+                    $childViewer = ShowDocView "$($self.PackageName).${clickedWord}"
                     $childViewer.formDoc.add_Shown({
                             $childViewer.SetSize($self.GetSize())
                             $childViewer.SetLocation($self.GetLocation())
@@ -3347,7 +3344,7 @@ class DocView {
         }.GetNewClosure())
 
         $this.docView.add_LinkClicked({
-                Open-LinkInBrowser $_.LinkText
+                OpenLinkInBrowser $_.LinkText
             }.GetNewClosure())
 
         $this.docView.Add_MouseClick({
@@ -3489,7 +3486,7 @@ class SearchDialogHook {
             switch ($_.KeyCode) {
                 ([System.Windows.Forms.Keys]::OemQuestion) {
                         $controlKeysState = $null
-                        $query = Request-UserString @"
+                        $query = RequestUserString @"
 Enter text for searching
 
 Hold Shift to search backwards
@@ -3625,6 +3622,7 @@ class TextBoxNavigationHook {
 class ProcessWithPipedIO {
     hidden [string] $_command
     hidden [string] $_arguments
+    hidden [hashtable] $_environment = $null
     hidden [int] $_pid  # _process properties can change after terminating, better keep tabs on PID
     hidden [System.Diagnostics.Process] $_process = $null
     hidden [System.Threading.Tasks.TaskCompletionSource[int]] $_taskCompletionSource  # Keeps the exit code of a process
@@ -3642,11 +3640,23 @@ class ProcessWithPipedIO {
         $this._arguments = $Arguments
     }
 
+    ProcessWithPipedIO($Command, $Arguments, $Environment) {
+        $this._command = $Command
+        $this._arguments = $Arguments
+        $this._environment = $Environment
+    }
+
     hidden _Initialize() {
         $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
 
         $startInfo.FileName = $this._command
         $startInfo.Arguments = $this._arguments
+
+        if ($this._environment) {
+            foreach ($var in $this._environment.GetEnumerator()) {
+                $null = $startInfo.Environment.Add($var.Key, $var.Value)
+            }
+        }
 
         $startInfo.UseShellExecute = $false
         $startInfo.CreateNoWindow = $true
@@ -3915,7 +3925,7 @@ class WidgetStateTransition {
         foreach ($control in $this._controls) {
             $widgetState = @{}
             foreach ($property in $properties.GetEnumerator()) {
-                # Write-Host $property.Key '=' $property.Value ' of ' $property.Value.GetType()
+                # Write-Information $property.Key '=' $property.Value ' of ' $property.Value.GetType()
                 if (($property.Value -isnot [ScriptBlock]) -and ($property.Value -isnot [delegate])) {
                     $null = $widgetState.Add($property.Key, $control."$($property.Key)")
                     $control."$($property.Key)" = $property.Value
@@ -3940,7 +3950,7 @@ class WidgetStateTransition {
                 { ($_ -is [System.Windows.Forms.Control]) -or ($_ -is [System.Windows.Forms.Form]) } {
                     $control, $properties = $widgetState.Key, $widgetState.Value
                     foreach ($property in $properties.GetEnumerator()) {
-                        # Write-Host 'REV ' $property.Key '=' $property.Value ' of ' $property.Value.GetType()
+                        # Write-Information 'REV ' $property.Key '=' $property.Value ' of ' $property.Value.GetType()
                         if ($property.Value -isnot [delegate[]]) {
                             $control."$($property.Key)" = $property.Value
                         } else {
@@ -4079,9 +4089,9 @@ class WidgetStateTransition {
 }
 
 
-Function global:Show-DocView($packageName, $SetContent = $null, $Highlight = $null, [switch] $NoDefaultHighlighting) {
+Function global:ShowDocView($packageName, $SetContent = $null, $Highlight = $null, [switch] $NoDefaultHighlighting) {
     if (-not $SetContent) {
-        $content = (Get-PyDoc $packageName) -join "`n"
+        $content = (GetPyDoc $packageName) -join "`n"
     } else {
         $content = $SetContent
     }
@@ -4117,7 +4127,7 @@ Function Store-CheckedPipSearchResults() {
 }
 
 Function Get-PipSearchResults($request) {
-    $pip_exe = Get-CurrentInterpreter 'PipExe' -Executable
+    $pip_exe = GetCurrentInterpreter 'PipExe' -Executable
     if (-not $pip_exe) {
         WriteLog 'pip is not found!'
         return 0
@@ -4151,12 +4161,12 @@ Function Get-PipSearchResults($request) {
 }
 
 Function Get-CondaSearchResults($request) {
-    $conda_exe = Get-CurrentInterpreter 'CondaExe' -Executable
+    $conda_exe = GetCurrentInterpreter 'CondaExe' -Executable
     if (-not $conda_exe) {
         WriteLog 'conda is not found!'
         return 0
     }
-    $arch = Get-CurrentInterpreter 'Arch'
+    $arch = GetCurrentInterpreter 'Arch'
 
     # channels [-c]:
     #   anaconda = main, free, pro, msys2[windows]
@@ -4247,8 +4257,8 @@ Function global:Get-PluginSearchResults($request) {
     foreach ($plugin in $global:plugins) {
         $packages = $plugin.GetSearchResults(
             $request,
-            (Get-CurrentInterpreter 'Version'),
-            (Get-CurrentInterpreter 'Bits'))
+            (GetCurrentInterpreter 'Version'),
+            (GetCurrentInterpreter 'Bits'))
 
         foreach ($package in $packages) {
             $row = $global:dataModel.NewRow()
@@ -4348,7 +4358,7 @@ Function global:AddPackagesToTable {
         $availableKeys = $package.PSObject.Properties.Name
 
         # write-host $availableKeys
-        # Write-Host $package.Package $availableKeys
+        # Write-Information $package.Package $availableKeys
 
         if ($availableKeys -contains 'Installed') {
             $row.Installed = $package.Installed
@@ -4389,7 +4399,7 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
             $null = $stats.Add($type, $packages.Count)
         }
 
-        HighlightPythonPackages
+        HighlightPackages
 
         WriteLog 'Double click or [Ctrl+Enter] a table row to open package''s home page in browser'
         $total = $global:dataModel.Rows.Count
@@ -4399,7 +4409,7 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
 
     $allTasks = [System.Collections.Generic.List[System.Threading.Tasks.Task[object]]]::new()
 
-    $python_exe = Get-CurrentInterpreter 'PythonExe' -Executable
+    $python_exe = GetCurrentInterpreter 'PythonExe' -Executable
     if ($python_exe) {
         # Func [Task[string], Tuple`2[System.Management.Automation.PSObject, System.String]]
         $continuationParsePipOutput = New-RunspacedDelegate ([Func[System.Threading.Tasks.Task, object]] {
@@ -4438,7 +4448,7 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
         $null = $allTasks.Add($taskPipList)
     }
 
-    $conda_exe = Get-CurrentInterpreter 'CondaExe' -Executable
+    $conda_exe = GetCurrentInterpreter 'CondaExe' -Executable
     if ($conda_exe) {
         $continuationAddCondaPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
             param([System.Threading.Tasks.Task] $task)
@@ -4495,7 +4505,11 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
 
     try {
         $gathered = [System.Threading.Tasks.Task]::WhenAll($allTasks)
-        $taskAllDone = $gathered.ContinueWith($continuationAllDone, $global:UI_SYNCHRONIZATION_CONTEXT)
+        $taskAllDone = $gathered.ContinueWith($continuationAllDone,
+            [System.Threading.CancellationToken]::None,
+            ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
+                [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
+            $global:UI_SYNCHRONIZATION_CONTEXT)
     } catch [System.AggregateException] {
         WriteLog "One or more tasks have failed" -Background DarkRed
     }
@@ -4512,7 +4526,7 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
     }
 }
 
-Function global:SelectVisiblePipPackages($value) {
+Function global:SetVisiblePackageCheckboxes($value) {
     $global:dataModel.BeginLoadData()
 
     $headersSizeMode = $dataGridView.RowHeadersWidthSizeMode
@@ -4533,7 +4547,7 @@ Function global:SelectVisiblePipPackages($value) {
     $global:dataModel.EndLoadData()
 }
 
-Function global:SelectPipPackages($value) {
+Function global:SetAllPackageCheckboxes($value) {
     $global:dataModel.BeginLoadData()
 
     $headersSizeMode = $dataGridView.RowHeadersWidthSizeMode
@@ -4609,8 +4623,8 @@ Function global:SetSelectedRow($selectedRow) {
     }
 }
 
-Function global:CheckPipDependencies {
-    $python_exe = Get-CurrentInterpreter 'PythonExe' -Executable
+Function global:CheckDependencies {
+    $python_exe = GetCurrentInterpreter 'PythonExe' -Executable
     if (-not $python_exe) {
         WriteLog 'Python is not found!'
         throw [Exception]::new("Python is not found!")
@@ -4690,10 +4704,11 @@ Function global:WidgetStateTransitionForCommandButton($button) {
     return $widgetStateTransition
 }
 
-Function global:ExecutePipAction {
+Function global:ExecuteAction {
     $fireAction = New-RunspacedDelegate ([Action[object]] {
         param([object] $fireActionLocals)
         $action = $global:actionsModel[$actionListComboBox.SelectedIndex]
+        $actionId = $action.Id
         $queue = [System.Collections.Generic.Queue[object]]::new()
         $execActionTaskCompletionSource = $fireActionLocals.execActionTaskCompletionSource
 
@@ -4722,40 +4737,53 @@ Function global:ExecutePipAction {
             $null = $FunctionContext.execActionTaskCompletionSource.TrySetResult($null)
         })
 
-        if ($action.TakesList) {
-            $null = $action.Execute($queue.ToArray())
-            return
+        if ($action.Bulk -and $action.Synchronous) {
+            $null = InvokeWithContext $global:actionCommands['common'][$actionId].Command
+            return [System.Threading.Tasks.Task]::FromResult(@{})
         } else {
             $continuationReportIteration = New-RunspacedDelegate([Action[System.Threading.Tasks.Task[int], object]] {
                 param([System.Threading.Tasks.Task[int]] $task, [object] $locals)
 
-                if ($task.IsCompleted -and ((-not $task.IsFaulted) -or ($task.IsCanceled))) {
+                $exitCode = -1
+                $success = $false
+
+                if ($task.IsCompleted -and (-not ($task.IsFaulted -or $task.IsCanceled))) {
                     $exitCode = $task.Result
-                    WriteLog "Exited with code $exitCode" -Background DarkGreen -Foreground White
-                    $locals.functionContext.tasksOkay += 1
+                    $success = $exitCode -eq 0
+                }
+
+                if ($exitCode -ge 0) {
+                    $color = if ($success) { 'DarkGreen' } else { 'DarkRed' }
+                    WriteLog "Exited with code $exitCode" -Background $color -Foreground White
                 } else {
                     $message = $task.Exception.InnerException
                     WriteLog "Failed: $message" -Background DarkRed -Foreground White
+                }
+
+                if ($success) {
+                    $locals.functionContext.tasksOkay += 1
+                } else {
                     $locals.functionContext.tasksFailed += 1
                 }
 
                 # PostIrreversibleTransformWithMethodCall()
-
                 # $global:dataModel.Columns['Status'].ReadOnly = $false
                 # $global:dataModel.Columns['Status'].ReadOnly = $true
                 # $logTo = (GetLogLength) - $locals.logFrom
                 # $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $locals.logFrom
                 # $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
+
+                #$widgetStateTransition.CommitIrreversibleTransformations()
             }.GetNewClosure())
 
             $function = New-RunspacedDelegate ([Func[object, object, System.Threading.Tasks.Task]] {
                 param([object] $element, [object] $FunctionContext)
                 $dataRow = $element
-                $action = $FunctionContext.action
-                $name, $installed, $type = $dataRow.Package, $dataRow.Installed, $dataRow.Type
-                $logFrom = GetLogLength
+                $actionId = $FunctionContext.actionId
+                $package, $installed, $type = $dataRow.Package, $dataRow.Installed, $dataRow.Type
 
-                WriteLog "$($action.Name) $name" -Background LightPink
+                $logFrom = GetLogLength
+                WriteLog "Running $($actionId) on $package" -Background LightPink
 
                 # $taskUpdateUI = New-RunspacedDelegate([Action[System.Threading.Tasks.Task, object]] {
                 #     param([System.Threading.Tasks.Task] $task, [object] $locals)
@@ -4765,20 +4793,38 @@ Function global:ExecutePipAction {
 
                 # $result = $action.Execute($name, $type, $installed) -join "`n"
                 # if ($action) {
-                    # (Get-CurrentInterpreter 'PythonExe')
+                    # (GetCurrentInterpreter 'PythonExe')
                 # }
+
+                $interpreter = (GetCurrentInterpreter)  # python environment info
+                $functions = @{ py={ param($property) $interpreter."$property" }; }
+                $variables = @{ package=$package; version=$installed; queue=$queue }
+
+                $action = $global:actionCommands[$type][$actionId]
+                if (-not $action) {
+                    $action = $global:actionCommands['common'][$actionId]
+                }
+
+                if ($action.Command -is [ScriptBlock]) {  # if it's not an external process then handle it right away (causes hang on long op)
+                    $result = InvokeWithContext $action.Command $functions $variables @()
+                    return [System.Threading.Tasks.Task]::FromResult($result)
+                }
+
+                $executableCommand = $interpreter."$($action.Command)"
+                $executableArguments = InvokeWithContext $action.Args $functions $variables @()  # substitute actual params
+                WriteLog "$executableCommand $executableArguments" -Background Green -Foreground White
 
                 $process = [ProcessWithPipedIO]::new('py', @('--help'))
                 $taskProcessDone = $process.StartWithLogging($true, $true)
 
-                $locals = @{
+                $reportLocals = @{
                     dataRow=$dataRow;
                     process=$process;
                     logFrom=$logFrom;
                     functionContext=$FunctionContext;
                 }
 
-                $taskReport = $taskProcessDone.ContinueWith($script:continuationReportIteration, $locals,
+                $taskReport = $taskProcessDone.ContinueWith($script:continuationReportIteration, $reportLocals,
                     [System.Threading.CancellationToken]::None,
                     ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
                         [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
@@ -4788,7 +4834,7 @@ Function global:ExecutePipAction {
 
 
             $context = @{
-                action=$action;
+                actionId=$actionId;
                 tasksOkay=0;
                 tasksFailed=0;
                 execActionTaskCompletionSource=$execActionTaskCompletionSource;
@@ -4891,17 +4937,10 @@ Function global:Test-KeyPress
         $Keys
     )
 
-    # use the User32 API to define a keypress datatype
-    $Signature = @'
-[DllImport("user32.dll", CharSet=CharSet.Auto, ExactSpelling=true)]
-public static extern short GetAsyncKeyState(int virtualKeyCode);
-'@
-    $API = Add-Type -MemberDefinition $Signature -Name 'Keypress' -Namespace Keytest -PassThru
-
     # test if each key in the collection is pressed
     $Result = foreach ($Key in $Keys)
     {
-        [bool]($API::GetAsyncKeyState($Key) -eq -32767)
+        [bool]($WinAPI::GetAsyncKeyState($Key) -eq -32767)
     }
 
     # if all are pressed, return true, if any are not pressed, return false
@@ -4909,7 +4948,7 @@ public static extern short GetAsyncKeyState(int virtualKeyCode);
 }
 
 
-Function Get-PipDistributionInfo {
+Function GetPackageDistributionInfo {
     $python_code = @'
 import pkg_resources
 import json
@@ -4918,7 +4957,7 @@ info = {p.key: {'deps': {r.name: [str(s) for s in r.specifier] for r in p.requir
 print(json.dumps(info))
 '@ -join ';'
 
-    $output = & (Get-CurrentInterpreter 'PythonExe') -c "`"$python_code`""
+    $output = & (GetCurrentInterpreter 'PythonExe') -c "`"$python_code`""
     $pkgs = $output | ConvertFrom-Json
     return $pkgs
 }
@@ -5014,26 +5053,31 @@ Function Get-AsciiTree($name,
 
 Function global:Get-DependencyAsciiGraph($name) {
     Prepare-PackageAutoCompletion  # for checking presence of pkg in the index
-    $distributionInfo = Get-PipDistributionInfo
+    $distributionInfo = GetPackageDistributionInfo
     $asciiTree = Get-AsciiTree $name.ToLower() $distributionInfo
     return $asciiTree
 }
 
-Function global:Show-ConsoleWindow([bool] $show) {
-    Add-Type -Name Window -Namespace Console -MemberDefinition '
-    [DllImport("Kernel32.dll")]
-    public static extern IntPtr GetConsoleWindow();
+Function global:SetConsoleVisibility {
+    [CmdletBinding()]
+    param([bool] $Visible)
 
-    [DllImport("user32.dll")]
-    public static extern bool ShowWindow(IntPtr hWnd, Int32 nCmdShow);
-'
+    $cp = [System.CodeDom.Compiler.CompilerParameters]::new()
+    $cp.GenerateInMemory = $true
+    $cp.WarningLevel = 0
 
-    $consolePtr = [Console.Window]::GetConsoleWindow()
-    $value = if ($show) { 1 } else { 0 }
-    [Console.Window]::ShowWindow($consolePtr, $value)
+    $global:SW_HIDE = [int] 0
+    $global:SW_MINIMIZE = [int] 6
+    $global:SW_SHOWNOACTIVATE = [int] 4
+    $global:SW_SHOWNA = [int] 8
+    $global:SW_RESTORE = [int] 9
+
+    $consolePtr = $WinAPI::GetConsoleWindow()
+    $value = if ($Visible) { $SW_SHOWNOACTIVATE } else { $SW_HIDE }
+    $WinAPI::ShowWindow($consolePtr, $value)
 }
 
-Function global:SavePipsSettings {
+Function global:SaveSettings {
     $settingsPath = "$($env:LOCALAPPDATA)\pips"
     $null = New-Item -Force -ItemType Directory -Path $settingsPath
     $userInterpreterRecords = $interpreters | Where-Object { $_.User }
@@ -5044,9 +5088,9 @@ Function global:SavePipsSettings {
     }
 }
 
-Function global:LoadPipsSettings {
+Function global:LoadSettings {
     $settingsFile = "$($env:LOCALAPPDATA)\pips\settings.json"
-    $global:settings = @{}
+    $global:settings = @{ envs=@(); condaChannels=@(); }
     if (Exists-File $settingsFile) {
         try {
             $settings = (Get-Content $settingsFile | ConvertFrom-Json)
@@ -5135,7 +5179,7 @@ Function global:Test-CanInstallPackageTo([string] $pythonVersion, [string] $pyth
     }.GetNewClosure()
 }
 
-Function Load-Plugins() {
+Function LoadPlugins() {
     $PipsRoot = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('.\')
     $plugins = Get-ChildItem "$PipsRoot\external-repository-providers" -Directory -Depth 0
     foreach ($plugin in $plugins) {
@@ -5147,7 +5191,7 @@ Function Load-Plugins() {
             $pluginConfigPath,
             {
                 param($url, $destination)
-                [string[]] $output = & (Get-CurrentInterpreter 'PythonExe') -m pip download --no-deps --no-index --progress-bar off --dest $destination $url
+                [string[]] $output = & (GetCurrentInterpreter 'PythonExe') -m pip download --no-deps --no-index --progress-bar off --dest $destination $url
                 return @{
                     'output'=($output -join "`n");
                 }
@@ -5170,114 +5214,175 @@ Function Load-Plugins() {
     }
 }
 
-Function global:Start-Main([switch] $HideConsole, [switch] $Debug) {
-    $env:PYTHONIOENCODING="UTF-8"
-    $env:LC_CTYPE="UTF-8"
+Function global:UninstallDebugHelpers {
+   [System.AppDomain]::CurrentDomain.remove_FirstChanceException($firstChanceExceptionHandler)
+   [System.AppDomain]::CurrentDomain.remove_UnhandledException($unhandledExceptionHandler)
+}
 
-    if (-not $Debug) {
-       Set-StrictMode -Off
-       Set-PSDebug -Off
+Function global:InstallDebugHelpers {
+    $ignoredExceptions = @(
+        [System.IO.FileNotFoundException],
+        [System.Management.Automation.MethodInvocationException],
+        [System.Management.Automation.ParameterBindingException],
+        [System.Management.Automation.ItemNotFoundException],
+        [System.Management.Automation.ValidationMetadataException],
+        [System.Management.Automation.DriveNotFoundException],
+        [System.Management.Automation.CommandNotFoundException],
+        [System.NotSupportedException],
+        [System.ArgumentException],
+        [System.Management.Automation.PSNotSupportedException],
+        [System.TimeoutException]
+    )
+
+    $exceptionsWithScriptBacktrace = @(
+        [System.Management.Automation.RuntimeException],
+        [System.Management.Automation.PSInvalidCastException],
+        [System.Management.Automation.PipelineStoppedException]
+    )
+
+    $appExceptionHandler = {
+        param($Exception, $ScriptStackTrace = $null)
+
+        if ($Exception.GetType() -in $ignoredExceptions) {
+            return
+        }
+
+        $color = Get-Random -Maximum 16
+        $color = @{
+            BackgroundColor=$color;
+            ForegroundColor=((5 + $color) % 15);
+        }
+        Write-Host ('=' * 70) @color
+        Write-Host 'Managed TID=' ([System.Threading.Thread]::CurrentThread.ManagedThreadId) ', is POOL=' ([System.Threading.Thread]::CurrentThread.IsThreadPoolThread) ', is BACKGRND=' ([System.Threading.Thread]::CurrentThread.IsBackground) -BackgroundColor White -ForegroundColor Black
+        Write-Host ('-' * 70) @color
+        Write-Host $Exception.GetType() @color
+        Write-Host ('-' * 70) @color
+        Write-Host $Exception.Message @color
+        Write-Host ('-' * 70) @color
+
+        if (($Exception.GetType() -in $exceptionsWithScriptBacktrace) -or
+            ($Exception.GetType().BaseType -in $exceptionsWithScriptBacktrace))
+            {
+            $ScriptStackTrace = $Exception.ErrorRecord.ScriptStackTrace
+            if (-not [string]::IsNullOrWhiteSpace($ScriptStackTrace)) {
+                Write-Host $ScriptStackTrace @color
+            }
+        } else {
+            Write-Host (Get-PSCallStack | Format-Table -AutoSize | Out-String) @color
+        }
+        Write-Host ('-' * 70) @color
+
+        Write-Host $Exception.StackTrace @color
+        Write-Host ('=' * 70) @color
+
+        SetConsoleVisibility $true
+    }.GetNewClosure()
+
+    $global:firstChanceExceptionHandler = New-RunspacedDelegate ([ System.EventHandler`1[System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs]] {
+        param($Sender, $EventArgs)
+        $null = $appExceptionHandler.Invoke($EventArgs.Exception)
+    }.GetNewClosure())
+
+    $global:unhandledExceptionHandler = New-RunspacedDelegate ([UnhandledExceptionEventHandler] {
+        param($Sender, $EventArgs)
+        $null = $appExceptionHandler.Invoke($EventArgs.Exception)
+    }.GetNewClosure())
+
+    [System.AppDomain]::CurrentDomain.Add_FirstChanceException($firstChanceExceptionHandler)
+    [System.AppDomain]::CurrentDomain.Add_UnhandledException($unhandledExceptionHandler)
+}
+
+Function global:AtExit {
+    foreach ($plugin in $global:plugins) {
+        $plugin.Release()
+    }
+
+    SaveSettings
+
+    Write-Information 'AtExit has finished.'
+}
+
+Function global:Main {
+    [CmdletBinding()]
+    param([switch] $HideConsole)
+
+    $Debug = $PSBoundParameters['Debug']
+
+    $null = Import-Module -Global .\PSRunspacedDelegate\PSRunspacedDelegate
+
+    $null = SetConsoleVisibility ((-not $HideConsole) -or $Debug)
+    if ($Debug) {
+        Set-PSDebug -Strict -Trace 0  # -Trace ∈ (0, 1=lines, 2=lines+vars+calls)
+        $ConfirmPreference = 'None'
+        $DebugPreference = 'Inquire'
+        $ErrorActionPreference = 'Continue'
+        $InformationPreference = 'Continue'
+        InstallDebugHelpers
     } else {
-       Set-StrictMode -Version latest
-       Set-PSDebug -Strict -Trace 0  # -Trace ∈ (0, 1=lines, 2=lines+vars+calls)
-
-       $ignoredExceptions = @(
-           [System.IO.FileNotFoundException],
-           [System.Management.Automation.MethodInvocationException],
-           [System.Management.Automation.ParameterBindingException],
-           [System.Management.Automation.ItemNotFoundException],
-           [System.Management.Automation.ValidationMetadataException],
-           [System.Management.Automation.DriveNotFoundException],
-           [System.Management.Automation.CommandNotFoundException],
-           [System.NotSupportedException],
-           [System.ArgumentException],
-           [System.Management.Automation.PSNotSupportedException]
-       )
-
-       $exceptionsWithScriptBacktrace = @(
-           [System.Management.Automation.RuntimeException],
-           [System.Management.Automation.PSInvalidCastException],
-           [System.Management.Automation.PipelineStoppedException]
-       )
-
-       $appExceptionHandler = {
-            param($Exception, $ScriptStackTrace = $null)
-
-            if ($Exception.GetType() -in $ignoredExceptions) {
-                return
-            }
-
-            $color = Get-Random -Maximum 16
-            $color = @{
-                BackgroundColor=$color;
-                ForegroundColor=(15 - $color);
-            }
-            Write-Host ('=' * 70) @color
-            Write-Host 'Managed TID=' ([System.Threading.Thread]::CurrentThread.ManagedThreadId) ', is POOL=' ([System.Threading.Thread]::CurrentThread.IsThreadPoolThread) ', is BACKGRND=' ([System.Threading.Thread]::CurrentThread.IsBackground) -BackgroundColor White -ForegroundColor Black
-            Write-Host ('-' * 70) @color
-            Write-Host $Exception.GetType() @color
-            Write-Host ('-' * 70) @color
-            Write-Host $Exception.Message @color
-            Write-Host ('-' * 70) @color
-
-            if (($Exception.GetType() -in $exceptionsWithScriptBacktrace) -or
-                ($Exception.GetType().BaseType -in $exceptionsWithScriptBacktrace)) {
-                $ScriptStackTrace = $Exception.ErrorRecord.ScriptStackTrace
-                if (-not [string]::IsNullOrWhiteSpace($ScriptStackTrace)) {
-                    Write-Host $ScriptStackTrace @color
-                }
-            } else {
-                Write-Host (Get-PSCallStack | Format-Table -AutoSize | Out-String) @color
-            }
-            Write-Host ('-' * 70) @color
-
-            Write-Host $Exception.StackTrace @color
-            Write-Host ('=' * 70) @color
-
-            Show-ConsoleWindow $true
-       }.GetNewClosure()
-
-       $firstChanceExceptionHandler = New-RunspacedDelegate ([ System.EventHandler`1[System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs]] {
-            param($Sender, $EventArgs)
-            $null = $appExceptionHandler.Invoke($EventArgs.Exception)
-       }.GetNewClosure())
-
-       $unhandledExceptionHandler = New-RunspacedDelegate ([UnhandledExceptionEventHandler] {
-            param($Sender, $EventArgs)
-            $null = $appExceptionHandler.Invoke($EventArgs.Exception)
-       }.GetNewClosure())
-
-       [System.AppDomain]::CurrentDomain.Add_FirstChanceException($firstChanceExceptionHandler)
-       [System.AppDomain]::CurrentDomain.Add_UnhandledException($unhandledExceptionHandler)
+        $null = Set-PSDebug -Off
+        $ConfirmPreference = 'None'
+        $DebugPreference = 'SilentlyContinue'
+        $ErrorActionPreference = 'SilentlyContinue'
+        $InformationPreference = 'SilentlyContinue'
     }
 
-    if ($HideConsole) {
-        Show-ConsoleWindow $false
+    if (CheckPipsAlreadyRunning) {
+        exit
     }
 
-    LoadPipsSettings
-    Load-Plugins
+    $null = StartPipsSpellingServer
+
+    $null = LoadSettings
+    $null = LoadPlugins
+
+    $null = SetWebClientWorkaround
 
     [System.Windows.Forms.Application]::EnableVisualStyles()
 
-    $global:form = Generate-Form
-    $form.Add_FormClosing({
-
-        foreach ($plugin in $global:plugins) {
-            $plugin.Release()
-        }
-
-        SavePipsSettings
-
-        [System.Windows.Forms.Application]::Exit()
-        if (-not [Environment]::UserInteractive) {
-            Stop-Process $pid
-        }
-    })
-
+    $form = CreateMainForm
     $form.Show()
     $form.Activate()
 
     $appContext = [System.Windows.Forms.ApplicationContext]::new($form)
     $null = [System.Windows.Forms.Application]::Run($appContext)
+    [System.Windows.Forms.Application]::Exit()
+
+    AtExit
+
+    if ($Debug) {
+        UninstallDebugHelpers
+    }
+
+    Write-Information 'Exiting.'
 }
+
+$iconBase64_DownArrow = @'
+iVBORw0KGgoAAAANSUhEUgAAAAsAAAALCAYAAACprHcmAAAABGdBTUEAALGPC/xhBQAAAAlwSFlz
+AAAOvAAADrwBlbxySQAAABp0RVh0U29mdHdhcmUAUGFpbnQuTkVUIHYzLjUuMTAw9HKhAAAAP0lE
+QVQoU42KQQ4AIAzC9v9Po+Pi3MB4aAKFAPCNlA4pHVI6TtjRMc4s7ZRcey0U5sitC0pxTIZ4IaVD
+Sg1iAai9ScU7YisTAAAAAElFTkSuQmCC
+'@
+
+$iconBase64_Snakes = @'
+AAABAAEAEBAAAAAAAABoBAAAFgAAACgAAAAQAAAAIAAAAAEAIAAAAAAAQAQAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYAAAAaAAAAIQAAACEAAAAYAAAABQAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAODg4CPw8PDD/Pz8+P/////7+/v44uLizVtbW1AA
+AAAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD9/f24s/X//13j//9I2f//SdP//6Dm
+///i4uLPAAAAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA////9mXt//9c6P//UeD/
+/9X2//8/0P///Pz8+QAAACgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYAAAAZAAAAIf////9i7f//
+Ye3//1rn//9P3v//RNb///////8AAAA7AAAAIAAAABcAAAAFAAAAAN/f3yPw8PDC/Pz8+P//////
+////Yu3//2Lt//++9/////////////////////////v7+/ji4uLNWlpaUAAAAAb9/f25zLql/4hq
+Rv99ZEX//////2Pt//9i7f//Yu3//2Dr//9W4///S9v//0DS//85y///neT//+Li4s8AAAAd////
+9qF6S/+PbEH/hGdD//Hu6v+b9P//Y+3//2Lt//9i7f//Xur//1Ti//9J2f//PtH//0DM///8/Pz5
+AAAAKf////+kdj3/mXE//41rQv+jjnT/8O7q/////////////////+39//+F7f//UuD//0fY//88
+z////////wAAACr////1soJH/6J1Pf+Wb0D/i2pC/4BlRP98Y0X/fGNF/31kRv+snIn/7f3//1vn
+//9P3///UNn///v7+/gAAAAh////ttzCov+tfD//oHQ+/5RuQP+JaUL/fmRF/3xjRf98Y0X/fWVH
+//////9h7P//XOb//6zv///r6+vEAAAACwAAAAD///+4////9//////////////////////JvrH/
+fGNF/3xjRf////////////7+/vX6+vq4v7+/JQAAAAAAAAAAAAAAAAAAAAAAAAAA/////5tyP/+Q
+bEH/hWdD/31jRf98Y0X//////wAAACkAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//
+//WmeUD/6N/T/45rQf+CZkT/f2ZJ//v7+/gAAAAhAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAD///+22MCj/6h9Sf+XcED/k3NN/8S3qP/r6+vEAAAACwAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAP///7j////3//////7+/vX6+vq5v7+/JQAAAAAAAAAAAAAAAAAAAAAA
+AAAA+B8AAPAPAADwDwAA8A8AAIABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAQAA8A8AAPAP
+AADwDwAA+B8AAA==
+'@
