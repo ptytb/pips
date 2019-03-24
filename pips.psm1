@@ -3802,6 +3802,7 @@ class ProcessWithPipedIO {
 
         $ExitedCallback = New-RunspacedDelegate ([EventHandler] {
             param($Sender, $EventArgs)
+            try { if (-not $self) { return } } catch { }
             $self._hasFinished = $true
             try {
                 $self._exitCode = $self._process.ExitCode
@@ -3848,6 +3849,7 @@ class ProcessWithPipedIO {
             $this._processOutput = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
             $OutputCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
                 param($Sender, $EventArgs)
+                try { if (-not $self) { return } } catch { }
                 $line = $EventArgs.Data
                 if ($line -eq $null) {  # IMPORTANT
                     $self._processOutputEnded = $true
@@ -3863,6 +3865,7 @@ class ProcessWithPipedIO {
         }
         $ErrorCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
             param($Sender, $EventArgs)
+            try { if (-not $self) { return } } catch { }
             $line = $EventArgs.Data
             if ($line -eq $null) {  # IMPORTANT
                 $self._processErrorEnded = $true
@@ -3877,6 +3880,7 @@ class ProcessWithPipedIO {
 
             $delegate = New-RunspacedDelegate ([EventHandler] {
                 param([System.Windows.Forms.Timer] $Sender)
+                try { if (-not $self) { return } } catch { }
                 $Sender.Enabled = $false
                 $self = $Sender.Tag
                 $count = $self.FlushBuffersToLog()
