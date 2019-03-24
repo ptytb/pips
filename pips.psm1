@@ -3873,7 +3873,7 @@ class ProcessWithPipedIO {
         $self._LogErrors = $LogErrors
         $self._LogOutput = $LogOutput
 
-        # WriteLog "StartWithLogging <1>"
+        WriteLog "StartWithLogging <1>"
 
         if ($LogOutput) {  # ReadOutputToEndAsync() is supposed to be called otherwise!
             $this._processOutput = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
@@ -3921,7 +3921,7 @@ class ProcessWithPipedIO {
                 $count = $self.FlushBuffersToLog()
 
                 if ($self._hasFinished -and $self._processOutputEnded -and -$self._processErrorEnded -and ($count -eq 0)) {
-                    # WriteLog "Timer exiting normally <5>"
+                    WriteLog "Timer exiting normally <5>"
                     $self._ConfirmExit($null)
                 } else {
                     if ($count) {
@@ -3930,13 +3930,13 @@ class ProcessWithPipedIO {
                     } elseif ((--$self._timerIdleThreshold) -lt 0) {
                         $throttlingInterval = 1000
                         if ($Sender.Interval -eq $throttlingInterval) { # already throttling, is it alive?
-                            # WriteLog "Timer throttle enter <100>"
+                            WriteLog "Timer throttle enter <100>"
                             # Process.Refresh() wipes its state entirely then possibly gets filled in from alive proc; WaitForExit() may lock and is not an option
                             $p = try { [System.Diagnostics.Process]::GetProcessById($self._pid) } catch { $null }
                             $actuallyDead = $p -eq $null
                             if ($p) { $p.Close() }
 
-                            # WriteLog "Throttling status: started=$($self._hasStarted) exited_evt=$($self._hasFinished) now_dead=$actuallyDead code=$($self._exitCode) out_end=$($self._processOutputEnded) err_end=$($self._processErrorEnded)" -Background LightPink
+                            WriteLog "Throttling status: started=$($self._hasStarted) exited_evt=$($self._hasFinished) now_dead=$actuallyDead code=$($self._exitCode) out_end=$($self._processOutputEnded) err_end=$($self._processErrorEnded)" -Background LightPink
 
                             $self._missedExitEvent = $actuallyDead -ne $self._hasFinished
 
@@ -3952,7 +3952,7 @@ class ProcessWithPipedIO {
                             }
 
                             $self._hasFinished = $actuallyDead
-                            # WriteLog "Timer throttle EXIT <101>"
+                            WriteLog "Timer throttle EXIT <101>"
                         } else {
                             $Sender.Interval = $throttlingInterval  # our child process is silent, we'll throttle
                         }
@@ -3966,9 +3966,9 @@ class ProcessWithPipedIO {
             $this._timer.add_Tick($delegate)
         }
 
-        # WriteLog "StartWithLogging <2>"
+        WriteLog "StartWithLogging <2>"
         $null = $this._Start()
-        # WriteLog "StartWithLogging <3>"
+        WriteLog "StartWithLogging <3>"
 
         if ($this._hasStarted) {
             if ($LogOutput) {
@@ -3979,11 +3979,11 @@ class ProcessWithPipedIO {
             }
             if ($LogOutput -or $LogErrors) {
                 $this._timer.Start()
-                # WriteLog "Timer START <0>"
+                WriteLog "Timer START <0>"
             }
         }
 
-        # WriteLog "StartWithLogging <4>"
+        WriteLog "StartWithLogging <4>"
         return $this._taskCompletionSource.Task
     }
 
@@ -4001,7 +4001,7 @@ class ProcessWithPipedIO {
             try { $null = $this._process.CancelErrorRead() } catch { }
             $this._process.remove_ErrorDataReceived($this._errorCallback)
         }
-        # WriteLog "_ConfirmExit E='$exception' OUT=$($this._processOutputEnded) ERR=$($this._processErrorEnded)"
+        WriteLog "_ConfirmExit E='$exception' OUT=$($this._processOutputEnded) ERR=$($this._processErrorEnded)"
         $delegate = New-RunspacedDelegate ([Action[object]] {
             param([object] $locals)
             $self = $locals.self
@@ -4011,16 +4011,16 @@ class ProcessWithPipedIO {
             } else {
                 $null = $self._taskCompletionSource.TrySetResult($self._exitCode)
                 if (-not $self._hasFinished) {
-                    # WriteLog "Killing" -Background Red
+                    WriteLog "Killing" -Background Red
                     try { $null = $self._process.Kill() } catch { }
                 }
                 if ($self._missedExitEvent) {
-                    # WriteLog "We are in trouble, missed exit event, this shouldn't happen!" -Background Magenta
+                    WriteLog "We are in trouble, missed exit event, this shouldn't happen!" -Background Magenta
                 }
                 $null = $self._process.Close()
                 $self._process = $null
             }
-            # WriteLog "Exiting _ConfirmExit" -Background DarkOrange
+            WriteLog "Exiting _ConfirmExit" -Background DarkOrange
         }.GetNewClosure())
         $token = [System.Threading.CancellationToken]::None
         $options = ([System.Threading.Tasks.TaskCreationOptions]::AttachedToParent)
