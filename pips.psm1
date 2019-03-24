@@ -3758,6 +3758,7 @@ class ProcessWithPipedIO {
     hidden [bool] $_hasFinished = $false
     hidden [int] $_exitCode = -1
     hidden [System.Windows.Forms.Timer] $_timer = $null
+    hidden [int] $_timerIdleThreshold = 20
     hidden [delegate] $_exitedCallback
     hidden [delegate] $_outputCallback
     hidden [delegate] $_errorCallback
@@ -3800,12 +3801,10 @@ class ProcessWithPipedIO {
         $process.EnableRaisingEvents = $true
         $this._process = $process
 
-        $started = $false
         $self = $this
 
         $this._exitedCallback = New-RunspacedDelegate ([EventHandler] {
             param($Sender, $EventArgs)
-            try { if (-not $self) { return } } catch { }
             $self._hasFinished = $true
             try {
                 $self._exitCode = $self._process.ExitCode
@@ -3818,7 +3817,6 @@ class ProcessWithPipedIO {
         $self._process.add_Exited($this._exitedCallback)
 
         $this._taskCompletionSource = [System.Threading.Tasks.TaskCompletionSource[int]]::new()
-
     }
 
     hidden [System.Threading.Tasks.Task[int]] _Start() {
@@ -3852,7 +3850,6 @@ class ProcessWithPipedIO {
             $this._processOutput = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
             $this._outputCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
                 param($Sender, $EventArgs)
-                try { if (-not $self) { return } } catch { }
                 $line = $EventArgs.Data
                 if ($line -eq $null) {  # IMPORTANT
                     $self._processOutputEnded = $true
@@ -3868,7 +3865,6 @@ class ProcessWithPipedIO {
         }
         $this._errorCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
             param($Sender, $EventArgs)
-            try { if (-not $self) { return } } catch { }
             $line = $EventArgs.Data
             if ($line -eq $null) {  # IMPORTANT
                 $self._processErrorEnded = $true
@@ -3885,7 +3881,6 @@ class ProcessWithPipedIO {
                 param([System.Windows.Forms.Timer] $Sender)
                 $Sender.Enabled = $false
                 $self = $Sender.Tag
-                try { if (-not $self) { return } } catch { }
                 $count = $self.FlushBuffersToLog()
 
                 if ($self._hasFinished -and $self._processOutputEnded -and -$self._processErrorEnded -and ($count -eq 0)) {
@@ -3894,9 +3889,9 @@ class ProcessWithPipedIO {
                 } else {
                     if ($count) {
                         $Sender.Interval = 75
-                    } else {
+                    } elseif ((--$self._timerIdleThreshold) -le 0) {
                         WriteLog "Timer throttle enter <100>"
-                        $throttlingInterval = 1000
+                        $throttlingInterval = 2000
                         if ($Sender.Interval -eq $throttlingInterval) { # already throttling, is it alive?
                             # Process.Refresh() wipes its state entirely then possibly gets filled in from alive proc; WaitForExit() may lock and is not an option
                             $p = try { [System.Diagnostics.Process]::GetProcessById($self._pid) } catch { $null }
@@ -3958,8 +3953,14 @@ class ProcessWithPipedIO {
         }
         $this._process.EnableRaisingEvents = $false
         if ($this._exitedCallback) { $this._process.remove_Exited($this._exitedCallback) }
-        if ($this._outputCallback) { $this._process.remove_OutputDataReceived($this._outputCallback) }
-        if ($this._errorCallback ) { $this._process.remove_ErrorDataReceived($this._errorCallback) }
+        if ($this._outputCallback) {
+            try { $null = $this._process.CancelOutputRead() } catch { }
+            $this._process.remove_OutputDataReceived($this._outputCallback)
+        }
+        if ($this._errorCallback ) {
+            try { $null = $this._process.CancelErrorRead() } catch { }
+            $this._process.remove_ErrorDataReceived($this._errorCallback)
+        }
         WriteLog "_ConfirmExit E='$exception' OUT=$($this._processOutputEnded) ERR=$($this._processErrorEnded)"
         $delegate = New-RunspacedDelegate ([Action[object]] {
             param([object] $locals)
@@ -3969,8 +3970,6 @@ class ProcessWithPipedIO {
                 $null = $self._taskCompletionSource.TrySetException([Exception]::new($exception))
             } else {
                 $null = $self._taskCompletionSource.TrySetResult($self._exitCode)
-                try { $null = $self._process.CancelOutputRead() } catch { }
-                try { $null = $self._process.CancelErrorRead() } catch { }
                 if (-not $self._hasFinished) {
                     WriteLog "Killing" -Background Red
                     try { $null = $self._process.Kill() } catch { }
@@ -3978,7 +3977,7 @@ class ProcessWithPipedIO {
                 $null = $self._process.Close()
                 $self._process = $null
             }
-            WriteLog "OK _ConfirmExit" -Background DarkOrange
+            WriteLog "Exiting _ConfirmExit" -Background DarkOrange
         }.GetNewClosure())
         $token = [System.Threading.CancellationToken]::None
         $options = ([System.Threading.Tasks.TaskCreationOptions]::AttachedToParent)
@@ -5497,6 +5496,10 @@ Function global:Main {
     SetPSLogging $false
     SetPSLimits
 
+    if (CheckPipsAlreadyRunning) {
+        Exit
+    }
+
     $null = Import-Module -Global .\PSRunspacedDelegate\PSRunspacedDelegate
 
     $null = SetConsoleVisibility ((-not $HideConsole) -or $Debug)
@@ -5515,10 +5518,6 @@ Function global:Main {
         $ErrorActionPreference = 'SilentlyContinue'
         $WarningPreference = 'SilentlyContinue'
         $InformationPreference = 'SilentlyContinue'
-    }
-
-    if (CheckPipsAlreadyRunning) {
-        exit
     }
 
     $null = StartPipsSpellingServer
