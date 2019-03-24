@@ -2847,36 +2847,42 @@ Function CreateMainForm {
             }
         }
 
-        $wst = $alternateFunctionality_WidgetStateTransition
-        $mode = GetAlternativeMainFormMode $_
-        [bool] $hasEntered = $false
-        $null = $wst.EnterMode($mode, [ref] $hasEntered)
-        if ($hasEntered) {
-            foreach ($button in $WIDGET_GROUP_COMMAND_BUTTONS) {
-                [hashtable] $buttonModes = $button.Tag
-                if ($buttonModes.ContainsKey($mode)) {
-                    [hashtable] $modeTransformation = $buttonModes[$mode]
-                    $null = $wst.Add($button).Transform($modeTransformation)
+        if ($global:APP_MODE -eq [AppMode]::Idle) {
+            $wst = $alternateFunctionality_WidgetStateTransition
+            $mode = GetAlternativeMainFormMode $_
+            [bool] $hasEntered = $false
+            $null = $wst.EnterMode($mode, [ref] $hasEntered)
+            if ($hasEntered) {
+                foreach ($button in $WIDGET_GROUP_COMMAND_BUTTONS) {
+                    [hashtable] $buttonModes = $button.Tag
+                    if ($buttonModes.ContainsKey($mode)) {
+                        [hashtable] $modeTransformation = $buttonModes[$mode]
+                        $null = $wst.Add($button).Transform($modeTransformation)
+                    }
                 }
+                $_.Handled = $true
             }
-            $_.Handled = $true
         }
 
     }.GetNewClosure())
 
     $form.add_KeyUp({
-        $wst = $alternateFunctionality_WidgetStateTransition
-        [bool] $activeMode = $false
-        $mode = GetAlternativeMainFormMode $_
-        $null = $wst.IsModeActive($mode, [ref] $activeMode)
-        if (-not $activeMode) {
-            $null = $wst.ReverseAll().ExitMode()
+        if ($global:APP_MODE -eq [AppMode]::Idle) {
+            $wst = $alternateFunctionality_WidgetStateTransition
+            [bool] $activeMode = $false
+            $mode = GetAlternativeMainFormMode $_
+            $null = $wst.IsModeActive($mode, [ref] $activeMode)
+            if (-not $activeMode) {
+                $null = $wst.ReverseAll().ExitMode()
+            }
         }
     }.GetNewClosure())
 
     $form.add_Deactivate({
-        $wst = $alternateFunctionality_WidgetStateTransition
-        $null = $wst.ReverseAll().ExitMode()
+        if ($global:APP_MODE -eq [AppMode]::Idle) {
+            $wst = $alternateFunctionality_WidgetStateTransition
+            $null = $wst.ReverseAll().ExitMode()
+        }
     }.GetNewClosure())
 
     $dataGridView = New-Object System.Windows.Forms.DataGridView
