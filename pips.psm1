@@ -3982,9 +3982,12 @@ class ProcessWithPipedIO {
             while (-not $container.IsEmpty) {
                 [string] $line = [string]::Empty
                 [ref] $lineRef = [ref] $line
-                if (-not $container.TryDequeue($lineRef)) {
-                    break
-                }
+                try {
+                    if (-not $container.TryDequeue($lineRef)) {
+                        break
+                    }
+                } catch { }
+
                 if ($buffer.Length -gt 0) {
                     $null = $buffer.Append([Environment]::NewLine)
                 }
