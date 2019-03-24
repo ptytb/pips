@@ -798,7 +798,7 @@ Function global:WriteLog {
         }
         $null = $logView.BeginInvoke($global:WritePipLogDelegate, ($logView, $EventArgs))
     } else {
-        $null = WriteLogHelper @arguments
+        $null = global:WriteLogHelper @arguments
     }
 }
 
@@ -3113,6 +3113,26 @@ Function CreateMainForm {
         	});
             [void] $tw.ContinueWith($continuation1);
         }
+
+        $global:ProcessExitedDelegate = New-RunspacedDelegate([EventHandler] {
+            param($Sender, $EventArgs)
+            $self = $EventArgs.self
+            WriteLog "Got exit code $($self._exitCode)" -Foreground 'Red'
+        })
+
+        $global:ProcessErrorDelegate = New-RunspacedDelegate([EventHandler] {
+            param($Sender, $EventArgs)
+        })
+
+        $global:ProcessOutputDelegate = New-RunspacedDelegate([EventHandler] {
+            param($Sender, $EventArgs)
+        })
+
+        $global:ProcessFlushBuffersDelegate = New-RunspacedDelegate([EventHandler] {
+            param($Sender, $EventArgs)
+            WriteLog $EventArgs.Text -Background $EventArgs.Color
+        })
+
     })
 
     # Status strip
@@ -3121,7 +3141,6 @@ Function CreateMainForm {
     $statusStrip.ShowItemToolTips = $true
 
     $global:statusLabel = [System.Windows.Forms.ToolStripStatusLabel]::new()
-    $statusLabel.Text = 'test'
     $statusLabel.Alignment = [System.Windows.Forms.ToolStripItemAlignment]::Left
 
     $spacer = [System.Windows.Forms.ToolStripStatusLabel]::new()
@@ -3763,6 +3782,8 @@ class ProcessWithPipedIO {
     hidden [delegate] $_exitedCallback
     hidden [delegate] $_outputCallback
     hidden [delegate] $_errorCallback
+    hidden [bool] $_LogOutput
+    hidden [bool] $_LogErrors
 
     ProcessWithPipedIO($Command, $Arguments) {
         $this._command = $Command
@@ -3806,6 +3827,7 @@ class ProcessWithPipedIO {
 
         $this._exitedCallback = New-RunspacedDelegate ([EventHandler] {
             param($Sender, $EventArgs)
+            # $self = $EventArgs.self
             $self._hasFinished = $true
             try {
                 $self._exitCode = $self._process.ExitCode
@@ -3813,7 +3835,8 @@ class ProcessWithPipedIO {
             if (($self._timer -eq $null) -and $self._processOutputEnded -and $self._processErrorEnded) {
                 $self._ConfirmExit($null)
             }
-            WriteLog "Got exit code $($self._exitCode)" -Foreground 'Red'
+            # $null = Add-Member -InputObject $EventArgs -Type NoteProperty -Name self -Value $self -Force
+            # $null = $form.BeginInvoke($ProcessExitedDelegate, ($Sender, $EventArgs))
         }.GetNewClosure())
         $self._process.add_Exited($this._exitedCallback)
 
@@ -3844,19 +3867,25 @@ class ProcessWithPipedIO {
         $this._Initialize()
 
         $self = $this
+        $self._LogErrors = $LogErrors
+        $self._LogOutput = $LogOutput
 
-        WriteLog "StartWithLogging <1>"
+        # WriteLog "StartWithLogging <1>"
 
         if ($LogOutput) {  # ReadOutputToEndAsync() is supposed to be called otherwise!
             $this._processOutput = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
+
             $this._outputCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
                 param($Sender, $EventArgs)
+                # $self = $EventArgs.self
                 $line = $EventArgs.Data
                 if ($line -eq $null) {  # IMPORTANT
                     $self._processOutputEnded = $true
                 } else {
                     $null = $self._processOutput.Enqueue($line)
                 }
+                # $null = Add-Member -InputObject $EventArgs -Type NoteProperty -Name self -Value $self -Force
+                # $null = $form.BeginInvoke($ProcessOutputDelegate, ($Sender, $EventArgs))
             }.GetNewClosure())
             $this._process.add_OutputDataReceived($this._outputCallback)
         }
@@ -3864,14 +3893,18 @@ class ProcessWithPipedIO {
         if ($LogErrors) {
             $this._processError = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
         }
+
         $this._errorCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
             param($Sender, $EventArgs)
+            # $self = $EventArgs.self
             $line = $EventArgs.Data
             if ($line -eq $null) {  # IMPORTANT
                 $self._processErrorEnded = $true
-            } elseif ($LogErrors) {
+            } elseif ($self._LogErrors) {
                 $null = $self._processError.Enqueue($line)
             }
+            # $null = Add-Member -InputObject $EventArgs -Type NoteProperty -Name self -Value $self -Force
+            # $null = $form.BeginInvoke($ProcessErrorDelegate, ($Sender, $EventArgs))
         }.GetNewClosure())
         $this._process.add_ErrorDataReceived($this._errorCallback)
 
@@ -3885,21 +3918,22 @@ class ProcessWithPipedIO {
                 $count = $self.FlushBuffersToLog()
 
                 if ($self._hasFinished -and $self._processOutputEnded -and -$self._processErrorEnded -and ($count -eq 0)) {
-                    WriteLog "Timer exiting normally <5>"
+                    # WriteLog "Timer exiting normally <5>"
                     $self._ConfirmExit($null)
                 } else {
                     if ($count) {
                         $Sender.Interval = 75
-                    } elseif ((--$self._timerIdleThreshold) -le 0) {
-                        WriteLog "Timer throttle enter <100>"
-                        $throttlingInterval = 2000
+                        $self._timerIdleThreshold = 1
+                    } elseif ((--$self._timerIdleThreshold) -lt 0) {
+                        $throttlingInterval = 1000
                         if ($Sender.Interval -eq $throttlingInterval) { # already throttling, is it alive?
+                            # WriteLog "Timer throttle enter <100>"
                             # Process.Refresh() wipes its state entirely then possibly gets filled in from alive proc; WaitForExit() may lock and is not an option
                             $p = try { [System.Diagnostics.Process]::GetProcessById($self._pid) } catch { $null }
                             $actuallyDead = $p -eq $null
                             if ($p) { $p.Close() }
 
-                            WriteLog "Throttling status: started=$($self._hasStarted) exited_evt=$($self._hasFinished) now_dead=$actuallyDead code=$($self._exitCode) out_end=$($self._processOutputEnded) err_end=$($self._processErrorEnded)" -Background LightPink
+                            # WriteLog "Throttling status: started=$($self._hasStarted) exited_evt=$($self._hasFinished) now_dead=$actuallyDead code=$($self._exitCode) out_end=$($self._processOutputEnded) err_end=$($self._processErrorEnded)" -Background LightPink
 
                             $self._missedExitEvent = $actuallyDead -ne $self._hasFinished
 
@@ -3915,10 +3949,10 @@ class ProcessWithPipedIO {
                             }
 
                             $self._hasFinished = $actuallyDead
+                            # WriteLog "Timer throttle EXIT <101>"
                         } else {
                             $Sender.Interval = $throttlingInterval  # our child process is silent, we'll throttle
                         }
-                        WriteLog "Timer throttle EXIT <101>"
                     }
                     $Sender.Enabled = $true
                 }
@@ -3929,9 +3963,9 @@ class ProcessWithPipedIO {
             $this._timer.add_Tick($delegate)
         }
 
-        WriteLog "StartWithLogging <2>"
+        # WriteLog "StartWithLogging <2>"
         $null = $this._Start()
-        WriteLog "StartWithLogging <3>"
+        # WriteLog "StartWithLogging <3>"
 
         if ($this._hasStarted) {
             if ($LogOutput) {
@@ -3942,11 +3976,11 @@ class ProcessWithPipedIO {
             }
             if ($LogOutput -or $LogErrors) {
                 $this._timer.Start()
-                WriteLog "Timer START <0>"
+                # WriteLog "Timer START <0>"
             }
         }
 
-        WriteLog "StartWithLogging <4>"
+        # WriteLog "StartWithLogging <4>"
         return $this._taskCompletionSource.Task
     }
 
@@ -3964,7 +3998,7 @@ class ProcessWithPipedIO {
             try { $null = $this._process.CancelErrorRead() } catch { }
             $this._process.remove_ErrorDataReceived($this._errorCallback)
         }
-        WriteLog "_ConfirmExit E='$exception' OUT=$($this._processOutputEnded) ERR=$($this._processErrorEnded)"
+        # WriteLog "_ConfirmExit E='$exception' OUT=$($this._processOutputEnded) ERR=$($this._processErrorEnded)"
         $delegate = New-RunspacedDelegate ([Action[object]] {
             param([object] $locals)
             $self = $locals.self
@@ -3974,17 +4008,16 @@ class ProcessWithPipedIO {
             } else {
                 $null = $self._taskCompletionSource.TrySetResult($self._exitCode)
                 if (-not $self._hasFinished) {
-                    WriteLog "Killing" -Background Red
+                    # WriteLog "Killing" -Background Red
                     try { $null = $self._process.Kill() } catch { }
                 }
-                $null = $self._process.Close()
                 if ($self._missedExitEvent) {
-                    WriteLog "WaitForExit()" -Background Magenta
-                    $self._process.WaitForExit()
+                    # WriteLog "We are in trouble, missed exit event, this shouldn't happen!" -Background Magenta
                 }
+                $null = $self._process.Close()
                 $self._process = $null
             }
-            WriteLog "Exiting _ConfirmExit" -Background DarkOrange
+            # WriteLog "Exiting _ConfirmExit" -Background DarkOrange
         }.GetNewClosure())
         $token = [System.Threading.CancellationToken]::None
         $options = ([System.Threading.Tasks.TaskCreationOptions]::AttachedToParent)
@@ -4017,7 +4050,8 @@ class ProcessWithPipedIO {
                 $null = $buffer.Append($line)
                 ++$count
             }
-            WriteLog $buffer.ToString() -Background $color
+            $EventArgs = global:MakeEvent @{Text=$buffer.ToString(); Color=$color}
+            $null = $global:form.BeginInvoke($global:ProcessFlushBuffersDelegate, ($this, $EventArgs))
         }
         return $count
     }
@@ -4166,8 +4200,8 @@ class WidgetStateTransition {
         }
         $internalEventName = [WidgetStateTransition]::FormatInternalEventName($baseType, $event)
 
-        WriteLog $type -Background Pink
-        WriteLog $baseType -Background Pink
+        # WriteLog $type -Background Pink
+        # WriteLog $baseType -Background Pink
 
         $propertyInfo = $type.GetProperty('Events',
             [System.Reflection.BindingFlags]::Instance -bor
@@ -4190,13 +4224,13 @@ class WidgetStateTransition {
             foreach ($handler in $invocationList) {
                 $null = $old.Add($handler)
                 $control."remove_$event"($handler)
-                WriteLog "EVENT REMOVE $event $control $handler" -Background Red
+                # WriteLog "EVENT REMOVE $event $control $handler" -Background Red
             }
         }
 
         foreach ($handler in $handlers) {
             $control."add_$event"($handler)
-            WriteLog "EVENT ADD $event $control $handler" -Background Green
+            # WriteLog "EVENT ADD $event $control $handler" -Background Green
         }
 
         return $old
@@ -4624,58 +4658,58 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
         $null = $allTasks.Add($taskPipList)
     }
 
-    $conda_exe = GetCurrentInterpreter 'CondaExe' -Executable
-    if ($conda_exe) {
-        $continuationAddCondaPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
-            param([System.Threading.Tasks.Task] $task)
-            $condaPackages = $task.Result
-            if ($condaPackages -eq $null) {
-                throw [Exception]::new("Empty response from conda.")
-            }
-            return [Tuple]::Create($condaPackages, 'conda')
-        })
-        $task = GetCondaPackagesAsync $outdatedOnly
-        $taskCondaList = $task.ContinueWith($continuationAddCondaPackages,
-            [System.Threading.CancellationToken]::None,
-            ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
-                [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
-            $global:UI_SYNCHRONIZATION_CONTEXT)
-        $null = $allTasks.Add($taskCondaList)
-    }
-
-    $continuationAddBuiltinPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
-        param([System.Threading.Tasks.Task] $task)
-        $builtinPackages = $task.Result
-        if ($builtinPackages -eq $null) {
-            throw [Exception]::new("Empty response from builtin packages.")
-        }
-        return [Tuple]::Create($builtinPackages, 'builtin')
-    })
-    $taskGetBuiltinPackages = GetPythonBuiltinPackagesAsync
-    $taskAddBuiltinPackages = $taskGetBuiltinPackages.ContinueWith($continuationAddBuiltinPackages,
-        [System.Threading.CancellationToken]::None,
-        ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
-            [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
-        $global:UI_SYNCHRONIZATION_CONTEXT)
-    $null = $allTasks.Add($taskAddBuiltinPackages)
-
-    # other packages are packages that were found but do not belong to any other list
-
-    $continuationAddOtherPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
-        param([System.Threading.Tasks.Task] $task)
-        $otherPackages = $task.Result
-        if ($otherPackages -eq $null) {
-            throw [Exception]::new("Empty response from other packages.")
-        }
-        return [Tuple]::Create($otherPackages, 'other')
-    })
-    $taskGetOtherPackages = GetPythonOtherPackagesAsync
-    $taskAddOtherPackages = $taskGetOtherPackages.ContinueWith($continuationAddOtherPackages,
-        [System.Threading.CancellationToken]::None,
-        ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
-            [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
-        $global:UI_SYNCHRONIZATION_CONTEXT)
-    $null = $allTasks.Add($taskAddOtherPackages)
+    # $conda_exe = GetCurrentInterpreter 'CondaExe' -Executable
+    # if ($conda_exe) {
+    #     $continuationAddCondaPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
+    #         param([System.Threading.Tasks.Task] $task)
+    #         $condaPackages = $task.Result
+    #         if ($condaPackages -eq $null) {
+    #             throw [Exception]::new("Empty response from conda.")
+    #         }
+    #         return [Tuple]::Create($condaPackages, 'conda')
+    #     })
+    #     $task = GetCondaPackagesAsync $outdatedOnly
+    #     $taskCondaList = $task.ContinueWith($continuationAddCondaPackages,
+    #         [System.Threading.CancellationToken]::None,
+    #         ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
+    #             [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
+    #         $global:UI_SYNCHRONIZATION_CONTEXT)
+    #     $null = $allTasks.Add($taskCondaList)
+    # }
+    #
+    # $continuationAddBuiltinPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
+    #     param([System.Threading.Tasks.Task] $task)
+    #     $builtinPackages = $task.Result
+    #     if ($builtinPackages -eq $null) {
+    #         throw [Exception]::new("Empty response from builtin packages.")
+    #     }
+    #     return [Tuple]::Create($builtinPackages, 'builtin')
+    # })
+    # $taskGetBuiltinPackages = GetPythonBuiltinPackagesAsync
+    # $taskAddBuiltinPackages = $taskGetBuiltinPackages.ContinueWith($continuationAddBuiltinPackages,
+    #     [System.Threading.CancellationToken]::None,
+    #     ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
+    #         [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
+    #     $global:UI_SYNCHRONIZATION_CONTEXT)
+    # $null = $allTasks.Add($taskAddBuiltinPackages)
+    #
+    # # other packages are packages that were found but do not belong to any other list
+    #
+    # $continuationAddOtherPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
+    #     param([System.Threading.Tasks.Task] $task)
+    #     $otherPackages = $task.Result
+    #     if ($otherPackages -eq $null) {
+    #         throw [Exception]::new("Empty response from other packages.")
+    #     }
+    #     return [Tuple]::Create($otherPackages, 'other')
+    # })
+    # $taskGetOtherPackages = GetPythonOtherPackagesAsync
+    # $taskAddOtherPackages = $taskGetOtherPackages.ContinueWith($continuationAddOtherPackages,
+    #     [System.Threading.CancellationToken]::None,
+    #     ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
+    #         [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
+    #     $global:UI_SYNCHRONIZATION_CONTEXT)
+    # $null = $allTasks.Add($taskAddOtherPackages)
 
     # WriteLog $allTasks -Background DarkCyan -Foreground Yellow
 
