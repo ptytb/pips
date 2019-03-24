@@ -2372,7 +2372,7 @@ Function Add-EnvToolButtonMenu {
             Code = {
                 $interpreter = GetCurrentInterpreter
                 if ($interpreter.User) {
-                    CreateMainFormEnvironmentVariables $interpreter
+                    CreateFormEnvironmentVariables $interpreter
                 } else {
                     $path = $interpreter.Path
                     WriteLog "$path is not a venv. Editing system-wide environment variables." -Background 'LightSalmon'
@@ -3061,7 +3061,7 @@ Function CreateMainForm {
     return ,$form
 }
 
-Function CreateMainFormEnvironmentVariables($interpreterRecord) {
+Function CreateFormEnvironmentVariables($interpreterRecord) {
     $Form                            = New-Object system.Windows.Forms.Form
     $Form.ClientSize                 = '659,653'
     $Form.Text                       = "Environment Variables"
