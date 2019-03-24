@@ -3971,7 +3971,7 @@ class ProcessWithPipedIO {
         $count = 0
         if ($container -and (-not $container.IsEmpty)) {
             $buffer = [System.Text.StringBuilder]::new()
-            [string] $line = $null
+            [string] $line = [string]::Empty
             [ref] $lineRef = [ref] $line
             while ($container.TryDequeue($lineRef)) {
                 if ($buffer.Length -gt 0) {
@@ -5471,7 +5471,7 @@ Function global:Main {
     if ($Debug) {
         Set-PSDebug -Strict -Trace 0  # -Trace ∈ (0, 1=lines, 2=lines+vars+calls)
         $ConfirmPreference = 'None'
-        $DebugPreference = 'Inquire'
+        $DebugPreference = 'Continue'
         $ErrorActionPreference = 'Continue'
         $WarningPreference = 'Continue'
         $InformationPreference = 'Continue'

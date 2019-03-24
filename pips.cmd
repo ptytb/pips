@@ -8,8 +8,7 @@ rem Set-Execution policy is required, otherwise won't be able to run any scripts
 rem Get-Help about_Execution_Policies
 rem Main possible options: -HideConsole -Debug
 rem -Mta will eventually make the app crash even if has started normally
-REM set pwsh_args=-Sta -NoProfile -NonInteractive -NoLogo -WindowStyle Minimized -Command
-set pwsh_args=-Sta -NoProfile -NoLogo -WindowStyle Minimized -Command
+set pwsh_args=-Sta -NoProfile -NonInteractive -NoLogo -WindowStyle Minimized -Command
 powershell %pwsh_args% "Set-ExecutionPolicy -Scope Process Bypass; Import-Module .\pips; Main -Debug"
 
 if !errorlevel! neq 0 (
