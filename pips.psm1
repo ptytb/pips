@@ -3943,7 +3943,7 @@ class ProcessWithPipedIO {
                 $null = $self._taskCompletionSource.TrySetResult($self._exitCode)
                 # try { $null = $self._process.CancelOutputRead() } catch { }
                 # try { $null = $self._process.CancelErrorRead() } catch { }
-                if (-not $self._process.HasExited) { try { $null = $self._process.Kill() } catch { } }
+                if (-not $self._hasFinished) { try { $null = $self._process.Kill() } catch { } }
                 $null = $self._process.Dispose()
                 $self._process = $null
             }
