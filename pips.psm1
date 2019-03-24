@@ -952,11 +952,14 @@ Function Add-Input ($handler) {
 
 Function AddButtons {
     $global:WIDGET_GROUP_COMMAND_BUTTONS = @(
-        AddButton "Check Updates" ${function:GetPythonPackages} -AsyncHandlers ;
+        AddButton "Check Updates" ${function:GetPythonPackages} -AsyncHandlers -Modes @{
+            ([MainFormModes]::AltModeA)=@{Text='Check conda'; Click={ ; [System.Threading.Tasks.Task]::FromResult(@{}) } }
+            ([MainFormModes]::AltModeB)=@{Text='Check pip'; Click={ ; [System.Threading.Tasks.Task]::FromResult(@{}) } }
+            };
         AddButton "List Installed" { GetPythonPackages($false) } -AsyncHandlers -Modes @{
-            ([MainFormModes]::AltModeA)=@{Text='List w/o builtin'; Click={ ; [System.Threading.Tasks.Task]::FromResult(@{}) } }
+            ([MainFormModes]::AltModeA)=@{Text='List only conda'; Click={ ; [System.Threading.Tasks.Task]::FromResult(@{}) } }
             ([MainFormModes]::AltModeB)=@{Text='List only pip'; Click={ ; [System.Threading.Tasks.Task]::FromResult(@{}) } }
-            ([MainFormModes]::AltModeC)=@{Text='List only conda'; Click={ ; [System.Threading.Tasks.Task]::FromResult(@{}) } }
+            ([MainFormModes]::AltModeC)=@{Text='List w/o builtin'; Click={ ; [System.Threading.Tasks.Task]::FromResult(@{}) } }
             };
         AddButton "Sel All Visible" { SetVisiblePackageCheckboxes($true) } ;
         AddButton "Select None" { SetAllPackageCheckboxes($false) } ;
