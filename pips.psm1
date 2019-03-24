@@ -2859,6 +2859,7 @@ Function CreateMainForm {
                     $null = $wst.Add($button).Transform($modeTransformation)
                 }
             }
+            $_.Handled = $true
         }
 
     }.GetNewClosure())
@@ -3103,13 +3104,24 @@ Function CreateMainForm {
     $statusLabel.Text = 'test'
     $statusLabel.Alignment = [System.Windows.Forms.ToolStripItemAlignment]::Left
 
-    $global:spacer = [System.Windows.Forms.ToolStripStatusLabel]::new()
+    $spacer = [System.Windows.Forms.ToolStripStatusLabel]::new()
     $spacer.Spring = $true
+
+    $dropDown = [System.Windows.Forms.ToolStripDropDown]::new()
+    $dropDownItems = ('Very verbose', 'Verbose', 'Normal', 'Quiet') `
+        | ForEach-Object { [System.Windows.Forms.ToolStripButton]::new($_) }
+    $null = $dropDown.Items.AddRange($dropDownItems)
+
+    $comboLogLevel = [System.Windows.Forms.ToolStripDropDownButton]::new()
+    $comboLogLevel.Text = 'Log verbosity:'
+    $comboLogLevel.Alignment = [System.Windows.Forms.ToolStripItemAlignment]::Right
+    $comboLogLevel.DropDown = $dropDown
+    $comboLogLevel.ShowDropDownArrow = $true
 
     $statusProgress = [System.Windows.Forms.ToolStripProgressBar]::new()
     $statusProgress.Value = 50
     $statusProgress.Alignment = [System.Windows.Forms.ToolStripItemAlignment]::Right
-    $null = $statusStrip.Items.AddRange(($statusLabel, $spacer, $statusProgress))
+    $null = $statusStrip.Items.AddRange(($statusLabel, $spacer, $comboLogLevel, $statusProgress))
     $null = $form.Controls.Add($statusStrip)
 
     return ,$form
