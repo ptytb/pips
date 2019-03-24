@@ -3758,6 +3758,9 @@ class ProcessWithPipedIO {
     hidden [bool] $_hasFinished = $false
     hidden [int] $_exitCode = -1
     hidden [System.Windows.Forms.Timer] $_timer = $null
+    hidden [delegate] $_exitedCallback
+    hidden [delegate] $_outputCallback
+    hidden [delegate] $_errorCallback
 
     ProcessWithPipedIO($Command, $Arguments) {
         $this._command = $Command
@@ -3800,7 +3803,7 @@ class ProcessWithPipedIO {
         $started = $false
         $self = $this
 
-        $ExitedCallback = New-RunspacedDelegate ([EventHandler] {
+        $this._exitedCallback = New-RunspacedDelegate ([EventHandler] {
             param($Sender, $EventArgs)
             try { if (-not $self) { return } } catch { }
             $self._hasFinished = $true
@@ -3812,7 +3815,7 @@ class ProcessWithPipedIO {
             }
             WriteLog "Got exit code $($self._exitCode)" -Foreground 'Red'
         }.GetNewClosure())
-        $self._process.add_Exited($ExitedCallback)
+        $self._process.add_Exited($this._exitedCallback)
 
         $this._taskCompletionSource = [System.Threading.Tasks.TaskCompletionSource[int]]::new()
 
@@ -3847,7 +3850,7 @@ class ProcessWithPipedIO {
 
         if ($LogOutput) {  # ReadOutputToEndAsync() is supposed to be called otherwise!
             $this._processOutput = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
-            $OutputCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
+            $this._outputCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
                 param($Sender, $EventArgs)
                 try { if (-not $self) { return } } catch { }
                 $line = $EventArgs.Data
@@ -3857,13 +3860,13 @@ class ProcessWithPipedIO {
                     $null = $self._processOutput.Enqueue($line)
                 }
             }.GetNewClosure())
-            $this._process.add_OutputDataReceived($OutputCallback)
+            $this._process.add_OutputDataReceived($this._outputCallback)
         }
 
         if ($LogErrors) {
             $this._processError = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
         }
-        $ErrorCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
+        $this._errorCallback = New-RunspacedDelegate ([System.Diagnostics.DataReceivedEventHandler] {
             param($Sender, $EventArgs)
             try { if (-not $self) { return } } catch { }
             $line = $EventArgs.Data
@@ -3873,16 +3876,16 @@ class ProcessWithPipedIO {
                 $null = $self._processError.Enqueue($line)
             }
         }.GetNewClosure())
-        $this._process.add_ErrorDataReceived($ErrorCallback)
+        $this._process.add_ErrorDataReceived($this._errorCallback)
 
         if ($LogOutput -or $LogErrors) {
             $this._timer = [System.Windows.Forms.Timer]::new()
 
             $delegate = New-RunspacedDelegate ([EventHandler] {
                 param([System.Windows.Forms.Timer] $Sender)
-                try { if (-not $self) { return } } catch { }
                 $Sender.Enabled = $false
                 $self = $Sender.Tag
+                try { if (-not $self) { return } } catch { }
                 $count = $self.FlushBuffersToLog()
 
                 if ($self._hasFinished -and $self._processOutputEnded -and -$self._processErrorEnded -and ($count -eq 0)) {
@@ -3900,7 +3903,7 @@ class ProcessWithPipedIO {
                             $actuallyDead = $p -eq $null
                             if ($p) { $p.Close() }
 
-                            WriteLog "Throttling status: exited_evt=$($self._hasFinished) now_dead=$actuallyDead code=$($self._exitCode) out_end=$($self._processOutputEnded) err_end=$($self._processErrorEnded)" -Background LightPink
+                            WriteLog "Throttling status: started=$($self._hasStarted) exited_evt=$($self._hasFinished) now_dead=$actuallyDead code=$($self._exitCode) out_end=$($self._processOutputEnded) err_end=$($self._processErrorEnded)" -Background LightPink
 
                             if ($actuallyDead) {
                                 if (-not $self._hasFinished) {
@@ -3950,6 +3953,13 @@ class ProcessWithPipedIO {
     }
 
     hidden _ConfirmExit($exception) {
+        if ($this._timer) {
+            $null = $this._timer.Stop()
+        }
+        $this._process.EnableRaisingEvents = $false
+        if ($this._exitedCallback) { $this._process.remove_Exited($this._exitedCallback) }
+        if ($this._outputCallback) { $this._process.remove_OutputDataReceived($this._outputCallback) }
+        if ($this._errorCallback ) { $this._process.remove_ErrorDataReceived($this._errorCallback) }
         WriteLog "_ConfirmExit E='$exception' OUT=$($this._processOutputEnded) ERR=$($this._processErrorEnded)"
         $delegate = New-RunspacedDelegate ([Action[object]] {
             param([object] $locals)
@@ -3961,7 +3971,10 @@ class ProcessWithPipedIO {
                 $null = $self._taskCompletionSource.TrySetResult($self._exitCode)
                 try { $null = $self._process.CancelOutputRead() } catch { }
                 try { $null = $self._process.CancelErrorRead() } catch { }
-                if (-not $self._hasFinished) { try { $null = $self._process.Kill() } catch { } }
+                if (-not $self._hasFinished) {
+                    WriteLog "Killing" -Background Red
+                    try { $null = $self._process.Kill() } catch { }
+                }
                 $null = $self._process.Close()
                 $self._process = $null
             }
