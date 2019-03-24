@@ -5495,7 +5495,7 @@ Function global:Main {
 
     $Debug = $PSBoundParameters['Debug']
     SetPSLogging $false
-    # SetPSLimits
+    SetPSLimits
 
     $null = Import-Module -Global .\PSRunspacedDelegate\PSRunspacedDelegate
 
