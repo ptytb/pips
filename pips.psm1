@@ -1,10 +1,6 @@
 ﻿$PSDefaultParameterValues['*:Encoding'] = 'UTF8'
 $null = Set-StrictMode -Version latest
 
-$null = [PSObject].Assembly.GetType("System.Management.Automation.TypeAccelerators")::add(
-    'MaybeColor', [Nullable[System.Drawing.Color]])
-
-
 $global:FRAMEWORK_VERSION = [version]([Runtime.InteropServices.RuntimeInformation]::FrameworkDescription -replace '^.[^\d.]*','')
 
 $global:PIPS_SPELLING_PIPE = 'pips_spelling_server'
@@ -693,32 +689,25 @@ Function Convert-Base64ToICO($base64Text) {
 }
 
 
-Function global:EnsureColor([object] $color) {
-    if (($color -is [string]) -and (-not [string]::IsNullOrWhiteSpace($color))) {
-        $color = [System.Drawing.Color]::FromKnownColor($color)
-    } elseif ($color -isnot [System.Drawing.Color]) {
-        $color = $null
-    }
-    return [MaybeColor] $color
-}
-
 $global:_WritePipLogBacklog = [System.Collections.Generic.List[hashtable]]::new()
+[int] $global:_LogViewEventMask = 0
+[bool] $global:_LogViewHasBeenScrolledToEnd = $false
 
 Function global:WriteLogHelper {
     param(
         [object[]] $Lines,
         [bool] $UpdateLastLine,
         [bool] $NoNewline,
-        [MaybeColor] $Background,
-        [MaybeColor] $Foreground
+        [object] $Background,
+        [object] $Foreground
     )
 
     $hidden = $global:form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized
 
-    if (-not $hidden) {
-        $null = SendMessage $logView.Handle $WM_SETREDRAW 0 0
-        $eventMask = SendMessage $logView.Handle $EM_SETEVENTMASK 0 0
-    }
+    # if (-not $hidden) {
+    #     $null = SendMessage $logView.Handle $WM_SETREDRAW 0 0
+    #     $eventMask = SendMessage $logView.Handle $EM_SETEVENTMASK 0 0
+    # }
 
     $text = $Lines -join ' '
 
@@ -769,9 +758,11 @@ Function global:WriteLogHelper {
         $textLength = $logView.TextLength
         $logView.Select($textLength, $textLength)
 
-        $null = SendMessage $logView.Handle $WM_SETREDRAW 1 0
-        $null = SendMessage $logView.Handle $EM_SETEVENTMASK 0 $eventMask
+        # $null = SendMessage $logView.Handle $WM_SETREDRAW 1 0
+        # $null = SendMessage $logView.Handle $EM_SETEVENTMASK 0 $eventMask
         $null = PostMessage $logView.Handle $WM_VSCROLL $SB_PAGEBOTTOM 0
+    } else {
+        $global:_LogViewHasBeenScrolledToEnd = $true
     }
 }
 
@@ -792,8 +783,8 @@ Function global:WriteLog {
         Lines=$Lines;
         UpdateLastLine=([bool] $PSBoundParameters['UpdateLastLine']);
         NoNewline=([bool] $PSBoundParameters['NoNewline']);
-        Background=(EnsureColor $Background);
-        Foreground=(EnsureColor $Foreground);
+        Background=$Background;
+        Foreground=$Foreground;
     }
 
     if ($global:logView -eq $null) {
@@ -1006,9 +997,9 @@ Function global:GetPythonBuiltinPackagesAsync() {
         $ignore = [regex] '^__'
         $filter = [regex] '\.py.?$'
 
-        $trackDuplicates = New-Object System.Collections.Generic.HashSet[String]
+        $trackDuplicates = [System.Collections.Generic.HashSet[String]]::new()
 
-        foreach ($item in dir $libs) {
+        foreach ($item in Get-ChildItem -Directory $libs) {
             if ($item -is [System.IO.DirectoryInfo]) {
                 $packageName = "$item"
             } elseif ($item -is [System.IO.FileInfo]) {
@@ -3020,6 +3011,23 @@ Function CreateMainForm {
     $lastWidgetTop = $Script:lastWidgetTop
 
     $FuncResizeForm = {
+
+        Write-Host "Main form has been resized."
+
+        $hidden = $form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized
+        if ($hidden) {
+            $null = SendMessage $logView.Handle $WM_SETREDRAW 0 0
+            $global:_LogViewEventMask = SendMessage $logView.Handle $EM_SETEVENTMASK 0 0
+        } else {
+            $null = SendMessage $logView.Handle $WM_SETREDRAW 1 0
+            $null = SendMessage $logView.Handle $EM_SETEVENTMASK 0 $global:_LogViewEventMask
+
+            if ($global:_LogViewHasBeenScrolledToEnd) {
+                $global:_LogViewHasBeenScrolledToEnd = $false
+                $null = PostMessage $logView.Handle $WM_VSCROLL $SB_PAGEBOTTOM 0
+            }
+        }
+
         $dataGridView.Width = $form.ClientSize.Width - 15
         $dataGridView.Height = $form.ClientSize.Height / 2
         $logView.Top = $dataGridView.Bottom + 15
@@ -3947,8 +3955,8 @@ class ProcessWithPipedIO {
                 $null = $self._taskCompletionSource.TrySetException([Exception]::new($exception))
             } else {
                 $null = $self._taskCompletionSource.TrySetResult($self._exitCode)
-                # try { $null = $self._process.CancelOutputRead() } catch { }
-                # try { $null = $self._process.CancelErrorRead() } catch { }
+                try { $null = $self._process.CancelOutputRead() } catch { }
+                try { $null = $self._process.CancelErrorRead() } catch { }
                 if (-not $self._hasFinished) { try { $null = $self._process.Kill() } catch { } }
                 $null = $self._process.Dispose()
                 $self._process = $null
@@ -3971,9 +3979,12 @@ class ProcessWithPipedIO {
         $count = 0
         if ($container -and (-not $container.IsEmpty)) {
             $buffer = [System.Text.StringBuilder]::new()
-            [string] $line = [string]::Empty
-            [ref] $lineRef = [ref] $line
-            while ($container.TryDequeue($lineRef)) {
+            while (-not $container.IsEmpty) {
+                [string] $line = [string]::Empty
+                [ref] $lineRef = [ref] $line
+                if (-not $container.TryDequeue($lineRef)) {
+                    break
+                }
                 if ($buffer.Length -gt 0) {
                     $null = $buffer.Append([Environment]::NewLine)
                 }
@@ -5370,7 +5381,8 @@ Function global:InstallDebugHelpers {
         [System.NotSupportedException],
         [System.ArgumentException],
         [System.Management.Automation.PSNotSupportedException],
-        [System.TimeoutException]
+        [System.TimeoutException],
+        [System.InvalidOperationException]
     )
 
     $exceptionsWithScriptBacktrace = @(
@@ -5463,7 +5475,7 @@ Function global:Main {
 
     $Debug = $PSBoundParameters['Debug']
     SetPSLogging $false
-    SetPSLimits
+    # SetPSLimits
 
     $null = Import-Module -Global .\PSRunspacedDelegate\PSRunspacedDelegate
 
