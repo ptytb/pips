@@ -3898,7 +3898,7 @@ class ProcessWithPipedIO {
                             # Process.Refresh() wipes its state entirely then possibly gets filled in from alive proc; WaitForExit() may lock and is not an option
                             $p = try { [System.Diagnostics.Process]::GetProcessById($self._pid) } catch { $null }
                             $actuallyDead = $p -eq $null
-                            if ($p) { $p.Dispose() }
+                            if ($p) { $p.Close() }
 
                             WriteLog "Throttling status: exited_evt=$($self._hasFinished) now_dead=$actuallyDead code=$($self._exitCode) out_end=$($self._processOutputEnded) err_end=$($self._processErrorEnded)" -Background LightPink
 
@@ -3962,7 +3962,7 @@ class ProcessWithPipedIO {
                 try { $null = $self._process.CancelOutputRead() } catch { }
                 try { $null = $self._process.CancelErrorRead() } catch { }
                 if (-not $self._hasFinished) { try { $null = $self._process.Kill() } catch { } }
-                $null = $self._process.Dispose()
+                $null = $self._process.Close()
                 $self._process = $null
             }
             WriteLog "OK _ConfirmExit" -Background DarkOrange
