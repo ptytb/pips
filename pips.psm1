@@ -5425,6 +5425,22 @@ Function global:InstallDebugHelpers {
     [System.AppDomain]::CurrentDomain.Add_UnhandledException($unhandledExceptionHandler)
 }
 
+Function SetPSLogging([bool] $value) {
+    $LogCommandHealthEvent = $value
+    $LogCommandLifecycleEvent = $value
+    $LogEngineHealthEvent = $value
+    $LogEngineLifecycleEvent = $value
+    $LogProviderHealthEvent = $value
+    $LogProviderLifecycleEvent = $value
+    $ProgressPreference = 'SilentlyContinue'
+    $VerbosePreference = 'SilentlyContinue'
+}
+
+Function SetPSLimits {
+    $MaximumVariableCount = 32767
+    $MaximumFunctionCount = 32767
+}
+
 Function global:AtExit {
     foreach ($plugin in $global:plugins) {
         $plugin.Release()
@@ -5440,6 +5456,8 @@ Function global:Main {
     param([switch] $HideConsole)
 
     $Debug = $PSBoundParameters['Debug']
+    SetPSLogging $false
+    SetPSLimits
 
     $null = Import-Module -Global .\PSRunspacedDelegate\PSRunspacedDelegate
 
@@ -5449,6 +5467,7 @@ Function global:Main {
         $ConfirmPreference = 'None'
         $DebugPreference = 'Inquire'
         $ErrorActionPreference = 'Continue'
+        $WarningPreference = 'Continue'
         $InformationPreference = 'Continue'
         InstallDebugHelpers
     } else {
@@ -5456,6 +5475,7 @@ Function global:Main {
         $ConfirmPreference = 'None'
         $DebugPreference = 'SilentlyContinue'
         $ErrorActionPreference = 'SilentlyContinue'
+        $WarningPreference = 'SilentlyContinue'
         $InformationPreference = 'SilentlyContinue'
     }
 
