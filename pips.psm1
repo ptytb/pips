@@ -3980,13 +3980,13 @@ class ProcessWithPipedIO {
         if ($container -and (-not $container.IsEmpty)) {
             $buffer = [System.Text.StringBuilder]::new()
             while (-not $container.IsEmpty) {
-                [string] $line = [string]::Empty
-                [ref] $lineRef = [ref] $line
+                [ref] $lineRef = [ref] [string]::Empty
                 try {
                     if (-not $container.TryDequeue($lineRef)) {
                         break
                     }
                 } catch { }
+                [string] $line = $lineRef.Value
 
                 if ($buffer.Length -gt 0) {
                     $null = $buffer.Append([Environment]::NewLine)
