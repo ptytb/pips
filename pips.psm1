@@ -713,8 +713,12 @@ Function global:WriteLogHelper {
         [MaybeColor] $Foreground
     )
 
-    $null = SendMessage $logView.Handle $WM_SETREDRAW 0 0
-    $eventMask = SendMessage $logView.Handle $EM_SETEVENTMASK 0 0
+    $hidden = $global:form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized
+
+    if (-not $hidden) {
+        $null = SendMessage $logView.Handle $WM_SETREDRAW 0 0
+        $eventMask = SendMessage $logView.Handle $EM_SETEVENTMASK 0 0
+    }
 
     $text = $Lines -join ' '
 
@@ -761,12 +765,14 @@ Function global:WriteLogHelper {
         }
     }
 
-    $textLength = $logView.TextLength
-    $logView.Select($textLength, $textLength)
+    if (-not $hidden) {
+        $textLength = $logView.TextLength
+        $logView.Select($textLength, $textLength)
 
-    $null = SendMessage $logView.Handle $WM_SETREDRAW 1 0
-    $null = SendMessage $logView.Handle $EM_SETEVENTMASK 0 $eventMask
-    $null = PostMessage $logView.Handle $WM_VSCROLL $SB_PAGEBOTTOM 0
+        $null = SendMessage $logView.Handle $WM_SETREDRAW 1 0
+        $null = SendMessage $logView.Handle $EM_SETEVENTMASK 0 $eventMask
+        $null = PostMessage $logView.Handle $WM_VSCROLL $SB_PAGEBOTTOM 0
+    }
 }
 
 Function global:WriteLog {
