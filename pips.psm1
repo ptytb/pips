@@ -52,6 +52,25 @@ enum MainFormModes {
     AltModeC;
 }
 
+$global:PlatformKeysForModes = @{
+    ([MainFormModes]::Default)=$null;
+    ([MainFormModes]::AltModeA)='Shift';
+    ([MainFormModes]::AltModeB)='Alt';
+    ([MainFormModes]::AltModeC)='Control';
+}
+
+Function global:GetAlternativeMainFormMode($keys) {
+    $mode = [MainFormModes]::Default
+    if ($keys.Shift) {
+        $mode = [MainFormModes]::AltModeA
+    } elseif ($keys.Alt) {
+        $mode = [MainFormModes]::AltModeB
+    } elseif ($keys.Control) {
+        $mode = [MainFormModes]::AltModeC
+    }
+    return $mode
+}
+
 [AppMode] $global:APP_MODE = [AppMode]::Idle
 
 $global:packageTypes = [System.Collections.ArrayList]::new()
@@ -811,7 +830,7 @@ Function NewLine-TopLayout() {
     $Script:lastWidgetLeft = 5
 }
 
-Function Add-Button {
+Function AddButton {
     [CmdletBinding()]
     param($name, $handler, [switch] $AsyncHandlers, [Parameter(Mandatory=$false)] [hashtable] $Modes)
 
@@ -845,11 +864,26 @@ Function Add-Button {
 
     $button.Add_Click($button.Tag.Item([MainFormModes]::Default).Item('Click'))
 
+    if ($button.Tag.Count -gt 1) {
+        $button.add_MouseEnter({
+            param([System.Windows.Forms.Button] $Sender, [EventArgs] $EventArgs)
+            $keys = ($Sender.Tag.GetEnumerator() `
+                | Where-Object { $_.Key -ne [MainFormModes]::Default } `
+                | ForEach-Object { [string]::Concat($PlatformKeysForModes[$_.Key], ' - ', $_.Value.Text) }) -join ', '
+            $global:statusLabel.Text = "Alternative commands: hold $keys"
+        })
+
+        $button.add_MouseLeave({
+            param($Sender, [EventArgs] $EventArgs)
+            $global:statusLabel.Text = [string]::Empty
+        })
+    }
+
     Add-TopWidget $button
     return $button
 }
 
-Function Add-ButtonMenu ($text, $tools, $onclick) {
+Function AddButtonMenu ($text, $tools, $onclick) {
     $form = $global:form  # to be captured by $handler's closure
 
     $handler = {
@@ -896,7 +930,7 @@ Function Add-ButtonMenu ($text, $tools, $onclick) {
         $menuStrip.Show($global:form.PointToScreen($point))
     }.GetNewClosure()
 
-    $button = Add-Button $text $handler
+    $button = AddButton $text $handler
     $button.ImageAlign = [System.Drawing.ContentAlignment]::MiddleRight
     $button.Image = Convert-Base64ToBMP $iconBase64_DownArrow
 
@@ -919,17 +953,21 @@ Function Add-Input ($handler) {
 }
 
 
-Function Add-Buttons {
+Function AddButtons {
     $global:WIDGET_GROUP_COMMAND_BUTTONS = @(
-        Add-Button "Check Updates" ${function:GetPythonPackages} -AsyncHandlers ;
-        Add-Button "List Installed" { GetPythonPackages($false) } -AsyncHandlers ;
-        Add-Button "Sel All Visible" { SetVisiblePackageCheckboxes($true) } ;
-        Add-Button "Select None" { SetAllPackageCheckboxes($false) } ;
-        Add-Button "Check Deps" ${function:CheckDependencies} -AsyncHandlers ;
-        Add-Button "Execute" ${function:ExecuteAction} -AsyncHandlers -Modes @{
+        AddButton "Check Updates" ${function:GetPythonPackages} -AsyncHandlers ;
+        AddButton "List Installed" { GetPythonPackages($false) } -AsyncHandlers -Modes @{
+            ([MainFormModes]::AltModeA)=@{Text='List w/o builtin'; Click={ ; [System.Threading.Tasks.Task]::FromResult(@{}) } }
+            ([MainFormModes]::AltModeB)=@{Text='List only pip'; Click={ ; [System.Threading.Tasks.Task]::FromResult(@{}) } }
+            ([MainFormModes]::AltModeC)=@{Text='List only conda'; Click={ ; [System.Threading.Tasks.Task]::FromResult(@{}) } }
+            };
+        AddButton "Sel All Visible" { SetVisiblePackageCheckboxes($true) } ;
+        AddButton "Select None" { SetAllPackageCheckboxes($false) } ;
+        AddButton "Check Deps" ${function:CheckDependencies} -AsyncHandlers ;
+        AddButton "Execute" ${function:ExecuteAction} -AsyncHandlers -Modes @{
                 ([MainFormModes]::AltModeA)=@{Text='Show command'; Click={ WriteLog 'AltModeA' -Foreground Red ; [System.Threading.Tasks.Task]::FromResult(@{}) }};
                 ([MainFormModes]::AltModeB)=@{Text='Execute...'; Click={ WriteLog 'AltModeB' -Foreground Green ; [System.Threading.Tasks.Task]::FromResult(@{}) }};
-                ([MainFormModes]::AltModeC)=@{Text='Do a barrel roll'; Click={ WriteLog 'AltModeC' -Foreground Blue ; [System.Threading.Tasks.Task]::FromResult(@{}) }};
+                ([MainFormModes]::AltModeC)=@{Text='Execute serial'; Click={ WriteLog 'AltModeC' -Foreground Blue ; [System.Threading.Tasks.Task]::FromResult(@{}) }};
             };
     )
 }
@@ -2340,7 +2378,7 @@ Function Add-CreateEnvButtonMenu {
         [void] $FuncUpdateInterpreters.Invoke($path)
     }.GetNewClosure()
 
-    $buttonEnvCreate = Add-ButtonMenu 'env: Create' $tools $menuclick
+    $buttonEnvCreate = AddButtonMenu 'env: Create' $tools $menuclick
     return $buttonEnvCreate
 }
 
@@ -2400,7 +2438,7 @@ Function Add-EnvToolButtonMenu {
         $output = $item.Code.Invoke()
     }
 
-    $buttonEnvTools = Add-ButtonMenu 'env: Tools' $menu $menuclick
+    $buttonEnvTools = AddButtonMenu 'env: Tools' $menu $menuclick
     return $buttonEnvTools
 }
 
@@ -2619,7 +2657,7 @@ Some packages may generate garbage or show windows, don't panic.
         $output = $item.Code.Invoke()
     }
 
-    $toolsButton = Add-ButtonMenu 'Tools' $menu $menuclick
+    $toolsButton = AddButtonMenu 'Tools' $menu $menuclick
     return $toolsButton
 }
 
@@ -2665,7 +2703,7 @@ Function CreateMainForm {
     $form.Icon = Convert-Base64ToICO $iconBase64_Snakes
     $global:form = $form
 
-    $null = Add-Buttons
+    $null = AddButtons
 
     $actionListComboBox = Add-ComboBoxActions
     $global:actionListComboBox = $actionListComboBox
@@ -2677,8 +2715,8 @@ Function CreateMainForm {
     $form.Controls.Add($group)
 
     $global:WIDGET_GROUP_INSTALL_BUTTONS = @(
-        Add-Button "Search..." ${function:CreateSearchForm} ;
-        Add-Button "Install..." ${function:CreateInstallForm} ;
+        AddButton "Search..." ${function:CreateSearchForm} ;
+        AddButton "Install..." ${function:CreateInstallForm} ;
     )
     $null = Add-ToolsButtonMenu
 
@@ -2770,7 +2808,7 @@ Function CreateMainForm {
 
     $interpretersComboBox = Add-ComboBoxInterpreters
     $Global:interpretersComboBox = $interpretersComboBox
-    $buttonEnvOpen = Add-Button "env: Open..." {
+    $buttonEnvOpen = AddButton "env: Open..." {
         $path = Request-FolderPathFromUser ("Choose a folder with python environment, created by either Virtualenv or pipenv`n`n" +
             "Typically it contains dirs: Include, Lib, Scripts")
         if ($path) {
@@ -2810,14 +2848,7 @@ Function CreateMainForm {
         }
 
         $wst = $alternateFunctionality_WidgetStateTransition
-        $mode = [MainFormModes]::Default
-        if ($_.Shift) {
-            $mode = [MainFormModes]::AltModeA
-        } elseif ($_.Alt) {
-            $mode = [MainFormModes]::AltModeB
-        } elseif ($_.Control) {
-            $mode = [MainFormModes]::AltModeC
-        }
+        $mode = GetAlternativeMainFormMode $_
         [bool] $hasEntered = $false
         $null = $wst.EnterMode($mode, [ref] $hasEntered)
         if ($hasEntered) {
@@ -2834,7 +2865,12 @@ Function CreateMainForm {
 
     $form.add_KeyUp({
         $wst = $alternateFunctionality_WidgetStateTransition
-        $null = $wst.ReverseAll().ExitMode()
+        [bool] $activeMode = $false
+        $mode = GetAlternativeMainFormMode $_
+        $null = $wst.IsModeActive($mode, [ref] $activeMode)
+        if (-not $activeMode) {
+            $null = $wst.ReverseAll().ExitMode()
+        }
     }.GetNewClosure())
 
     $form.add_Deactivate({
@@ -2975,7 +3011,7 @@ Function CreateMainForm {
         $dataGridView.Height = $form.ClientSize.Height / 2
         $logView.Top = $dataGridView.Bottom + 15
         $logView.Width = $form.ClientSize.Width - 15
-        $logView.Height = $form.ClientSize.Height - $dataGridView.Bottom - $lastWidgetTop
+        $logView.Height = $form.ClientSize.Height - $dataGridView.Bottom - $lastWidgetTop - 10
     }.GetNewClosure()
 
     $null = & $FuncResizeForm
@@ -3057,6 +3093,24 @@ Function CreateMainForm {
             [void] $tw.ContinueWith($continuation1);
         }
     })
+
+    # Status strip
+
+    $statusStrip = [System.Windows.Forms.StatusStrip]::new()
+    $statusStrip.ShowItemToolTips = $true
+
+    $global:statusLabel = [System.Windows.Forms.ToolStripStatusLabel]::new()
+    $statusLabel.Text = 'test'
+    $statusLabel.Alignment = [System.Windows.Forms.ToolStripItemAlignment]::Left
+
+    $global:spacer = [System.Windows.Forms.ToolStripStatusLabel]::new()
+    $spacer.Spring = $true
+
+    $statusProgress = [System.Windows.Forms.ToolStripProgressBar]::new()
+    $statusProgress.Value = 50
+    $statusProgress.Alignment = [System.Windows.Forms.ToolStripItemAlignment]::Right
+    $null = $statusStrip.Items.AddRange(($statusLabel, $spacer, $statusProgress))
+    $null = $form.Controls.Add($statusStrip)
 
     return ,$form
 }
@@ -4137,8 +4191,8 @@ class WidgetStateTransition {
         return $this
     }
 
-    [WidgetStateTransition] GetMode([ref] $mode) {
-        $mode.Value = $this._modes.Peek()
+    [WidgetStateTransition] IsModeActive([object] $mode, [ref] $result) {
+        $result.Value = ($this._modes.Count -gt 0) -and ($this._modes.Peek() -eq $mode)
         return $this
     }
 
