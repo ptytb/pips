@@ -3756,6 +3756,7 @@ class ProcessWithPipedIO {
     hidden [bool] $_processErrorEnded = $false
     hidden [bool] $_hasStarted = $false
     hidden [bool] $_hasFinished = $false
+    hidden [bool] $_missedExitEvent = $false
     hidden [int] $_exitCode = -1
     hidden [System.Windows.Forms.Timer] $_timer = $null
     hidden [int] $_timerIdleThreshold = 20
@@ -3900,6 +3901,8 @@ class ProcessWithPipedIO {
 
                             WriteLog "Throttling status: started=$($self._hasStarted) exited_evt=$($self._hasFinished) now_dead=$actuallyDead code=$($self._exitCode) out_end=$($self._processOutputEnded) err_end=$($self._processErrorEnded)" -Background LightPink
 
+                            $self._missedExitEvent = $actuallyDead -ne $self._hasFinished
+
                             if ($actuallyDead) {
                                 if (-not $self._hasFinished) {
                                     $self._exitCode = 0  # lean towards false positive on successful termination
@@ -3975,6 +3978,10 @@ class ProcessWithPipedIO {
                     try { $null = $self._process.Kill() } catch { }
                 }
                 $null = $self._process.Close()
+                if ($self._missedExitEvent) {
+                    WriteLog "WaitForExit()" -Background Magenta
+                    $self._process.WaitForExit()
+                }
                 $self._process = $null
             }
             WriteLog "Exiting _ConfirmExit" -Background DarkOrange
