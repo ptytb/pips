@@ -3847,6 +3847,9 @@ class ProcessWithPipedIO {
         $this._exitedCallback = New-RunspacedDelegate ([EventHandler] {
             param($Sender, $EventArgs)
             # $self = $EventArgs.self
+            if ($self._hasFinished) {
+                return
+            }
             $self._hasFinished = $true
             try {
                 $self._exitCode = $self._process.ExitCode
@@ -3858,6 +3861,7 @@ class ProcessWithPipedIO {
             # $null = $form.BeginInvoke($ProcessExitedDelegate, ($Sender, $EventArgs))
         }.GetNewClosure())
         $self._process.add_Exited($this._exitedCallback)
+        $self._process.add_Disposed($this._exitedCallback)
 
         $this._taskCompletionSource = [System.Threading.Tasks.TaskCompletionSource[int]]::new()
     }
@@ -4008,7 +4012,10 @@ class ProcessWithPipedIO {
             $null = $this._timer.Stop()
         }
         $this._process.EnableRaisingEvents = $false
-        if ($this._exitedCallback) { $this._process.remove_Exited($this._exitedCallback) }
+        if ($this._exitedCallback) {
+            $this._process.remove_Exited($this._exitedCallback)
+            $this._process.remove_Disposed($this._exitedCallback)
+        }
         if ($this._outputCallback) {
             try { $null = $this._process.CancelOutputRead() } catch { }
             $this._process.remove_OutputDataReceived($this._outputCallback)
@@ -4032,8 +4039,9 @@ class ProcessWithPipedIO {
                 }
                 if ($self._missedExitEvent) {
                     WriteLog "We are in trouble, missed exit event, this shouldn't happen!" -Background Magenta
+                } else {
+                    $null = $self._process.Close()
                 }
-                $null = $self._process.Close()
                 $self._process = $null
             }
             WriteLog "Exiting _ConfirmExit" -Background DarkOrange
