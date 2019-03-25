@@ -965,7 +965,7 @@ Function AddButtons {
         AddButton "Select None" { SetAllPackageCheckboxes($false) } ;
         AddButton "Check Deps" ${function:CheckDependencies} -AsyncHandlers ;
         AddButton "Execute" ${function:ExecuteAction} -AsyncHandlers -Modes @{
-                ([MainFormModes]::AltModeA)=@{Text='Show command'; Click={ WriteLog 'AltModeA' -Foreground Red ; [System.Threading.Tasks.Task]::FromResult(@{}) }};
+                ([MainFormModes]::AltModeA)=@{Text='Show command'; Click={ ExecuteAction -ShowCommand }};
                 ([MainFormModes]::AltModeB)=@{Text='Execute...'; Click={ WriteLog 'AltModeB' -Foreground Green ; [System.Threading.Tasks.Task]::FromResult(@{}) }};
                 ([MainFormModes]::AltModeC)=@{Text='Execute serial'; Click={ ExecuteAction -Serial }};
             };
@@ -4947,9 +4947,11 @@ Function global:WidgetStateTransitionForCommandButton($button) {
 
 Function global:ExecuteAction {
     [CmdletBinding()]
-    param($Sender, $EventArgs, [Parameter(Mandatory=$false)] [switch] $Serial = $false)
+    param($Sender, $EventArgs,
+        [Parameter(Mandatory=$false)] [switch] $Serial = $false,
+        [Parameter(Mandatory=$false)] [switch] $ShowCommand = $false)
 
-    WriteLog "$Sender $EventArgs $Serial" -Background Yellow
+    WriteLog "$Sender $EventArgs ser=$Serial sc=$ShowCommand" -Background Yellow
 
     $fireAction = New-RunspacedDelegate ([Action[object]] {
         param([object] $fireActionLocals)
@@ -5029,7 +5031,7 @@ Function global:ExecuteAction {
                 # $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
 
                 #$widgetStateTransition.CommitIrreversibleTransformations()
-            }.GetNewClosure())
+            })
 
             $function = New-RunspacedDelegate ([Func[object, object, System.Threading.Tasks.Task]] {
                 param([object] $element, [object] $FunctionContext)
@@ -5076,6 +5078,11 @@ Function global:ExecuteAction {
                 }
 
                 WriteLog "$executableCommand $executableArguments" -Background Green -Foreground White
+
+                if ($FunctionContext.ShowCommand) {
+                    return [System.Threading.Tasks.Task]::FromResult(@{})
+                }
+
                 $process = [ProcessWithPipedIO]::new('py', @('--help'))
                 $taskProcessDone = $process.StartWithLogging($true, $true)
 
@@ -5086,13 +5093,13 @@ Function global:ExecuteAction {
                     functionContext=$FunctionContext;
                 }
 
-                $taskReport = $taskProcessDone.ContinueWith($script:continuationReportIteration, $reportLocals,
+                $taskReport = $taskProcessDone.ContinueWith($FunctionContext.continuationReportIteration, $reportLocals,
                     [System.Threading.CancellationToken]::None,
                     ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
                         [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
                     $global:UI_SYNCHRONIZATION_CONTEXT)
                 return $taskReport
-            }.GetNewClosure())
+            })
 
 
             $context = @{
@@ -5101,6 +5108,8 @@ Function global:ExecuteAction {
                 tasksOkay=0;
                 tasksFailed=0;
                 execActionTaskCompletionSource=$execActionTaskCompletionSource;
+                ShowCommand=$ShowCommand;
+                continuationReportIteration=$continuationReportIteration;
             }
 
             $null = ApplyAsync $context $queue $function $reportBatchResults
