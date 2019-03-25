@@ -4965,7 +4965,7 @@ Function global:ExecuteAction {
         }
 
         $bulk = $action.Bulk -and (-not $Serial)
-        if ($bulk) {
+        if ($bulk -and ($queue.Count -gt 0)) {
             $queueTypePackages = $queue | Group-Object -Property @{Expression={ $_.Type }} -AsString -AsHashTable
             $queue.Clear()
             foreach ($pair in $queueTypePackages.GetEnumerator()) {
