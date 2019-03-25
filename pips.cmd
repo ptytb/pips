@@ -16,6 +16,6 @@ if !errorlevel! neq 0 (
 )
 
 rem Uncomment when debugging to see error messages
-pause
+REM pause
 
 exit

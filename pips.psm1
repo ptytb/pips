@@ -1168,7 +1168,11 @@ Function global:GetCondaPackagesAsync([bool] $outdatedOnly) {
     }
 
     $taskGetJsonList = [System.Threading.Tasks.Task[string]]::WhenAll($tasks)
-    $taskProcessJson = $taskGetJsonList.ContinueWith($continuationParseJson)
+    $taskProcessJson = $taskGetJsonList.ContinueWith($continuationParseJson,
+            [System.Threading.CancellationToken]::None,
+            ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
+                [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
+            $global:UI_SYNCHRONIZATION_CONTEXT)
 
     return $taskProcessJson
 }
@@ -3110,11 +3114,23 @@ Function CreateMainForm {
             	$tf = $global:sw.FlushAsync();
             	$continuation2 = New-RunspacedDelegate ( [Action[System.Threading.Tasks.Task]] {
                 	$tr = $global:sr.ReadLineAsync()
-                    $null = $tr.ContinueWith($global:FuncRPCSpellCheck_Callback, $global:UI_SYNCHRONIZATION_CONTEXT);
+                    $null = $tr.ContinueWith($global:FuncRPCSpellCheck_Callback,
+                        [System.Threading.CancellationToken]::None,
+                        ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
+                            [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
+                        $global:UI_SYNCHRONIZATION_CONTEXT);
             	});
-                [void] $tf.ContinueWith($continuation2);
+                [void] $tf.ContinueWith($continuation2,
+                    [System.Threading.CancellationToken]::None,
+                    ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
+                        [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
+                    $global:UI_SYNCHRONIZATION_CONTEXT);
         	});
-            [void] $tw.ContinueWith($continuation1);
+            [void] $tw.ContinueWith($continuation1,
+                [System.Threading.CancellationToken]::None,
+                ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
+                    [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
+                $global:UI_SYNCHRONIZATION_CONTEXT);
         }
 
         $global:ProcessExitedDelegate = New-RunspacedDelegate([EventHandler] {
@@ -4072,10 +4088,10 @@ class ProcessWithPipedIO {
         })
         try {
             $taskRead = $this._process.StandardOutput.ReadToEndAsync()
-            $options = ([System.Threading.Tasks.TaskContinuationOptions]::DenyChildAttach -bor `
+            $options = ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor `
                 [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously)
             $null = $taskRead.ContinueWith($continuationReadingDone, @{ self=$this; },
-                [System.Threading.CancellationToken]::None, $options, [System.Threading.Tasks.TaskScheduler]::Default)
+                [System.Threading.CancellationToken]::None, $options, $global:UI_SYNCHRONIZATION_CONTEXT)
             return $taskRead
         } catch {
             $this._processOutputEnded = $true
@@ -4661,58 +4677,58 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
         $null = $allTasks.Add($taskPipList)
     }
 
-    # $conda_exe = GetCurrentInterpreter 'CondaExe' -Executable
-    # if ($conda_exe) {
-    #     $continuationAddCondaPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
-    #         param([System.Threading.Tasks.Task] $task)
-    #         $condaPackages = $task.Result
-    #         if ($condaPackages -eq $null) {
-    #             throw [Exception]::new("Empty response from conda.")
-    #         }
-    #         return [Tuple]::Create($condaPackages, 'conda')
-    #     })
-    #     $task = GetCondaPackagesAsync $outdatedOnly
-    #     $taskCondaList = $task.ContinueWith($continuationAddCondaPackages,
-    #         [System.Threading.CancellationToken]::None,
-    #         ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
-    #             [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
-    #         $global:UI_SYNCHRONIZATION_CONTEXT)
-    #     $null = $allTasks.Add($taskCondaList)
-    # }
-    #
-    # $continuationAddBuiltinPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
-    #     param([System.Threading.Tasks.Task] $task)
-    #     $builtinPackages = $task.Result
-    #     if ($builtinPackages -eq $null) {
-    #         throw [Exception]::new("Empty response from builtin packages.")
-    #     }
-    #     return [Tuple]::Create($builtinPackages, 'builtin')
-    # })
-    # $taskGetBuiltinPackages = GetPythonBuiltinPackagesAsync
-    # $taskAddBuiltinPackages = $taskGetBuiltinPackages.ContinueWith($continuationAddBuiltinPackages,
-    #     [System.Threading.CancellationToken]::None,
-    #     ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
-    #         [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
-    #     $global:UI_SYNCHRONIZATION_CONTEXT)
-    # $null = $allTasks.Add($taskAddBuiltinPackages)
-    #
-    # # other packages are packages that were found but do not belong to any other list
-    #
-    # $continuationAddOtherPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
-    #     param([System.Threading.Tasks.Task] $task)
-    #     $otherPackages = $task.Result
-    #     if ($otherPackages -eq $null) {
-    #         throw [Exception]::new("Empty response from other packages.")
-    #     }
-    #     return [Tuple]::Create($otherPackages, 'other')
-    # })
-    # $taskGetOtherPackages = GetPythonOtherPackagesAsync
-    # $taskAddOtherPackages = $taskGetOtherPackages.ContinueWith($continuationAddOtherPackages,
-    #     [System.Threading.CancellationToken]::None,
-    #     ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
-    #         [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
-    #     $global:UI_SYNCHRONIZATION_CONTEXT)
-    # $null = $allTasks.Add($taskAddOtherPackages)
+    $conda_exe = GetCurrentInterpreter 'CondaExe' -Executable
+    if ($conda_exe) {
+        $continuationAddCondaPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
+            param([System.Threading.Tasks.Task] $task)
+            $condaPackages = $task.Result
+            if ($condaPackages -eq $null) {
+                throw [Exception]::new("Empty response from conda.")
+            }
+            return [Tuple]::Create($condaPackages, 'conda')
+        })
+        $task = GetCondaPackagesAsync $outdatedOnly
+        $taskCondaList = $task.ContinueWith($continuationAddCondaPackages,
+            [System.Threading.CancellationToken]::None,
+            ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
+                [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
+            $global:UI_SYNCHRONIZATION_CONTEXT)
+        $null = $allTasks.Add($taskCondaList)
+    }
+
+    $continuationAddBuiltinPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
+        param([System.Threading.Tasks.Task] $task)
+        $builtinPackages = $task.Result
+        if ($builtinPackages -eq $null) {
+            throw [Exception]::new("Empty response from builtin packages.")
+        }
+        return [Tuple]::Create($builtinPackages, 'builtin')
+    })
+    $taskGetBuiltinPackages = GetPythonBuiltinPackagesAsync
+    $taskAddBuiltinPackages = $taskGetBuiltinPackages.ContinueWith($continuationAddBuiltinPackages,
+        [System.Threading.CancellationToken]::None,
+        ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
+            [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
+        $global:UI_SYNCHRONIZATION_CONTEXT)
+    $null = $allTasks.Add($taskAddBuiltinPackages)
+
+    # other packages are packages that were found but do not belong to any other list
+
+    $continuationAddOtherPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
+        param([System.Threading.Tasks.Task] $task)
+        $otherPackages = $task.Result
+        if ($otherPackages -eq $null) {
+            throw [Exception]::new("Empty response from other packages.")
+        }
+        return [Tuple]::Create($otherPackages, 'other')
+    })
+    $taskGetOtherPackages = GetPythonOtherPackagesAsync
+    $taskAddOtherPackages = $taskGetOtherPackages.ContinueWith($continuationAddOtherPackages,
+        [System.Threading.CancellationToken]::None,
+        ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
+            [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
+        $global:UI_SYNCHRONIZATION_CONTEXT)
+    $null = $allTasks.Add($taskAddOtherPackages)
 
     # WriteLog $allTasks -Background DarkCyan -Foreground Yellow
 
@@ -4860,7 +4876,11 @@ Function global:CheckDependencies {
             WriteLog $result
         }
     })
-    $taskReportLogged = $taskReadOutput.ContinueWith($continuationReport, $global:UI_SYNCHRONIZATION_CONTEXT)
+    $taskReportLogged = $taskReadOutput.ContinueWith($continuationReport,
+            [System.Threading.CancellationToken]::None,
+            ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
+                [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
+            $global:UI_SYNCHRONIZATION_CONTEXT)
 
     $allTasks = [System.Collections.Generic.List[System.Threading.Tasks.Task]]::new()
     $null = $allTasks.Add($taskProcessDone)
