@@ -846,7 +846,7 @@ Function AddButton {
                 param($Sender, $EventArgs)
                 $widgetStateTransition = WidgetStateTransitionForCommandButton $button
                 $doReverseWidgetState = [WidgetStateTransition]::ReverseAllAsync()
-                $task = $handler.GetNewClosure().InvokeReturnAsIs($Sender, $EventArgs)
+                $task = $handler.InvokeReturnAsIs($Sender, $EventArgs)
                 $null = $task.ContinueWith($doReverseWidgetState, $widgetStateTransition,
                     [System.Threading.CancellationToken]::None,
                     ([System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously -bor
