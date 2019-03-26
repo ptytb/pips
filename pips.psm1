@@ -73,44 +73,40 @@ $global:packageTypes = [System.Collections.ArrayList]::new()
 $global:packageTypes.AddRange(@('pip', 'conda', 'git', 'wheel', 'https'))
 $Global:PyPiPackageJsonCache = New-Object 'System.Collections.Generic.Dictionary[string,PSCustomObject]'
 
+$global:PIP_DEP_TREE_LEGEND = "
+Tree legend:
+* = Extra package
+x = Package doesn't exist in index
+∞ = Dependency loop found
+"
+
 $global:ActionCommands = @{
     common=@{
         documentation  = @{ Command={ (ShowDocView $package).Show() } };
         copy_reqs      = @{ Command={ CopyAsRequirementsTxt($queue) } };
-        deps_tree      = @{ Command={ } };
     };
     other=@{
         files          = @{ Command= { Get-ChildItem -Recurse "$(py 'SitePackagesDir')\$package" | ForEach-Object { WriteLog $_.FullName } } };
-    }
+    };
     pip=@{
         info           = @{ Command='PythonExe'; Args={ ('-m', 'pip', 'show', $package)                 }; Validate={ $exitCode -eq 0 }; };
         files          = @{ Command='PythonExe'; Args={ ('-m', 'pip', 'show', '--files', $package)      }; Validate={ $exitCode -eq 0 }; };
         update         = @{ Command='PythonExe'; Args={ ('-m', 'pip', 'install', '-U', $package)        }; Validate={ $output -match "Successfully installed (?:[^\s]+\s+)*$package" } };
         install        = @{ Command='PythonExe'; Args={ ('-m', 'pip', 'install', $package)              }; Validate={ } };
-        install_dry    = $null;
         install_nodeps = @{ Command='PythonExe'; Args={ ('-m', 'pip', 'install', '--no-deps', $package) }; Validate={ } };
         download       = @{ Command='PythonExe'; Args={ ('-m', 'pip', 'download', $package)             }; Validate={ } };
         uninstall      = @{ Command='PythonExe'; Args={ ('-m', 'pip', 'uninstall', '--yes', $package)   }; Validate={ } };
-        deps_reverse   = {
-            $di = GetPackageDistributionInfo
-            $packages = $di | Get-Member -Type NoteProperty | Select-Object -ExpandProperty Name
-            foreach ($p in $packages) {
-                    $deps = $di."$p".deps | Get-Member -Type NoteProperty | Select-Object -ExpandProperty Name
-                    if ($package -in $deps) {
-                        "$p"
-                    }
-            }
-        };
+        deps_reverse   = @{ Command={ GetReverseDependencies }; }
+        deps_tree      = @{ Command={ WriteLog $PIP_DEP_TREE_LEGEND ; WriteLog (GetDependencyAsciiGraph $package) } };
     };
     conda=@{
         info          = @{ Command='CondaExe'; Args= { ('list', '--prefix', (py 'Path'), '-v', '--json', $package) } };
-        documentation = @{ Command={ $null = (ShowDocView $pkg).Show();     } };
         files         = @{ Command={
-            $path = "$(GetCurrentInterpreter 'Path')\conda-meta"
-            $query = "$args*.json"
-            $file = Get-ChildItem -Path $path $query
-            $json = Get-Content "$path\$($file.Name)" | ConvertFrom-Json
-            WriteLog $json.files
+            $path = "$(py 'Path')\conda-meta"
+            $query = "$package*.json"
+            $file = Get-ChildItem -Path $path -Name $query -Depth 0 -File
+            $json = Get-Content -Raw "$path\$file" | ConvertFrom-Json
+            WriteLog ($json.files -join ([Environment]::NewLine))
         } };
         update        = @{ Command='CondaExe'; Args={ ('update', '--prefix', (py 'Path'), '--yes', '-q', $package) } };
         install       = @{ Command='CondaExe'; Args={ ('install', (Get-PipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--yes', '-q', '--no-shortcuts', $package) } };
@@ -126,12 +122,27 @@ $global:ActionCommands = @{
         } };
     }
 }
-$ActionCommands.wheel   = $ActionCommands.pip
-$ActionCommands.sdist   = $ActionCommands.pip
-$ActionCommands.builtin = $ActionCommands.pip
-# $ActionCommands.other   = $ActionCommands.pip
-$ActionCommands.git     = $ActionCommands.pip
-$ActionCommands.https   = $ActionCommands.pip
+
+$global:ActionCommandInheritance = @{
+    common=('pip', 'conda');
+    pip=('wheel', 'sdist', 'builtin', 'other', 'git', 'https');
+}
+
+Function global:GetActionCommand($type, $command) {
+    if ($global:ActionCommands.ContainsKey($type) -and $global:ActionCommands.Item($type).ContainsKey($command)) {
+        return ,$global:ActionCommands.Item($type).Item($command)
+    } else {
+        if ($type -eq 'common') {
+            return $null
+        }
+        foreach ($pair in $global:ActionCommandInheritance.GetEnumerator()) {
+            $nextType, $fallbackFrom = $pair.Key, $pair.Value
+            if ($type -in $fallbackFrom) {
+                return ,(GetActionCommand $nextType $command)
+            }
+        }
+    }
+}
 
 
 Function global:MakeEvent([hashtable] $properties) {
@@ -1201,6 +1212,8 @@ Function Add-ComboBoxActions {
         <#
         .PARAMETER Bulk
         Bulked command processes all the packages of the same type at once, for each of all distinct package types (pip, conda, ...)
+        .PARAMETER Synchronous
+        Synchronous command must return immediately
         #>
         param([hashtable] $actionProperties, [switch] $Bulk, [switch] $Synchronous)
         $action = New-Object PSObject -Property $actionProperties
@@ -1234,41 +1247,6 @@ Function Add-ComboBoxActions {
 
     return $actionListComboBox
 
-    # & $Add (Make-PipActionItem 'Show Info' `
-    #     { param($pkg,$type); $ActionCommands[$type].info.Invoke($pkg) } `
-    #     { param($pkg,$out); $out -match $pkg } `
-    #     $false `
-    #     'info')
-
-    # & $Add (Make-PipActionItem 'Documentation' `
-    #     { param($pkg,$type); $ActionCommands[$type].documentation.Invoke($pkg) } `
-    #     { param($pkg,$out); $out -match '.*' } `
-    #     $false `
-    #     'documentation')
-
-    & $Add (Make-PipActionItem 'List Files' `
-        {
-            param($pkg,$type);
-            if ($type -eq 'other') {
-                Get-ChildItem -Recurse "$(GetCurrentInterpreter "SitePackagesDir")\$pkg" | ForEach-Object { $_.FullName }
-            } else {
-                $ActionCommands[$type].files.Invoke($pkg)
-            }
-        } `
-        { param($pkg,$out); $out -match $pkg } )
-
-    # & $Add (Make-PipActionItem 'Update' `
-    #     { param($pkg,$type); $ActionCommands[$type].update.Invoke($pkg) } `
-    #     { param($pkg,$out); $out -match "Successfully installed (?:[^\s]+\s+)*$pkg" } )
-
-    # & $Add (Make-PipActionItem 'Install (Dry Run)' `
-    #     { param($pkg,$type); $ActionCommands[$type].install_dry.Invoke($pkg) } `
-    #     { param($pkg,$out); $out -match "Successfully installed (?:[^\s]+\s+)*$pkg" } )
-
-    # & $Add (Make-PipActionItem 'Install (No Deps)' `
-    #     { param($pkg,$type); $ActionCommands[$type].install_nodep.Invoke($pkg) } `
-    #     { param($pkg,$out); $out -match "Successfully installed (?:[^\s]+\s+)*$pkg" } )
-
     & $Add (Make-PipActionItem 'Install' {
             param($pkg,$type,$version)
             $git_url = Validate-GitLink $pkg
@@ -1280,35 +1258,6 @@ Function Add-ComboBoxActions {
             }
             $ActionCommands[$type].install.Invoke($pkg) } `
         { param($pkg,$out); ($out -match "Successfully installed (?:[^\s]+\s+)*$pkg") } )
-
-    # & $Add (Make-PipActionItem 'Download' `
-    #     { param($pkg,$type); $ActionCommands[$type].download.Invoke($pkg) } `
-    #     { param($pkg,$out); $out -match 'Successfully downloaded ' } )
-
-    # & $Add (Make-PipActionItem 'Uninstall' `
-    #     { param($pkg,$type); $ActionCommands[$type].uninstall.Invoke($pkg) } `
-    #     { param($pkg,$out); $out -match ('Successfully uninstalled ' + $pkg) } )
-
-    # & $Add (Make-PipActionItem 'As requirements.txt' `
-    #     { param($list); CopyAsRequirementsTxt($list) } `
-    #     { param($pkg,$out); $out -match '.*' } `
-    #     $true )  # Yes, take a whole list of packages
-
-    $PIPTREE_LEGEND = "
-Tree legend:
-* = Extra package
-x = Package doesn't exist in index
-∞ = Dependency loop found
-"
-
-    & $Add (Make-PipActionItem 'Dependency tree' `
-        { param($list); $Script:PIPTREE_LEGEND; Get-DependencyAsciiGraph $list; WriteLog "`n" }.GetNewClosure() `
-        { param($pkg,$out); $out -match '.*' } )
-
-    # & $Add (Make-PipActionItem 'Reverse dependencies' `
-    #     { param($pkg,$type); $ActionCommands[$type].reverseDependencies.Invoke($pkg) } `
-    #     { param($pkg,$out); $out -match '.*' } )
-
 }
 
 
@@ -1521,7 +1470,7 @@ Function global:Set-PackageListEditable ($enable) {
     }
 }
 
-Function global:Prepare-PackageAutoCompletion {
+Function global:PreparePackageAutoCompletion {
 
     if ($global:autoCompleteIndex -ne $null) {
         return
@@ -1547,7 +1496,7 @@ Function global:Prepare-PackageAutoCompletion {
 }
 
 Function global:CreateInstallForm {
-    Prepare-PackageAutoCompletion
+    PreparePackageAutoCompletion
 
     $form = New-Object System.Windows.Forms.Form
     $form.KeyPreview = $true
@@ -2956,7 +2905,7 @@ Function CreateMainForm {
     $logView.Size = New-Object Drawing.Point 800,270
     $logView.ReadOnly = $true
     $logView.Multiline = $true
-    $logView.Font = New-Object System.Drawing.Font("Consolas", 11)
+    $logView.Font = [System.Drawing.Font]::new('Consolas', 13)
     $form.Controls.Add($logView)
 
     $logView.add_HandleCreated({
@@ -4965,14 +4914,14 @@ Function global:ExecuteAction {
         [Parameter(Mandatory=$false)] [switch] $Serial = $false,
         [Parameter(Mandatory=$false)] [switch] $ShowCommand = $false)
 
-    WriteLog "$Sender $EventArgs ser=$Serial sc=$ShowCommand" -Background Yellow
-
     $fireAction = New-RunspacedDelegate ([Action[object]] {
         param([object] $fireActionLocals)
         $action = $global:actionsModel[$actionListComboBox.SelectedIndex]
         $actionId = $action.Id
         $queue = [System.Collections.Generic.Queue[object]]::new()
         $execActionTaskCompletionSource = $fireActionLocals.execActionTaskCompletionSource
+        $Serial = $fireActionLocals.Serial
+        $ShowCommand = $fireActionLocals.ShowCommand
 
         for ($i = 0; $i -lt $global:dataModel.Rows.Count; $i++) {
             if ($global:dataModel.Rows[$i].Select -eq $true) {
@@ -5008,136 +4957,144 @@ Function global:ExecuteAction {
             $null = $FunctionContext.execActionTaskCompletionSource.TrySetResult($null)
         })
 
-        if ($action.Bulk -and $action.Synchronous) {
-            $null = InvokeWithContext $global:ActionCommands['common'][$actionId].Command
-            return [System.Threading.Tasks.Task]::FromResult(@{})
-        } else {
-            $continuationReportIteration = New-RunspacedDelegate([Action[System.Threading.Tasks.Task[int], object]] {
-                param([System.Threading.Tasks.Task[int]] $task, [object] $locals)
+        $continuationReportIteration = New-RunspacedDelegate([Action[System.Threading.Tasks.Task[int], object]] {
+            param([System.Threading.Tasks.Task[int]] $task, [object] $locals)
 
-                $exitCode = -1
-                $success = $false
+            $exitCode = -1
+            $success = $false
 
-                if ($task.IsCompleted -and (-not ($task.IsFaulted -or $task.IsCanceled))) {
-                    $exitCode = $task.Result
-                    $success = $exitCode -eq 0
-                }
-
-                if ($exitCode -ge 0) {
-                    $color = if ($success) { 'DarkGreen' } else { 'DarkRed' }
-                    WriteLog "Exited with code $exitCode" -Background $color -Foreground White
-                } else {
-                    $message = $task.Exception.InnerException
-                    WriteLog "Failed: $message" -Background DarkRed -Foreground White
-                }
-
-                if ($success) {
-                    $locals.functionContext.tasksOkay += 1
-                } else {
-                    $locals.functionContext.tasksFailed += 1
-                }
-
-                # PostIrreversibleTransformWithMethodCall()
-                # $global:dataModel.Columns['Status'].ReadOnly = $false
-                # $global:dataModel.Columns['Status'].ReadOnly = $true
-                # $logTo = (GetLogLength) - $locals.logFrom
-                # $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $locals.logFrom
-                # $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
-
-                #$widgetStateTransition.CommitIrreversibleTransformations()
-            })
-
-            $function = New-RunspacedDelegate ([Func[object, object, System.Threading.Tasks.Task]] {
-                param([object] $element, [object] $FunctionContext)
-                $actionId = $FunctionContext.actionId  # what should we do with the specific package type(s)
-                $interpreter = $FunctionContext.interpreter  # current Python
-                $logFrom = GetLogLength
-                $executableArguments = $null
-                $executableCommand = $null
-
-                # if (-not $action) {
-                #     $action = $global:ActionCommands['common'][$actionId]
-                # }
-                # if ($action.Command -is [ScriptBlock]) {  # if it's not an external process then handle it right away (causes hang on long op)
-                #     $result = InvokeWithContext $action.Command $functions $variables @()
-                #     return [System.Threading.Tasks.Task]::FromResult($result)
-                # }
-
-                $functions = @{ py={ param($property) $interpreter."$property" }; }  # funcs to be called from ActionCommands
-
-                if ($element -is [System.Collections.DictionaryEntry]) {  # Bulk operation on [String type, Datarow[] packages]
-                    $type, $dataRows = $element.Key, $element.Value
-                    $action = $global:ActionCommands[$type][$actionId]
-                    $packages = [System.Collections.Generic.List[string]]::new()
-                    foreach ($dataRow in $dataRows) {
-                        $null = $packages.Add("{0}=={1}" -f ($dataRow.Package,$dataRow.Installed))
-                    }
-                    $packages = $packages -join ' '
-                    WriteLog "Running $($actionId) on $packages" -Background LightPink
-
-                    $variables = @{ package=$packages; version=$installed; queue=$queue; }  # vars for ActionCommands
-
-                    $executableCommand = $interpreter."$($action.Command)"
-                    $executableArguments = InvokeWithContext $action.Args $functions $variables @()  # substitute actual params
-                } else {
-                    $dataRow = $element
-                    $package, $installed, $type = $dataRow.Package, $dataRow.Installed, $dataRow.Type
-                    $action = $global:ActionCommands[$type][$actionId]
-                    WriteLog "Running $($actionId) on $package" -Background LightPink
-
-                    $variables = @{ package=$package; version=$installed; queue=$queue; }
-
-                    $executableCommand = $interpreter."$($action.Command)"
-                    $executableArguments = InvokeWithContext $action.Args $functions $variables @()  # vars for ActionCommands
-                }
-
-                WriteLog "$executableCommand $executableArguments" -Background Green -Foreground White
-
-                if ($FunctionContext.ShowCommand) {
-                    return [System.Threading.Tasks.Task]::FromResult(@{})
-                }
-
-                $process = [ProcessWithPipedIO]::new('py', @('--help'))
-                $taskProcessDone = $process.StartWithLogging($true, $true)
-
-                $reportLocals = @{
-                    dataRow=$dataRow;
-                    process=$process;
-                    logFrom=$logFrom;
-                    functionContext=$FunctionContext;
-                }
-
-                $taskReport = $taskProcessDone.ContinueWith($FunctionContext.continuationReportIteration, $reportLocals,
-                    [System.Threading.CancellationToken]::None,
-                    ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
-                        [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
-                    $global:UI_SYNCHRONIZATION_CONTEXT)
-                return $taskReport
-            })
-
-
-            $context = @{
-                actionId=$actionId;
-                interpreter=(GetCurrentInterpreter);
-                tasksOkay=0;
-                tasksFailed=0;
-                execActionTaskCompletionSource=$execActionTaskCompletionSource;
-                ShowCommand=$ShowCommand;
-                continuationReportIteration=$continuationReportIteration;
+            if ($task.IsCompleted -and (-not ($task.IsFaulted -or $task.IsCanceled))) {
+                $exitCode = $task.Result
+                $success = $exitCode -eq 0
             }
 
-            $null = ApplyAsync $context $queue $function $reportBatchResults
+            if ($exitCode -ge 0) {
+                $color = if ($success) { 'DarkGreen' } else { 'DarkRed' }
+                WriteLog "Exited with code $exitCode" -Background $color -Foreground White
+            } else {
+                $message = $task.Exception.InnerException
+                WriteLog "Failed: $message" -Background DarkRed -Foreground White
+            }
+
+            if ($success) {
+                $locals.functionContext.tasksOkay += 1
+            } else {
+                $locals.functionContext.tasksFailed += 1
+            }
+
+            # PostIrreversibleTransformWithMethodCall()
+            # $global:dataModel.Columns['Status'].ReadOnly = $false
+            # $global:dataModel.Columns['Status'].ReadOnly = $true
+            # $logTo = (GetLogLength) - $locals.logFrom
+            # $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogFrom -Value $locals.logFrom
+            # $locals.dataRow | Add-Member -Force -MemberType NoteProperty -Name LogTo -Value $logTo
+
+            #$widgetStateTransition.CommitIrreversibleTransformations()
+        })
+
+        $function = New-RunspacedDelegate ([Func[object, object, System.Threading.Tasks.Task]] {
+            param([object] $element, [object] $FunctionContext)
+            $actionId = $FunctionContext.actionId  # what should we do with the specific package type(s)
+            $interpreter = $FunctionContext.interpreter  # current Python
+            $logFrom = GetLogLength
+            $executableArguments = $null
+            $executableCommand = $null
+            $variables = $null
+            $functions = @{ py={ param($property) $interpreter."$property" }; }  # funcs to be called from ActionCommands
+
+            trap {
+                $null = WriteLog "Failed to ${actionId}: $_" -Background LightSalmon
+                return [System.Threading.Tasks.Task]::FromException([Exception]::new($_))
+            }
+
+            if ($element -is [System.Collections.DictionaryEntry]) {  # Bulk operation on [String type, DataRow[] packages]
+                $type, $dataRows = $element.Key, $element.Value
+
+                $action = GetActionCommand $type $actionId
+                if (-not $action) {
+                    throw [Exception]::new("action $actionId is unavailable for type $type")
+                }
+
+                $packages = [System.Collections.Generic.List[string]]::new()
+                foreach ($dataRow in $dataRows) {
+                    $null = $packages.Add("{0}=={1}" -f ($dataRow.Package,$dataRow.Installed))
+                }
+                $packages = $packages -join ' '
+                WriteLog "Running $($actionId) on $packages" -Background LightPink
+
+                $variables = @{ package=$packages; }  # vars for ActionCommands
+            } else {
+                $dataRow = $element
+                $package, $installed, $type = $dataRow.Package, $dataRow.Installed, $dataRow.Type
+
+                $action = GetActionCommand $type $actionId
+                if (-not $action) {
+                    throw [Exception]::new("action $actionId is unavailable for type $type")
+                }
+
+                WriteLog "Running $($actionId) on $package" -Background LightPink
+
+                $variables = @{ package=$package; version=$installed; }
+            }
+
+            $isInternalCommand = $action.Command -is [ScriptBlock]  # if it's not an external process then handle it right away (causes hang on long op)
+            if ($isInternalCommand) {
+                $result = InvokeWithContext $action.Command $functions $variables @()
+                return [System.Threading.Tasks.Task]::FromResult(@{})
+            } else {
+                $executableCommand = $interpreter."$($action.Command)"
+                $executableArguments = InvokeWithContext $action.Args $functions $variables @()  # substitute actual params
+                WriteLog "$executableCommand $executableArguments" -Background Green -Foreground White
+            }
+
+            if ($FunctionContext.ShowCommand) {
+                return [System.Threading.Tasks.Task]::FromResult(@{})
+            }
+
+            $process = [ProcessWithPipedIO]::new($executableCommand, $executableArguments)
+            $taskProcessDone = $process.StartWithLogging($true, $true)
+
+            $reportLocals = @{
+                dataRow=$dataRow;
+                process=$process;
+                logFrom=$logFrom;
+                functionContext=$FunctionContext;
+            }
+
+            $taskReport = $taskProcessDone.ContinueWith($FunctionContext.continuationReportIteration, $reportLocals,
+                [System.Threading.CancellationToken]::None,
+                ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
+                    [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
+                $global:UI_SYNCHRONIZATION_CONTEXT)
+            return $taskReport
+        })
+
+
+        $context = @{
+            actionId=$actionId;
+            interpreter=(GetCurrentInterpreter);
+            tasksOkay=0;
+            tasksFailed=0;
+            execActionTaskCompletionSource=$execActionTaskCompletionSource;
+            ShowCommand=$ShowCommand;
+            continuationReportIteration=$continuationReportIteration;
         }
-    }.GetNewClosure())
+
+        $null = ApplyAsync $context $queue $function $reportBatchResults
+    })
 
     $execActionTaskCompletionSource = [System.Threading.Tasks.TaskCompletionSource[object]]::new()
 
+    $fireActionLocals = @{
+        execActionTaskCompletionSource=$execActionTaskCompletionSource;
+        Serial=$Serial;
+        ShowCommand=$ShowCommand;
+    }
     $token = [System.Threading.CancellationToken]::None
     $options = ([System.Threading.Tasks.TaskCreationOptions]::AttachedToParent -bor
         [System.Threading.Tasks.TaskCreationOptions]::PreferFairness)
 
-    $null = [System.Threading.Tasks.Task]::Factory.StartNew($fireAction,
-        @{ execActionTaskCompletionSource=$execActionTaskCompletionSource },
+    $null = [System.Threading.Tasks.Task]::Factory.StartNew($fireAction, $fireActionLocals,
         $token, $options, $global:UI_SYNCHRONIZATION_CONTEXT)
 
     return $execActionTaskCompletionSource.Task
@@ -5233,8 +5190,18 @@ Function global:Test-KeyPress
     $Result -notcontains $false
 }
 
+Function global:GetReverseDependencies {
+    $di = GetPackageDistributionInfo
+    $packages = $di | Get-Member -Type NoteProperty | Select-Object -ExpandProperty Name
+    foreach ($p in $packages) {
+        $deps = $di."$p".deps | Get-Member -Type NoteProperty | Select-Object -ExpandProperty Name
+        if ($package -in $deps) {
+            WriteLog "$p"
+        }
+    }
+}
 
-Function GetPackageDistributionInfo {
+Function global:GetPackageDistributionInfo {
     $python_code = @'
 import pkg_resources
 import json
@@ -5248,7 +5215,7 @@ print(json.dumps(info))
     return $pkgs
 }
 
-Function Get-AsciiTree($name,
+Function global:GetAsciiTree($output, $name,
                        $distributionInfo,
                        $indent = 0,
                        $hasSibling = $false,
@@ -5309,7 +5276,7 @@ Function Get-AsciiTree($name,
     if (-not $global:autoCompleteIndex.Contains($name.ToLower())) { $suffixList += @('x') }  # unavailable package
     $suffix = if ($suffixList.Count -eq 0) { '' } else { " ($($suffixList -join ' '))" }
 
-    "${prefix}${name}${suffix}"  # Add a line to the Return Stack
+    $null = $output.AppendLine("${prefix}${name}${suffix}")  # Add a line to the Return Stack
 
     if ($hasSibling) {
            [void]$dangling.Push($indent * 4)
@@ -5322,7 +5289,7 @@ Function Get-AsciiTree($name,
         $i = 1
         foreach ($child in $children) {
             $childHasSiblings = ($i -lt $children.Length) -and ($children.Length -gt 1)
-            Get-AsciiTree $child `
+            GetAsciiTree $output $child `
                 $distributionInfo `
                 ($indent + 1) `
                 $childHasSiblings `
@@ -5337,11 +5304,12 @@ Function Get-AsciiTree($name,
     [void]$dangling.Pop()
 }
 
-Function global:Get-DependencyAsciiGraph($name) {
-    Prepare-PackageAutoCompletion  # for checking presence of pkg in the index
+Function global:GetDependencyAsciiGraph($name) {
+    $null = PreparePackageAutoCompletion  # for checking presence of pkg in the index
     $distributionInfo = GetPackageDistributionInfo
-    $asciiTree = Get-AsciiTree $name.ToLower() $distributionInfo
-    return $asciiTree
+    $output = [System.Text.StringBuilder]::new()
+    $null = GetAsciiTree $output $name.ToLower() $distributionInfo
+    return $output.ToString()
 }
 
 Function global:SetConsoleVisibility {
@@ -5492,7 +5460,7 @@ Function LoadPlugins() {
             ${function:Get-PackageInfoFromWheelName},
             ${function:Test-CanInstallPackageTo},
             { param([string] $name) return $global:autoCompleteIndex.Contains($name) }.GetNewClosure(),
-            ${function:Prepare-PackageAutoCompletion},
+            ${function:PreparePackageAutoCompletion},
             ${function:Recode})
         [void] $global:plugins.Add($instance)
         [void] $global:packageTypes.AddRange($instance.GetSupportedPackageTypes())
@@ -5547,15 +5515,16 @@ Function global:InstallDebugHelpers {
         Write-Host $Exception.Message @color
         Write-Host ('-' * 70) @color
 
-        if (($Exception.GetType() -in $exceptionsWithScriptBacktrace) -or
-            ($Exception.GetType().BaseType -in $exceptionsWithScriptBacktrace))
+        if ((($Exception.GetType() -in $exceptionsWithScriptBacktrace) -or
+            ($Exception.GetType().BaseType -in $exceptionsWithScriptBacktrace)) -and
+            -not [string]::IsNullOrWhiteSpace($Exception.ErrorRecord.ScriptStackTrace) )
             {
             $ScriptStackTrace = $Exception.ErrorRecord.ScriptStackTrace
             if (-not [string]::IsNullOrWhiteSpace($ScriptStackTrace)) {
                 Write-Host $ScriptStackTrace @color
             }
         } else {
-            Write-Host (Get-PSCallStack | Format-Table -AutoSize | Out-String) @color
+            Write-Host (Get-PSCallStack | Format-Table -AutoSize | Out-String -Width 4096) @color
         }
         Write-Host ('-' * 70) @color
 
