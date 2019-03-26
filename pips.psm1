@@ -4033,15 +4033,15 @@ class ProcessWithPipedIO {
                 $null = $self._taskCompletionSource.TrySetException([Exception]::new($exception))
             } else {
                 $null = $self._taskCompletionSource.TrySetResult($self._exitCode)
-                if (-not $self._hasFinished) {
-                    WriteLog "Killing" -Background Red
-                    try { $null = $self._process.Kill() } catch { }
-                }
-                if ($self._missedExitEvent) {
-                    WriteLog "We are in trouble, missed exit event, this shouldn't happen!" -Background Magenta
-                }
-                $null = $self._process.Close()
             }
+            if (-not $self._hasFinished) {
+                WriteLog "Killing" -Background Red
+                try { $null = $self._process.Kill() } catch { }
+            }
+            if ($self._missedExitEvent) {
+                WriteLog "We are in trouble, missed exit event, this shouldn't happen!" -Background Magenta
+            }
+            $null = $self._process.Close()
             WriteLog "Exiting _ConfirmExit" -Background DarkOrange
         }.GetNewClosure())
         $token = [System.Threading.CancellationToken]::None
