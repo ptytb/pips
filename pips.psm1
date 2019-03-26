@@ -112,14 +112,13 @@ $global:ActionCommands = @{
         install       = @{ Command='CondaExe'; Args={ ('install', (Get-PipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--yes', '-q', '--no-shortcuts', $package) } };
         install_dry   = @{ Command='CondaExe'; Args={ ('install', (Get-PipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--dry-run', $package) } };
         install_nodep = @{ Command='CondaExe'; Args={ ('install', (Get-PipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--yes', '-q', '--no-shortcuts', '--no-deps', '--no-update-dependencies', $package) } };
-        download      = $null;
         uninstall     = @{ Command='CondaExe'; Args={ ('uninstall', '--prefix', (py 'Path'), '--yes', $package) } };
-        reverseDependencies = { Command={
-            WriteLog (& (py 'CondaExe') search --json --reverse-dependency $args 2>&1) `
+        deps_reverse  = @{ Command='CondaExe'; Args={ ('search', <#'--json',#> '--reverse-dependency', $package) }; <# PostprocessOutput={
+            WriteLog ($output `
                 | ConvertFrom-Json `
                 | Get-Member -Type NoteProperty `
-                | Select-Object -ExpandProperty Name
-        } };
+                | Select-Object -ExpandProperty Name)
+        } #> };
     }
 }
 
