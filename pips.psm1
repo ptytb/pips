@@ -4024,6 +4024,12 @@ class ProcessWithPipedIO {
             try { $null = $this._process.CancelErrorRead() } catch { }
             $this._process.remove_ErrorDataReceived($this._errorCallback)
         }
+        if ($this._process.StandardError) {
+            try { $this._process.StandardError.Close() } catch { }
+        }
+        if ($this._process.StandardOutput) {
+            try { $this._process.StandardOutput.Close() } catch { }
+        }
         WriteLog "_ConfirmExit E='$exception' OUT=$($this._processOutputEnded) ERR=$($this._processErrorEnded)"
         $delegate = New-RunspacedDelegate ([Action[object]] {
             param([object] $locals)
