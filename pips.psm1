@@ -4028,8 +4028,20 @@ class ProcessWithPipedIO {
                 WriteLog "We are in trouble, missed exit event, this shouldn't happen!" -Background Magenta
             }
 
-            $self._process.Dispose()
-            $self._process = $null
+            $processClenup = New-RunspacedDelegate([Action[object]] {
+                param([ProcessWithPipedIO] $self)
+                $self._process.WaitForExit()
+                $self._process.Dispose()
+                $self._process = $null
+                if ($self._timer) {
+                    $self._timer.Stop()
+                    $self._timer = $null
+                }
+            })
+            $token = [System.Threading.CancellationToken]::None
+            $options = ([System.Threading.Tasks.TaskCreationOptions]::DenyChildAttach)
+            $taskGetBuiltinPackages = [System.Threading.Tasks.Task]::Factory.StartNew($processClenup, $self,
+                $token, $options, [System.Threading.Tasks.TaskScheduler]::Default)
 
             WriteLog "Exiting _ConfirmExit" -Background DarkOrange
         })
