@@ -3954,7 +3954,8 @@ class ProcessWithPipedIO {
                             # Process.Refresh() wipes its state entirely then possibly gets filled in from alive proc; WaitForExit() may lock and is not an option
                             $p = try { [System.Diagnostics.Process]::GetProcessById($self._pid) } catch { $null }
                             $actuallyDead = $p -eq $null
-                            if ($p) { $p.Close() }
+                            if ($p) { $p.Dispose() }
+                            $p = $null
 
                             WriteLog "Throttling status: started=$($self._hasStarted) exited_evt=$($self._hasFinished) now_dead=$actuallyDead code=$($self._exitCode) out_end=$($self._processOutputEnded) err_end=$($self._processErrorEnded)" -Background LightPink
 
@@ -3979,7 +3980,7 @@ class ProcessWithPipedIO {
                     }
                     $Sender.Enabled = $true
                 }
-            }.GetNewClosure())
+            })
 
             $this._timer.Tag = $self
             $this._timer.Interval = 75
@@ -4008,23 +4009,8 @@ class ProcessWithPipedIO {
     }
 
     hidden _ConfirmExit($exception) {
-        if ($this._timer) {
-            $null = $this._timer.Stop()
-        }
-        $this._process.EnableRaisingEvents = $false
-        if ($this._exitedCallback) {
-            $this._process.remove_Exited($this._exitedCallback)
-            $this._process.remove_Disposed($this._exitedCallback)
-        }
-        if ($this._outputCallback) {
-            try { $null = $this._process.CancelOutputRead() } catch { }
-            $this._process.remove_OutputDataReceived($this._outputCallback)
-        }
-        if ($this._errorCallback ) {
-            try { $null = $this._process.CancelErrorRead() } catch { }
-            $this._process.remove_ErrorDataReceived($this._errorCallback)
-        }
         WriteLog "_ConfirmExit E='$exception' OUT=$($this._processOutputEnded) ERR=$($this._processErrorEnded)"
+
         $delegate = New-RunspacedDelegate ([Action[object]] {
             param([object] $locals)
             $self = $locals.self
@@ -4041,9 +4027,12 @@ class ProcessWithPipedIO {
             if ($self._missedExitEvent) {
                 WriteLog "We are in trouble, missed exit event, this shouldn't happen!" -Background Magenta
             }
-            $null = $self._process.Close()
+
+            $self._process.Dispose()
+            $self._process = $null
+
             WriteLog "Exiting _ConfirmExit" -Background DarkOrange
-        }.GetNewClosure())
+        })
         $token = [System.Threading.CancellationToken]::None
         $options = ([System.Threading.Tasks.TaskCreationOptions]::AttachedToParent)
         $null = [System.Threading.Tasks.Task]::Factory.StartNew($delegate, @{self=$this; exception=$exception}, $token,
