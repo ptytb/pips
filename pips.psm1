@@ -4031,11 +4031,14 @@ class ProcessWithPipedIO {
             $processClenup = New-RunspacedDelegate([Action[object]] {
                 param([ProcessWithPipedIO] $self)
                 $self._process.WaitForExit()
-                $self._process.Dispose()
-                $self._process = $null
-                if ($self._timer) {
-                    $self._timer.Stop()
-                    $self._timer = $null
+                try {
+                    $self._process.Dispose()
+                } finally { 
+                    $self._process = $null
+                    if ($self._timer) {
+                        $self._timer.Stop()
+                        $self._timer = $null
+                    }
                 }
             })
             $token = [System.Threading.CancellationToken]::None
