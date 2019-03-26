@@ -1214,18 +1214,19 @@ Function Add-ComboBoxActions {
         .PARAMETER Synchronous
         Synchronous command must return immediately
         #>
-        param([hashtable] $actionProperties, [switch] $Bulk, [switch] $Synchronous)
+        param([hashtable] $actionProperties, [switch] $Bulk, [switch] $Synchronous, [switch] $Singleton)
         $action = New-Object PSObject -Property $actionProperties
         $action | Add-Member -MemberType NoteProperty -Name Bulk -Value $Bulk -Force
         $action | Add-Member -MemberType NoteProperty -Name Synchronous -Value $Synchronous -Force
         $action | Add-Member -MemberType NoteProperty -Name Index -Value $index -Force
+        $action | Add-Member -MemberType NoteProperty -Name Singleton -Value $Singleton -Force
         $action | Add-Member -MemberType ScriptMethod -Name ToString -Value { "$($this.Name) [F$($this.Index)]" } -Force
         $null = $actionsModel.Add($action)
         ++$index
     }
 
     AddAction @{ Name='Show information'; Id='info'; }
-    AddAction @{ Name='Show documentation'; Id='documentation'; }
+    AddAction @{ Name='Show documentation'; Id='documentation'; } -Singleton
     AddAction @{ Name='Show dependency tree'; Id='deps_tree'; }
     AddAction @{ Name='Show dependent packages'; Id='deps_reverse'; }
     AddAction @{ Name='Update'; Id='update'; } -Bulk
@@ -4910,12 +4911,16 @@ Function global:WidgetStateTransitionForCommandButton($button) {
 Function global:ExecuteAction {
     [CmdletBinding()]
     param($Sender, $EventArgs,
+        <#
+        .DESCRIPTION
+        Optional parameters for this function are supposed to be passed when using alternative button modes
+        #>
         [Parameter(Mandatory=$false)] [switch] $Serial = $false,
         [Parameter(Mandatory=$false)] [switch] $ShowCommand = $false)
 
     $fireAction = New-RunspacedDelegate ([Action[object]] {
         param([object] $fireActionLocals)
-        $action = $global:actionsModel[$actionListComboBox.SelectedIndex]
+        $action = $fireActionLocals.action
         $actionId = $action.Id
         $queue = [System.Collections.Generic.Queue[object]]::new()
         $execActionTaskCompletionSource = $fireActionLocals.execActionTaskCompletionSource
@@ -5079,12 +5084,19 @@ Function global:ExecuteAction {
             continuationReportIteration=$continuationReportIteration;
         }
 
+        if ($action.Singleton) {
+            $firstElement = $queue.Dequeue()
+            $queue.Clear()
+            $queue.Enqueue($firstElement)
+        }
+
         $null = ApplyAsync $context $queue $function $reportBatchResults
     })
 
     $execActionTaskCompletionSource = [System.Threading.Tasks.TaskCompletionSource[object]]::new()
 
     $fireActionLocals = @{
+        action=$global:actionsModel[$actionListComboBox.SelectedIndex];
         execActionTaskCompletionSource=$execActionTaskCompletionSource;
         Serial=$Serial;
         ShowCommand=$ShowCommand;
