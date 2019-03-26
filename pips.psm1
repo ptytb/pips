@@ -3861,7 +3861,6 @@ class ProcessWithPipedIO {
             # $null = $form.BeginInvoke($ProcessExitedDelegate, ($Sender, $EventArgs))
         }.GetNewClosure())
         $self._process.add_Exited($this._exitedCallback)
-        $self._process.add_Disposed($this._exitedCallback)
 
         $this._taskCompletionSource = [System.Threading.Tasks.TaskCompletionSource[int]]::new()
     }
@@ -3936,7 +3935,7 @@ class ProcessWithPipedIO {
 
             $delegate = New-RunspacedDelegate ([EventHandler] {
                 param([System.Windows.Forms.Timer] $Sender)
-                $Sender.Enabled = $false
+                # $Sender.Enabled = $false
                 $self = $Sender.Tag
                 $count = $self.FlushBuffersToLog()
 
@@ -3978,7 +3977,7 @@ class ProcessWithPipedIO {
                             $Sender.Interval = $throttlingInterval  # our child process is silent, we'll throttle
                         }
                     }
-                    $Sender.Enabled = $true
+                    # $Sender.Enabled = $true
                 }
             })
 
@@ -4011,6 +4010,23 @@ class ProcessWithPipedIO {
     hidden _ConfirmExit($exception) {
         WriteLog "_ConfirmExit E='$exception' OUT=$($this._processOutputEnded) ERR=$($this._processErrorEnded)"
 
+        if ($this._timer) {
+            $this._timer.Stop()
+            $this._timer = $null
+        }
+
+        $this._process.EnableRaisingEvents = $false
+        $this._process.remove_Exited($this._exitedCallback)
+        $this._exitedCallback = $null
+        if ($this._errorCallback) {
+             $this._process.remove_ErrorDataReceived($this._errorCallback)
+             $this._errorCallback = $null
+         }
+        if ($this._outputCallback) {
+             $this._process.remove_OutputDataReceived($this._outputCallback)
+             $this._outputCallback = $null
+         }
+
         $delegate = New-RunspacedDelegate ([Action[object]] {
             param([object] $locals)
             $self = $locals.self
@@ -4033,12 +4049,8 @@ class ProcessWithPipedIO {
                 $self._process.WaitForExit()
                 try {
                     $self._process.Dispose()
-                } finally { 
+                } finally {
                     $self._process = $null
-                    if ($self._timer) {
-                        $self._timer.Stop()
-                        $self._timer = $null
-                    }
                 }
             })
             $token = [System.Threading.CancellationToken]::None
