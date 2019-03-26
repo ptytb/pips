@@ -111,7 +111,7 @@ $global:ActionCommands = @{
         update        = @{ Command='CondaExe'; Args={ ('update', '--prefix', (py 'Path'), '--yes', '-q', $package) } };
         install       = @{ Command='CondaExe'; Args={ ('install', (Get-PipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--yes', '-q', '--no-shortcuts', $package) } };
         install_dry   = @{ Command='CondaExe'; Args={ ('install', (Get-PipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--dry-run', $package) } };
-        install_nodep = @{ Command='CondaExe'; Args={ ('install', (Get-PipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--yes', '-q', '--no-shortcuts', '--no-deps', '--no-update-dependencies', $package) } };
+        install_nodeps= @{ Command='CondaExe'; Args={ ('install', (Get-PipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--yes', '-q', '--no-shortcuts', '--no-deps', '--no-update-dependencies', $package) } };
         uninstall     = @{ Command='CondaExe'; Args={ ('uninstall', '--prefix', (py 'Path'), '--yes', $package) } };
         deps_reverse  = @{ Command='CondaExe'; Args={ ('search', <#'--json',#> '--reverse-dependency', $package) }; <# PostprocessOutput={
             WriteLog ($output `
@@ -5008,7 +5008,7 @@ Function global:ExecuteAction {
 
             trap {
                 $null = WriteLog "Failed to ${actionId}: $_" -Background LightSalmon
-                return [System.Threading.Tasks.Task]::FromException([Exception]::new($_))
+                return [System.Threading.Tasks.Task]::FromException($_.Exception)
             }
 
             if ($element -is [System.Collections.DictionaryEntry]) {  # Bulk operation on [String type, DataRow[] packages]
@@ -5043,7 +5043,17 @@ Function global:ExecuteAction {
 
             $isInternalCommand = $action.Command -is [ScriptBlock]  # if it's not an external process then handle it right away (causes hang on long op)
             if ($isInternalCommand) {
-                $result = InvokeWithContext $action.Command $functions $variables @()
+                if ($FunctionContext.ShowCommand) {
+                    WriteLog "Can't show a command line for $actionId because it's implemented in pips."
+                } else {
+                    try {
+                        $null = InvokeWithContext $action.Command $functions $variables @()
+                        $FunctionContext.tasksOkay += 1
+                    } catch {
+                        $FunctionContext.tasksFailed += 1
+                        throw $_.Exception
+                    }
+                }
                 return [System.Threading.Tasks.Task]::FromResult(@{})
             } else {
                 $executableCommand = $interpreter."$($action.Command)"
