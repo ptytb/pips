@@ -4024,12 +4024,6 @@ class ProcessWithPipedIO {
             try { $null = $this._process.CancelErrorRead() } catch { }
             $this._process.remove_ErrorDataReceived($this._errorCallback)
         }
-        if ($this._process.StandardError) {
-            try { $this._process.StandardError.Close() } catch { }
-        }
-        if ($this._process.StandardOutput) {
-            try { $this._process.StandardOutput.Close() } catch { }
-        }
         WriteLog "_ConfirmExit E='$exception' OUT=$($this._processOutputEnded) ERR=$($this._processErrorEnded)"
         $delegate = New-RunspacedDelegate ([Action[object]] {
             param([object] $locals)
@@ -4045,10 +4039,8 @@ class ProcessWithPipedIO {
                 }
                 if ($self._missedExitEvent) {
                     WriteLog "We are in trouble, missed exit event, this shouldn't happen!" -Background Magenta
-                } else {
-                    $null = $self._process.Close()
                 }
-                $self._process = $null
+                $null = $self._process.Close()
             }
             WriteLog "Exiting _ConfirmExit" -Background DarkOrange
         }.GetNewClosure())
