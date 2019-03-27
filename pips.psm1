@@ -971,7 +971,11 @@ Function AddButtons {
             ([MainFormModes]::AltModeB)=@{Text='List only pip'; Click={ ; [System.Threading.Tasks.Task]::FromResult(@{}) } }
             ([MainFormModes]::AltModeC)=@{Text='List w/o builtin'; Click={ ; [System.Threading.Tasks.Task]::FromResult(@{}) } }
             };
-        AddButton "Sel All Visible" { SetVisiblePackageCheckboxes($true) } ;
+        AddButton "Sel All Visible" { SetVisiblePackageCheckboxes $true } -Modes @{
+                ([MainFormModes]::AltModeA)=@{Text='Sel conda'; Click={ SetVisiblePackageCheckboxes $true @('conda') ; [System.Threading.Tasks.Task]::FromResult(@{}) }};
+                ([MainFormModes]::AltModeB)=@{Text='Sel pip'; Click={ SetVisiblePackageCheckboxes $true @('pip') ; [System.Threading.Tasks.Task]::FromResult(@{}) }};
+                ([MainFormModes]::AltModeC)=@{Text='Inverse'; Click={ SetVisiblePackageCheckboxes -Inverse ; [System.Threading.Tasks.Task]::FromResult(@{}) }};
+            };
         AddButton "Select None" { SetAllPackageCheckboxes($false) } ;
         AddButton "Check Deps" ${function:CheckDependencies} -AsyncHandlers ;
         AddButton "Execute" ${function:ExecuteAction} -AsyncHandlers -Modes @{
@@ -4717,7 +4721,13 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
     }
 }
 
-Function global:SetVisiblePackageCheckboxes($value) {
+Function global:SetVisiblePackageCheckboxes {
+    [CmdletBinding()]
+    param(
+        [bool] $Value,
+        [AllowNull()] [string[]] $Filter = $null,
+        [switch] $Inverse)
+
     $global:dataModel.BeginLoadData()
 
     $headersSizeMode = $dataGridView.RowHeadersWidthSizeMode
@@ -4726,10 +4736,17 @@ Function global:SetVisiblePackageCheckboxes($value) {
     $dataGridView.AutoSizeColumnsMode = [System.Windows.Forms.DataGridViewAutoSizeColumnsMode]::None
 
     for ($i = 0; $i -lt $dataGridView.Rows.Count; $i++) {
-        if ($dataGridView.Rows[$i].DataBoundItem.Row.Type -in @('builtin', 'other') ) {
+        $type = $dataGridView.Rows[$i].DataBoundItem.Row.Type
+        if ($type -in @('builtin', 'other') ) {
             continue
         }
-        $dataGridView.Rows[$i].DataBoundItem.Row.Select = $value
+        if ($Filter -and ($type -notin $Filter)) {
+            continue
+        }
+        if ($Inverse) {
+            $Value = -not $dataGridView.Rows[$i].DataBoundItem.Row.Select
+        }
+        $dataGridView.Rows[$i].DataBoundItem.Row.Select = $Value
     }
 
     $dataGridView.RowHeadersWidthSizeMode = $headersSizeMode
