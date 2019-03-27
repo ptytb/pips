@@ -83,7 +83,7 @@ x = Package doesn't exist in index
 $global:ActionCommands = @{
     common=@{
         documentation  = @{ Command={ (ShowDocView $package).Show() } };
-        copy_reqs      = @{ Command={ CopyAsRequirementsTxt($queue) } };
+        copy_reqs      = @{ Command={ Set-Clipboard (($package -split ' ') -join [Environment]::NewLine) ; WriteLog "Copied $count items to clipboard." } };
     };
     other=@{
         files          = @{ Command= { Get-ChildItem -Recurse "$(py 'SitePackagesDir')\$package" | ForEach-Object { WriteLog $_.FullName } } };
@@ -1187,15 +1187,6 @@ Function global:GetCondaPackagesAsync([bool] $outdatedOnly) {
     return $taskProcessJson
 }
 
-Function CopyAsRequirementsTxt($list) {
-    $requirements = New-Object System.Text.StringBuilder
-    foreach ($item in $list) {
-        $null = $requirements.AppendLine("$($item.Package)==$($item.Installed)")
-    }
-    Set-Clipboard $requirements.ToString()
-    WriteLog "Copied $($list.Count) items to clipboard."
-}
-
 Function Make-PipActionItem($name, $code, $validator, $takesList = $false, $id = $null) {
     $action = New-Object psobject -Property @{Name=$name; TakesList=$takesList; Index=(++$Script:actionItemCount);}
     $action | Add-Member -MemberType ScriptMethod -Name Execute  -Value $code -Force
@@ -1211,13 +1202,13 @@ Function Add-ComboBoxActions {
         <#
         .PARAMETER Bulk
         Bulked command processes all the packages of the same type at once, for each of all distinct package types (pip, conda, ...)
-        .PARAMETER Synchronous
-        Synchronous command must return immediately
+        .PARAMETER AllTypes
+        Command accepts all package types
         #>
-        param([hashtable] $actionProperties, [switch] $Bulk, [switch] $Synchronous, [switch] $Singleton)
+        param([hashtable] $actionProperties, [switch] $Bulk, [switch] $AllTypes, [switch] $Singleton)
         $action = New-Object PSObject -Property $actionProperties
         $action | Add-Member -MemberType NoteProperty -Name Bulk -Value $Bulk -Force
-        $action | Add-Member -MemberType NoteProperty -Name Synchronous -Value $Synchronous -Force
+        $action | Add-Member -MemberType NoteProperty -Name AllTypes -Value $AllTypes -Force
         $action | Add-Member -MemberType NoteProperty -Name Index -Value $index -Force
         $action | Add-Member -MemberType NoteProperty -Name Singleton -Value $Singleton -Force
         $action | Add-Member -MemberType ScriptMethod -Name ToString -Value { "$($this.Name) [F$($this.Index)]" } -Force
@@ -1235,7 +1226,7 @@ Function Add-ComboBoxActions {
     AddAction @{ Name='Uninstall'; Id='uninstall'; } -Bulk
     AddAction @{ Name='Install (dry run)'; Id='install_dry'; } -Bulk
     AddAction @{ Name='Download'; Id='download'; } -Bulk
-    AddAction @{ Name='Copy as requirements'; Id='copy_reqs'; } -Bulk -Synchronous
+    AddAction @{ Name='Copy as requirements'; Id='copy_reqs'; } -Bulk -AllTypes
     AddAction @{ Name='List files'; Id='files'; }
 
     $global:actionsModel = $actionsModel
@@ -4922,25 +4913,9 @@ Function global:ExecuteAction {
         param([object] $fireActionLocals)
         $action = $fireActionLocals.action
         $actionId = $action.Id
-        $queue = [System.Collections.Generic.Queue[object]]::new()
         $execActionTaskCompletionSource = $fireActionLocals.execActionTaskCompletionSource
         $Serial = $fireActionLocals.Serial
         $ShowCommand = $fireActionLocals.ShowCommand
-
-        for ($i = 0; $i -lt $global:dataModel.Rows.Count; $i++) {
-            if ($global:dataModel.Rows[$i].Select -eq $true) {
-                $null = $queue.Enqueue($global:dataModel.Rows[$i])
-            }
-        }
-
-        $bulk = $action.Bulk -and (-not $Serial)
-        if ($bulk -and ($queue.Count -gt 0)) {
-            $queueTypePackages = $queue | Group-Object -Property @{Expression={ $_.Type }} -AsString -AsHashTable
-            $queue.Clear()
-            foreach ($pair in $queueTypePackages.GetEnumerator()) {
-                $queue.Enqueue($pair)
-            }
-        }
 
         $reportBatchResults = New-RunspacedDelegate([Action[System.Threading.Tasks.Task, object]] {
             param([System.Threading.Tasks.Task] $task, [object] $FunctionContext)
@@ -5026,7 +5001,7 @@ Function global:ExecuteAction {
                 $packages = $packages -join ' '
                 WriteLog "Running $($actionId) on $packages" -Background LightPink
 
-                $variables = @{ package=$packages; }  # vars for ActionCommands
+                $variables = @{ package=$packages; count=$dataRows.Count; }  # vars for ActionCommands
             } else {
                 $dataRow = $element
                 $package, $installed, $type = $dataRow.Package, $dataRow.Installed, $dataRow.Type
@@ -5094,10 +5069,28 @@ Function global:ExecuteAction {
             continuationReportIteration=$continuationReportIteration;
         }
 
-        if ($action.Singleton) {
+        $queue = [System.Collections.Generic.Queue[object]]::new()
+
+        for ($i = 0; $i -lt $global:dataModel.Rows.Count; $i++) {
+            if ($global:dataModel.Rows[$i].Select -eq $true) {
+                $null = $queue.Enqueue($global:dataModel.Rows[$i])
+            }
+        }
+
+        if ($action.Bulk -and (-not $Serial) -and (-not $action.AllTypes) -and ($queue.Count -gt 0)) {
+            $queueTypePackages = $queue | Group-Object -Property @{Expression={ $_.Type }} -AsString -AsHashTable
+            $queue.Clear()
+            foreach ($pair in $queueTypePackages.GetEnumerator()) {
+                $queue.Enqueue($pair)
+            }
+        } elseif ($action.Singleton) {
             $firstElement = $queue.Dequeue()
             $queue.Clear()
             $queue.Enqueue($firstElement)
+        } elseif ($action.Bulk -and $action.AllTypes) {
+            $everything = $queue.ToArray()
+            $queue.Clear()
+            $queue.Enqueue([System.Collections.DictionaryEntry]::new('common', $everything))
         }
 
         $null = ApplyAsync $context $queue $function $reportBatchResults
