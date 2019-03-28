@@ -73,6 +73,23 @@ $global:packageTypes = [System.Collections.ArrayList]::new()
 $global:packageTypes.AddRange(@('pip', 'conda', 'git', 'wheel', 'https'))
 $Global:PyPiPackageJsonCache = New-Object 'System.Collections.Generic.Dictionary[string,PSCustomObject]'
 
+enum LogVerbosity {
+    Quiet;
+    Normal;
+    Verbose;
+    VeryVerbose;
+}
+
+Function global:FormatArgumentsForLogVerbosity {
+    $arguments = switch ($global:_LogVerbosity) {
+        ([LogVerbosity]::Quiet) { '-q' }
+        ([LogVerbosity]::Normal) { '' }
+        ([LogVerbosity]::Verbose) { '-v' }
+        ([LogVerbosity]::VeryVerbose) { '-vv' }
+    }
+    return $arguments
+}
+
 $global:PIP_DEP_TREE_LEGEND = "
 Tree legend:
 * = Extra package
@@ -89,18 +106,18 @@ $global:ActionCommands = @{
         files          = @{ Command= { Get-ChildItem -Recurse "$(py 'SitePackagesDir')\$package" | ForEach-Object { WriteLog $_.FullName } } };
     };
     pip=@{
-        info           = @{ Command='PythonExe'; Args={ ('-m', 'pip', 'show', $package)                 }; Validate={ $exitCode -eq 0 }; };
-        files          = @{ Command='PythonExe'; Args={ ('-m', 'pip', 'show', '--files', $package)      }; Validate={ $exitCode -eq 0 }; };
-        update         = @{ Command='PythonExe'; Args={ ('-m', 'pip', 'install', '-U', $package)        }; Validate={ $output -match "Successfully installed (?:[^\s]+\s+)*$package" } };
-        install        = @{ Command='PythonExe'; Args={ ('-m', 'pip', 'install', $package)              }; Validate={ } };
-        install_nodeps = @{ Command='PythonExe'; Args={ ('-m', 'pip', 'install', '--no-deps', $package) }; Validate={ } };
-        download       = @{ Command='PythonExe'; Args={ ('-m', 'pip', 'download', $package)             }; Validate={ } };
-        uninstall      = @{ Command='PythonExe'; Args={ ('-m', 'pip', 'uninstall', '--yes', $package)   }; Validate={ } };
+        info           = @{ Command='PythonExe'; Args={ ('-m', 'pip', (verbosity), 'show', $package)                 }; Validate={ $exitCode -eq 0 }; };
+        files          = @{ Command='PythonExe'; Args={ ('-m', 'pip', (verbosity), 'show', '--files', $package)      }; Validate={ $exitCode -eq 0 }; };
+        update         = @{ Command='PythonExe'; Args={ ('-m', 'pip', (verbosity), 'install', '-U', $package)        }; Validate={ $output -match "Successfully installed (?:[^\s]+\s+)*$package" } };
+        install        = @{ Command='PythonExe'; Args={ ('-m', 'pip', (verbosity), 'install', $package)              }; Validate={ } };
+        install_nodeps = @{ Command='PythonExe'; Args={ ('-m', 'pip', (verbosity), 'install', '--no-deps', $package) }; Validate={ } };
+        download       = @{ Command='PythonExe'; Args={ ('-m', 'pip', (verbosity), 'download', $package)             }; Validate={ } };
+        uninstall      = @{ Command='PythonExe'; Args={ ('-m', 'pip', (verbosity), 'uninstall', '--yes', $package)   }; Validate={ } };
         deps_reverse   = @{ Command={ GetReverseDependencies }; }
         deps_tree      = @{ Command={ WriteLog $PIP_DEP_TREE_LEGEND ; WriteLog (GetDependencyAsciiGraph $package) } };
     };
     conda=@{
-        info          = @{ Command='CondaExe'; Args= { ('list', '--prefix', (py 'Path'), '-v', '--json', $package) } };
+        info          = @{ Command='CondaExe'; Args= { ('list', '--prefix', (py 'Path'), (verbosity), '--json', $package) } };
         files         = @{ Command={
             $path = "$(py 'Path')\conda-meta"
             $query = "$package*.json"
@@ -108,12 +125,12 @@ $global:ActionCommands = @{
             $json = Get-Content -Raw "$path\$file" | ConvertFrom-Json
             WriteLog ($json.files -join ([Environment]::NewLine))
         } };
-        update        = @{ Command='CondaExe'; Args={ ('update', '--prefix', (py 'Path'), '--yes', '-q', $package) } };
-        install       = @{ Command='CondaExe'; Args={ ('install', (Get-PipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--yes', '-q', '--no-shortcuts', $package) } };
-        install_dry   = @{ Command='CondaExe'; Args={ ('install', (Get-PipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--dry-run', $package) } };
-        install_nodeps= @{ Command='CondaExe'; Args={ ('install', (Get-PipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--yes', '-q', '--no-shortcuts', '--no-deps', '--no-update-dependencies', $package) } };
-        uninstall     = @{ Command='CondaExe'; Args={ ('uninstall', '--prefix', (py 'Path'), '--yes', $package) } };
-        deps_reverse  = @{ Command='CondaExe'; Args={ ('search', <#'--json',#> '--reverse-dependency', $package) }; <# PostprocessOutput={
+        update        = @{ Command='CondaExe'; Args={ ('update', '--prefix', (py 'Path'), '--yes', (verbosity), $package) } };
+        install       = @{ Command='CondaExe'; Args={ ('install', (Get-PipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--yes', (verbosity), '--no-shortcuts', $package) } };
+        install_dry   = @{ Command='CondaExe'; Args={ ('install', (Get-PipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--dry-run', (verbosity), $package) } };
+        install_nodeps= @{ Command='CondaExe'; Args={ ('install', (Get-PipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--yes', (verbosity), '--no-shortcuts', '--no-deps', '--no-update-dependencies', $package) } };
+        uninstall     = @{ Command='CondaExe'; Args={ ('uninstall', '--prefix', (py 'Path'), '--yes', (verbosity), $package) } };
+        deps_reverse  = @{ Command='CondaExe'; Args={ ('search', <#'--json',#> '--reverse-dependency', (verbosity), $package) }; <# PostprocessOutput={
             WriteLog ($output `
                 | ConvertFrom-Json `
                 | Get-Member -Type NoteProperty `
@@ -704,6 +721,7 @@ $global:_WritePipLogBacklog = [System.Collections.Generic.List[hashtable]]::new(
 [bool] $global:_LogViewHasBeenScrolledToEnd = $false
 [bool] $global:_LogViewAutoScroll = $true
 [System.Threading.SpinLock] $global:_LogViewCriticalSection = [System.Threading.SpinLock]::new($false)
+[LogVerbosity] $global:_LogVerbosity = [LogVerbosity]::Normal
 
 Function global:WriteLogHelper {
     param(
@@ -3162,16 +3180,23 @@ Function CreateMainForm {
             $global:_LogViewAutoScroll = $Sender.CheckState -eq [System.Windows.Forms.CheckState]::Checked
         })
 
+    $comboLogLevel = [System.Windows.Forms.ToolStripDropDownButton]::new()
+    $comboLogLevel.Alignment = [System.Windows.Forms.ToolStripItemAlignment]::Right
+    $comboLogLevel.ShowDropDownArrow = $true
+
     $dropDown = [System.Windows.Forms.ToolStripDropDown]::new()
     $dropDownItems = ('Very verbose', 'Verbose', 'Normal', 'Quiet') `
-        | ForEach-Object { [System.Windows.Forms.ToolStripButton]::new($_) }
+        | ForEach-Object {
+            $title = $_
+            $button = [System.Windows.Forms.ToolStripButton]::new($title)
+            $level = [LogVerbosity] ($title -replace ' ','')
+            $button.add_Click({ $global:_LogVerbosity = $level ; $comboLogLevel.Text = "Verbosity: $title" }.GetNewClosure())
+            return $button
+        }
+    $dropDownItems[2].PerformClick()  # Normal
     $null = $dropDown.Items.AddRange($dropDownItems)
 
-    $comboLogLevel = [System.Windows.Forms.ToolStripDropDownButton]::new()
-    $comboLogLevel.Text = 'Log verbosity:'
-    $comboLogLevel.Alignment = [System.Windows.Forms.ToolStripItemAlignment]::Right
     $comboLogLevel.DropDown = $dropDown
-    $comboLogLevel.ShowDropDownArrow = $true
 
     $statusProgress = [System.Windows.Forms.ToolStripProgressBar]::new()
     $statusProgress.Minimum = 0
@@ -5066,7 +5091,10 @@ Function global:ExecuteAction {
             $executableArguments = $null
             $executableCommand = $null
             $variables = $null
-            $functions = @{ py={ param($property) $interpreter."$property" }; }  # funcs to be called from ActionCommands
+            $functions = @{  # funcs to be called from ActionCommands
+                py={ param($property) $interpreter."$property" };
+                verbosity=${function:global:FormatArgumentsForLogVerbosity};
+                }
 
             trap {
                 $null = WriteLog "Failed to ${actionId}: $_" -Background LightSalmon
@@ -5089,7 +5117,7 @@ Function global:ExecuteAction {
                 WriteLog "Running $($actionId) on $packages" -Background LightPink
 
                 $variables = @{ package=$packages; count=$dataRows.Count; }  # vars for ActionCommands
-            } else {
+            } else {  # Serial operation on [String type, DataRow package]
                 $dataRow = $element
                 $package, $installed, $type = $dataRow.Package, $dataRow.Installed, $dataRow.Type
 
