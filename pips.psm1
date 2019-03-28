@@ -832,7 +832,7 @@ Function global:WriteLog {
         }
         $null = $logView.BeginInvoke($global:WritePipLogDelegate, ($logView, $EventArgs))
     } else {
-        $null = global:WriteLogHelper @arguments
+        $null = WriteLogHelper @arguments
     }
 }
 
