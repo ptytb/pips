@@ -3174,10 +3174,15 @@ Function CreateMainForm {
     $comboLogLevel.ShowDropDownArrow = $true
 
     $statusProgress = [System.Windows.Forms.ToolStripProgressBar]::new()
-    $statusProgress.Value = 50
+    $statusProgress.Minimum = 0
+    $statusProgress.Maximum = 100
+    $statusProgress.Value = 0
     $statusProgress.Alignment = [System.Windows.Forms.ToolStripItemAlignment]::Right
     $null = $statusStrip.Items.AddRange(($statusLabel, $spacer, $buttonAutoScroll, $comboLogLevel, $statusProgress))
     $null = $form.Controls.Add($statusStrip)
+    ${function:global:_Progress} = { param($value) $statusProgress.Value = $value }.GetNewClosure()
+    ${function:global:_ProgressStep} = { param($value) $statusProgress.Value += $value }.GetNewClosure()
+    ${function:global:_ProgressMaximum} = { param($value) $statusProgress.Maximum = $value }.GetNewClosure()
 
     return ,$form
 }
@@ -4202,6 +4207,7 @@ class WidgetStateTransition {
         while ($this._states.Count -gt 0) {
             $null = $this.Reverse()
         }
+        $this.Progress(0)
         return $this
     }
 
@@ -4334,6 +4340,15 @@ class WidgetStateTransition {
         return $this
     }
 
+    [WidgetStateTransition] ProgressMaximum([int] $value) {
+        _ProgressMaximum($value)
+        return $this
+    }
+
+    [WidgetStateTransition] Progress([int] $value) {
+        _Progress($value)
+        return $this
+    }
 }
 
 
@@ -5031,6 +5046,8 @@ Function global:ExecuteAction {
                 $locals.functionContext.tasksFailed += 1
             }
 
+            _ProgressStep 1
+
             # PostIrreversibleTransformWithMethodCall()
             # $global:dataModel.Columns['Status'].ReadOnly = $false
             # $global:dataModel.Columns['Status'].ReadOnly = $true
@@ -5167,6 +5184,8 @@ Function global:ExecuteAction {
             $queue.Clear()
             $queue.Enqueue([System.Collections.DictionaryEntry]::new('common', $everything))
         }
+
+        _ProgressMaximum $queue.Count
 
         $null = ApplyAsync $functionContext $queue $function $reportBatchResults
     })
