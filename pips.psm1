@@ -702,6 +702,8 @@ Function Convert-Base64ToICO($base64Text) {
 $global:_WritePipLogBacklog = [System.Collections.Generic.List[hashtable]]::new()
 [int] $global:_LogViewEventMask = 0
 [bool] $global:_LogViewHasBeenScrolledToEnd = $false
+[bool] $global:_LogViewAutoScroll = $true
+[System.Threading.SpinLock] $global:_LogViewCriticalSection = [System.Threading.SpinLock]::new($false)
 
 Function global:WriteLogHelper {
     param(
@@ -712,67 +714,89 @@ Function global:WriteLogHelper {
         [object] $Foreground
     )
 
-    $hidden = $global:form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized
+    [bool] $taken = $false
+    try {
+        $global:_LogViewCriticalSection.TryEnter([ref] $taken)
 
-    # if (-not $hidden) {
-    #     $null = SendMessage $logView.Handle $WM_SETREDRAW 0 0
-    #     $eventMask = SendMessage $logView.Handle $EM_SETEVENTMASK 0 0
-    # }
+        $hidden = $global:form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized
 
-    $text = $Lines -join ' '
+        if (-not $hidden) {
+            $null = SendMessage $logView.Handle $WM_SETREDRAW 0 0
+            $eventMask = SendMessage $logView.Handle $EM_SETEVENTMASK 0 0
+        }
 
-    if ($UpdateLastLine) {
-        $text = $text -replace "`r|`n",''
+        $text = $Lines -join ' '
 
-        $cr = $lastLineCharIndex = $logView.Find("`r", 0, $logView.TextLength,
-            [System.Windows.Forms.RichTextBoxFinds]::Reverse)
+        # TextSelection rtb.Selection;
+        $caretPosition = $logView.SelectionStart
 
-        $lf = $lastLineCharIndex = $logView.Find("`n", 0, $logView.TextLength,
-            [System.Windows.Forms.RichTextBoxFinds]::Reverse)
+        if ($UpdateLastLine) {
+            $text = $text -replace "`r|`n",''
 
-        $lastLineCharIndex = [Math]::Max($cr, $lf)
+            $cr = $lastLineCharIndex = $logView.Find("`r", 0, $logView.TextLength,
+                [System.Windows.Forms.RichTextBoxFinds]::Reverse)
 
-        if ($lastLineCharIndex -eq -1) {
-            $lastLineCharIndex = 0
+            $lf = $lastLineCharIndex = $logView.Find("`n", 0, $logView.TextLength,
+                [System.Windows.Forms.RichTextBoxFinds]::Reverse)
+
+            $lastLineCharIndex = [Math]::Max($cr, $lf)
+
+            if ($lastLineCharIndex -eq -1) {
+                $lastLineCharIndex = 0
+            } else {
+                ++$lastLineCharIndex
+            }
+
+            $lastLineLength = $logView.TextLength - $lastLineCharIndex
+            $logView.Select($lastLineCharIndex, $lastLineLength);
+            $logView.SelectedText = $text
+
+            $logFrom = $lastLineCharIndex
+            $logTo = $logView.TextLength
         } else {
-            ++$lastLineCharIndex
+            $logFrom = $logView.TextLength
+            $null = $logView.AppendText($text)
+            $logTo = $logView.TextLength
+
+            if (-not $NoNewline) {
+                $logView.AppendText([Environment]::NewLine)
+            }
         }
 
-        $lastLineLength = $logView.TextLength - $lastLineCharIndex
-        $logView.Select($lastLineCharIndex, $lastLineLength);
-        $logView.SelectedText = $text
-
-        $logFrom = $lastLineCharIndex
-        $logTo = $logView.TextLength
-    } else {
-        $logFrom = $logView.TextLength
-        $null = $logView.AppendText($text)
-        $logTo = $logView.TextLength
-
-        if (-not $NoNewline) {
-            $logView.AppendText([Environment]::NewLine)
+        if (($Background -ne $null) -or ($Foreground -ne $null)) {
+            $logView.Select($logFrom, $logTo - $logFrom)
+            if ($Background -ne $null) {
+                $logView.SelectionBackColor = $Background
+            }
+            if ($Foreground -ne $null) {
+                $logView.SelectionColor = $Foreground
+            }
         }
-    }
 
-    if (($Background -ne $null) -or ($Foreground -ne $null)) {
-        $logView.Select($logFrom, $logTo)
-        if ($Background -ne $null) {
-            $logView.SelectionBackColor = $Background
+        $logView.DeselectAll()
+
+        if (-not $hidden) {
+            $null = SendMessage $logView.Handle $WM_SETREDRAW 1 0
+            $null = SendMessage $logView.Handle $EM_SETEVENTMASK 0 $eventMask
         }
-        if ($Foreground -ne $null) {
-            $logView.SelectionColor = $Foreground
+
+        if ($global:_LogViewAutoScroll) {
+            if (-not $hidden) {
+                $textLength = $logView.TextLength
+                $logView.Select($textLength, 0)
+                $logView.Invalidate()
+                $null = PostMessage $logView.Handle $WM_VSCROLL $SB_PAGEBOTTOM 0
+            } else {
+                $global:_LogViewHasBeenScrolledToEnd = $true
+            }
+        } else {
+            $logView.Select($caretPosition, 0)
         }
-    }
 
-    if (-not $hidden) {
-        $textLength = $logView.TextLength
-        $logView.Select($textLength, $textLength)
-
-        # $null = SendMessage $logView.Handle $WM_SETREDRAW 1 0
-        # $null = SendMessage $logView.Handle $EM_SETEVENTMASK 0 $eventMask
-        $null = PostMessage $logView.Handle $WM_VSCROLL $SB_PAGEBOTTOM 0
-    } else {
-        $global:_LogViewHasBeenScrolledToEnd = $true
+    } finally {
+        if ($taken) {
+            $global:_LogViewCriticalSection.Exit($false)
+        }
     }
 }
 
@@ -2962,7 +2986,7 @@ Function CreateMainForm {
             $logView.SelectAll()
             $logView.SelectionBackColor = $logView.BackColor
 
-            $logView.Select($row.LogFrom, $row.LogTo)
+            $logView.Select($row.LogFrom, $row.LogTo) # TODO: 2nd must be len
             $logView.SelectionBackColor = [Drawing.Color]::Yellow
             $logView.ScrollToCaret()
         }
@@ -3128,6 +3152,16 @@ Function CreateMainForm {
     $spacer = [System.Windows.Forms.ToolStripStatusLabel]::new()
     $spacer.Spring = $true
 
+    $buttonAutoScroll = [System.Windows.Forms.ToolStripButton]::new()
+    $buttonAutoScroll.CheckState = if ($global:_LogViewAutoScroll) {
+        [System.Windows.Forms.CheckState]::Checked } else { [System.Windows.Forms.CheckState]::Unchecked }
+    $buttonAutoScroll.CheckOnClick = $true
+    $buttonAutoScroll.Text = 'Autoscroll'
+    $buttonAutoScroll.add_CheckStateChanged({
+            param($Sender, $EventArgs)
+            $global:_LogViewAutoScroll = $Sender.CheckState -eq [System.Windows.Forms.CheckState]::Checked
+        })
+
     $dropDown = [System.Windows.Forms.ToolStripDropDown]::new()
     $dropDownItems = ('Very verbose', 'Verbose', 'Normal', 'Quiet') `
         | ForEach-Object { [System.Windows.Forms.ToolStripButton]::new($_) }
@@ -3142,7 +3176,7 @@ Function CreateMainForm {
     $statusProgress = [System.Windows.Forms.ToolStripProgressBar]::new()
     $statusProgress.Value = 50
     $statusProgress.Alignment = [System.Windows.Forms.ToolStripItemAlignment]::Right
-    $null = $statusStrip.Items.AddRange(($statusLabel, $spacer, $comboLogLevel, $statusProgress))
+    $null = $statusStrip.Items.AddRange(($statusLabel, $spacer, $buttonAutoScroll, $comboLogLevel, $statusProgress))
     $null = $form.Controls.Add($statusStrip)
 
     return ,$form
@@ -3707,7 +3741,7 @@ class TextBoxNavigationHook {
             if (($_.KeyCode -eq 'G') -and $_.Shift) {
                 $null = SendMessage $Sender.Handle $WM_VSCROLL $SB_PAGEBOTTOM 0
                 $textLength = $richTextBox.TextLength
-                $richTextBox.Select($textLength, $textLength)
+                $richTextBox.Select($textLength, 0)
                 $_.Handled = $true
             }
             if ($_.KeyCode -eq 'Space') {
