@@ -980,7 +980,25 @@ Function AddButtons {
         AddButton "Check Deps" ${function:CheckDependencies} -AsyncHandlers ;
         AddButton "Execute" ${function:ExecuteAction} -AsyncHandlers -Modes @{
                 ([MainFormModes]::AltModeA)=@{Text='Show command'; Click={ ExecuteAction -ShowCommand }};
-                ([MainFormModes]::AltModeB)=@{Text='Execute...'; Click={ WriteLog 'AltModeB' -Foreground Green ; [System.Threading.Tasks.Task]::FromResult(@{}) }};
+                ([MainFormModes]::AltModeB)=@{Text='Execute...'; Click={
+                    $history = Get-Variable -Name CUSTOM_COMMAND_ARGUMENTS_HISTORY -Scope Global -ErrorAction SilentlyContinue -ValueOnly
+                    if (-not $history) {
+                        $history = [System.Collections.Generic.List[string]]::new()
+                        $global:CUSTOM_COMMAND_ARGUMENTS_HISTORY = $history
+                    }
+                    $message = @'
+Enter the arguments for python, for example: -m pip show -v
+
+The list of packages will be appended to the end.
+'@
+                    $default = if ($history.Count -gt 0) { $history[-1] } else { '' }
+                    $request = RequestUserString $message 'Custom arguments' $default $history
+                    if ($request -eq $null) {
+                        return [System.Threading.Tasks.Task]::FromException([Exception]::new('Cancelled by user'))
+                    }
+                    $history.Add($request)
+                    ExecuteAction -CustomArguments ($request.Split(' ', [System.StringSplitOptions]::RemoveEmptyEntries))
+                    }};
                 ([MainFormModes]::AltModeC)=@{Text='Execute serial'; Click={ ExecuteAction -Serial }};
             };
     )
@@ -3036,6 +3054,7 @@ Function CreateMainForm {
 
     $form.add_HandleCreated({
         $global:UI_SYNCHRONIZATION_CONTEXT = [System.Threading.Tasks.TaskScheduler]::FromCurrentSynchronizationContext()
+        $global:UI_THREAD_ID = [System.Threading.Thread]::CurrentThread.ManagedThreadId
 
         $global:FuncRPCSpellCheck = {
             param([string] $text, [int] $distance)
@@ -4924,7 +4943,8 @@ Function global:ExecuteAction {
         Optional parameters for this function are supposed to be passed when using alternative button modes
         #>
         [Parameter(Mandatory=$false)] [switch] $Serial = $false,
-        [Parameter(Mandatory=$false)] [switch] $ShowCommand = $false)
+        [Parameter(Mandatory=$false)] [switch] $ShowCommand = $false,
+        [AllowEmptyCollection()][AllowNull()][Parameter(Mandatory=$false)] [string[]] $CustomArguments = $null)
 
     $fireAction = New-RunspacedDelegate ([Action[object]] {
         param([object] $fireActionLocals)
@@ -4932,7 +4952,6 @@ Function global:ExecuteAction {
         $actionId = $action.Id
         $execActionTaskCompletionSource = $fireActionLocals.execActionTaskCompletionSource
         $Serial = $fireActionLocals.Serial
-        $ShowCommand = $fireActionLocals.ShowCommand
 
         $reportBatchResults = New-RunspacedDelegate([Action[System.Threading.Tasks.Task, object]] {
             param([System.Threading.Tasks.Task] $task, [object] $FunctionContext)
@@ -5049,7 +5068,11 @@ Function global:ExecuteAction {
                 return [System.Threading.Tasks.Task]::FromResult(@{})
             } else {
                 $executableCommand = $interpreter."$($action.Command)"
-                $executableArguments = InvokeWithContext $action.Args $functions $variables @()  # substitute actual params
+                if ($FunctionContext.CustomArguments) {
+                    $executableArguments = "$($FunctionContext.CustomArguments) $($variables.package)"
+                } else {
+                    $executableArguments = InvokeWithContext $action.Args $functions $variables @()  # substitute actual params
+                }
                 WriteLog "$executableCommand $executableArguments" -Background Green -Foreground White
             }
 
@@ -5076,13 +5099,14 @@ Function global:ExecuteAction {
         })
 
 
-        $context = @{
+        $functionContext = @{
             actionId=$actionId;
             interpreter=(GetCurrentInterpreter);
             tasksOkay=0;
             tasksFailed=0;
             execActionTaskCompletionSource=$execActionTaskCompletionSource;
-            ShowCommand=$ShowCommand;
+            ShowCommand=$fireActionLocals.ShowCommand;
+            CustomArguments=$fireActionLocals.CustomArguments;
             continuationReportIteration=$continuationReportIteration;
         }
 
@@ -5110,7 +5134,7 @@ Function global:ExecuteAction {
             $queue.Enqueue([System.Collections.DictionaryEntry]::new('common', $everything))
         }
 
-        $null = ApplyAsync $context $queue $function $reportBatchResults
+        $null = ApplyAsync $functionContext $queue $function $reportBatchResults
     })
 
     $execActionTaskCompletionSource = [System.Threading.Tasks.TaskCompletionSource[object]]::new()
@@ -5120,6 +5144,7 @@ Function global:ExecuteAction {
         execActionTaskCompletionSource=$execActionTaskCompletionSource;
         Serial=$Serial;
         ShowCommand=$ShowCommand;
+        CustomArguments=$CustomArguments;
     }
     $token = [System.Threading.CancellationToken]::None
     $options = ([System.Threading.Tasks.TaskCreationOptions]::AttachedToParent -bor
@@ -5539,7 +5564,7 @@ Function global:InstallDebugHelpers {
             ForegroundColor=((5 + $color) % 15);
         }
         Write-Host ('=' * 70) @color
-        Write-Host 'Managed TID=' ([System.Threading.Thread]::CurrentThread.ManagedThreadId) ', is POOL=' ([System.Threading.Thread]::CurrentThread.IsThreadPoolThread) ', is BACKGRND=' ([System.Threading.Thread]::CurrentThread.IsBackground) -BackgroundColor White -ForegroundColor Black
+        Write-Host 'Managed TID=' ([System.Threading.Thread]::CurrentThread.ManagedThreadId) ', is POOL=' ([System.Threading.Thread]::CurrentThread.IsThreadPoolThread) ', is BACKGRND=' ([System.Threading.Thread]::CurrentThread.IsBackground) -BackgroundColor White -ForegroundColor Black ', UI TID=' $global:UI_THREAD_ID
         Write-Host ('-' * 70) @color
         Write-Host $Exception.GetType() @color
         Write-Host ('-' * 70) @color
