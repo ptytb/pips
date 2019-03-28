@@ -2596,7 +2596,10 @@ Some packages may generate garbage or show windows, don't panic.
                 }
 
                 foreach ($plugin in $global:plugins) {
-                    [void] $paths.Add($plugin.GetCachePath())
+                    $cachePath = $plugin.GetCachePath()
+                    if (Exists-Directory $cachePath) {
+                        $null = $paths.Add($cachePath)
+                    }
                 }
 
                 foreach ($cacheFolder in $paths) {
