@@ -2587,6 +2587,14 @@ Some packages may generate garbage or show windows, don't panic.
                     [void] $paths.Add($cacheFolder)
                 }
 
+                $conda_exe = (GetCurrentInterpreter 'CondaExe')
+                if ($conda_exe) {
+                    $condaConfig = (& $conda_exe info --json) | ConvertFrom-Json
+                    foreach ($cachePath in $condaConfig.pkgs_dirs) {
+                        $null = $paths.Add($cachePath)
+                    }
+                }
+
                 foreach ($plugin in $global:plugins) {
                     [void] $paths.Add($plugin.GetCachePath())
                 }
