@@ -3889,7 +3889,7 @@ class ProcessWithPipedIO {
         $self._LogErrors = $LogErrors
         $self._LogOutput = $LogOutput
 
-        WriteLog "StartWithLogging <1>"
+        if ($global:_DEBUG) { WriteLog "StartWithLogging <Begin>" -Background Wheat }
 
         if ($LogOutput) {  # ReadOutputToEndAsync() is supposed to be called otherwise!
             $this._processOutput = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
@@ -3937,7 +3937,7 @@ class ProcessWithPipedIO {
                 $count = $self.FlushBuffersToLog()
 
                 if ($self._hasFinished -and $self._processOutputEnded -and -$self._processErrorEnded -and ($count -eq 0)) {
-                    WriteLog "Timer exiting normally <5>"
+                    if ($global:_DEBUG) { WriteLog "Monitor timer exiting normally, _ConfirmExit on go" -Background Wheat }
                     $self._ConfirmExit($null)
                 } else {
                     if ($count) {
@@ -3946,14 +3946,14 @@ class ProcessWithPipedIO {
                     } elseif ((--$self._timerIdleThreshold) -lt 0) {
                         $throttlingInterval = 1000
                         if ($Sender.Interval -eq $throttlingInterval) { # already throttling, is it alive?
-                            WriteLog "Timer throttle enter <100>"
+                            if ($global:_DEBUG) { WriteLog "Monitor timer started throttling" -Background Wheat }
                             # Process.Refresh() wipes its state entirely then possibly gets filled in from alive proc; WaitForExit() may lock and is not an option
                             $p = try { [System.Diagnostics.Process]::GetProcessById($self._pid) } catch { $null }
                             $actuallyDead = $p -eq $null
                             if ($p) { $p.Dispose() }
                             $p = $null
 
-                            WriteLog "Throttling status: started=$($self._hasStarted) exited_evt=$($self._hasFinished) now_dead=$actuallyDead code=$($self._exitCode) out_end=$($self._processOutputEnded) err_end=$($self._processErrorEnded)" -Background LightPink
+                            if ($global:_DEBUG) { WriteLog "Throttling status: started=$($self._hasStarted) exited_evt=$($self._hasFinished) now_dead=$actuallyDead code=$($self._exitCode) out_end=$($self._processOutputEnded) err_end=$($self._processErrorEnded)" -Background Wheat }
 
                             $self._missedExitEvent = $actuallyDead -ne $self._hasFinished
 
@@ -3969,7 +3969,7 @@ class ProcessWithPipedIO {
                             }
 
                             $self._hasFinished = $actuallyDead
-                            WriteLog "Timer throttle EXIT <101>"
+                            if ($global:_DEBUG) { WriteLog "Leaving timer throttling routine" -Background Wheat }
                         } else {
                             $Sender.Interval = $throttlingInterval  # our child process is silent, we'll throttle
                         }
@@ -3983,9 +3983,9 @@ class ProcessWithPipedIO {
             $this._timer.add_Tick($delegate)
         }
 
-        WriteLog "StartWithLogging <2>"
+        if ($global:_DEBUG) { WriteLog "StartWithLogging begin _Start()" -Background Wheat }
         $null = $this._Start()
-        WriteLog "StartWithLogging <3>"
+        if ($global:_DEBUG) { WriteLog "StartWithLogging end _Start()" -Background Wheat }
 
         if ($this._hasStarted) {
             if ($LogOutput) {
@@ -3996,16 +3996,16 @@ class ProcessWithPipedIO {
             }
             if ($LogOutput -or $LogErrors) {
                 $this._timer.Start()
-                WriteLog "Timer START <0>"
+                if ($global:_DEBUG) { WriteLog "Started process monitor timer" -Background Wheat }
             }
         }
 
-        WriteLog "StartWithLogging <4>"
+        if ($global:_DEBUG) { WriteLog "StartWithLogging _hasStarted=$($this._hasStarted)" -Background Wheat }
         return $this._taskCompletionSource.Task
     }
 
     hidden _ConfirmExit($exception) {
-        WriteLog "_ConfirmExit E='$exception' OUT=$($this._processOutputEnded) ERR=$($this._processErrorEnded)"
+        if ($global:_DEBUG) { WriteLog "_ConfirmExit EXCEPTION='$exception' OUT_END=$($this._processOutputEnded) ERR_END=$($this._processErrorEnded)" -Background Wheat }
 
         if ($this._timer) {
             $this._timer.Stop()
@@ -4034,11 +4034,11 @@ class ProcessWithPipedIO {
                 $null = $self._taskCompletionSource.TrySetResult($self._exitCode)
             }
             if (-not $self._hasFinished) {
-                WriteLog "Killing" -Background Red
+                if ($global:_DEBUG) { WriteLog "Killing" -Background Magenta }
                 try { $null = $self._process.Kill() } catch { }
             }
             if ($self._missedExitEvent) {
-                WriteLog "We are in trouble, missed exit event, this shouldn't happen!" -Background Magenta
+                if ($global:_DEBUG) { WriteLog "We are in trouble: missed exit event, this shouldn't have happened!" -Background Magenta }
             }
 
             $processClenup = New-RunspacedDelegate([Action[object]] {
@@ -4055,7 +4055,7 @@ class ProcessWithPipedIO {
             $taskGetBuiltinPackages = [System.Threading.Tasks.Task]::Factory.StartNew($processClenup, $self,
                 $token, $options, [System.Threading.Tasks.TaskScheduler]::Default)
 
-            WriteLog "Exiting _ConfirmExit" -Background DarkOrange
+            if ($global:_DEBUG) { WriteLog "Exiting _ConfirmExit" -Background Wheat }
         })
         $token = [System.Threading.CancellationToken]::None
         $options = ([System.Threading.Tasks.TaskCreationOptions]::AttachedToParent)
@@ -5669,6 +5669,7 @@ Function global:Main {
     param([switch] $HideConsole)
 
     $Debug = $PSBoundParameters['Debug']
+    $global:_DEBUG = $Debug
     SetPSLogging $false
     SetPSLimits
 
