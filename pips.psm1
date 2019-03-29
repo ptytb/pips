@@ -99,38 +99,38 @@ x = Package doesn't exist in index
 
 $global:ActionCommands = @{
     common=@{
-        documentation  = @{ Command={ (ShowDocView $package).Show() } };
-        copy_reqs      = @{ Command={ Set-Clipboard (($package -split ' ') -join [Environment]::NewLine) ; WriteLog "Copied $count items to clipboard." } };
+        documentation  = @{ Command={ (ShowDocView (targets)).Show() } };
+        copy_reqs      = @{ Command={ Set-Clipboard (targets -Version -Separator ([Environment]::NewLine)) ; WriteLog "Copied $count items to clipboard." } };
     };
     other=@{
-        files          = @{ Command= { Get-ChildItem -Recurse "$(py 'SitePackagesDir')\$package" | ForEach-Object { WriteLog $_.FullName } } };
+        files          = @{ Command= { Get-ChildItem -Recurse "$(py 'SitePackagesDir')\$(targets)" | ForEach-Object { WriteLog $_.FullName } } };
     };
     pip=@{
-        info           = @{ Command='PythonExe'; Args={ ('-m', 'pip', (verbosity), 'show', $package)                 }; Validate={ $exitCode -eq 0 }; };
-        files          = @{ Command='PythonExe'; Args={ ('-m', 'pip', (verbosity), 'show', '--files', $package)      }; Validate={ $exitCode -eq 0 }; };
-        update         = @{ Command='PythonExe'; Args={ ('-m', 'pip', (verbosity), 'install', '-U', $package)        }; Validate={ $output -match "Successfully installed (?:[^\s]+\s+)*$package" } };
-        install        = @{ Command='PythonExe'; Args={ ('-m', 'pip', (verbosity), 'install', $package)              }; Validate={ } };
-        install_nodeps = @{ Command='PythonExe'; Args={ ('-m', 'pip', (verbosity), 'install', '--no-deps', $package) }; Validate={ } };
-        download       = @{ Command='PythonExe'; Args={ ('-m', 'pip', (verbosity), 'download', $package)             }; Validate={ } };
-        uninstall      = @{ Command='PythonExe'; Args={ ('-m', 'pip', (verbosity), 'uninstall', '--yes', $package)   }; Validate={ } };
+        info           = @{ Command='PythonExe'; Args={ ('-m', 'pip', (verbosity), 'show', (targets))                   }; Validate={ $exitCode -eq 0 }; };
+        files          = @{ Command='PythonExe'; Args={ ('-m', 'pip', (verbosity), 'show', '--files', (targets))        }; Validate={ $exitCode -eq 0 }; };
+        update         = @{ Command='PythonExe'; Args={ ('-m', 'pip', (verbosity), 'install', '-U', (targets))          }; Validate={ $output -match "Successfully installed (?:[^\s]+\s+)*$(targets)" } };
+        install        = @{ Command='PythonExe'; Args={ ('-m', 'pip', (verbosity), 'install', (targets -Version))       }; Validate={ } };
+        install_nodeps = @{ Command='PythonExe'; Args={ ('-m', 'pip', (verbosity), 'install', '--no-deps', (targets -Version))   }; Validate={ } };
+        download       = @{ Command='PythonExe'; Args={ ('-m', 'pip', (verbosity), 'download', (targets -Version))      }; Validate={ } };
+        uninstall      = @{ Command='PythonExe'; Args={ ('-m', 'pip', (verbosity), 'uninstall', '--yes', (targets))     }; Validate={ } };
         deps_reverse   = @{ Command={ GetReverseDependencies }; }
-        deps_tree      = @{ Command={ WriteLog $PIP_DEP_TREE_LEGEND ; WriteLog (GetDependencyAsciiGraph $package) } };
+        deps_tree      = @{ Command={ WriteLog $PIP_DEP_TREE_LEGEND ; WriteLog (GetDependencyAsciiGraph (targets)) } };
     };
     conda=@{
-        info          = @{ Command='CondaExe'; Args= { ('list', '--prefix', (py 'Path'), (verbosity), '--json', $package) } };
+        info          = @{ Command='CondaExe'; Args= { ('list', '--prefix', (py 'Path'), (verbosity), '--json', (targets)) } };
         files         = @{ Command={
             $path = "$(py 'Path')\conda-meta"
-            $query = "$package*.json"
+            $query = "$(targets)*.json"
             $file = Get-ChildItem -Path $path -Name $query -Depth 0 -File
             $json = Get-Content -Raw "$path\$file" | ConvertFrom-Json
             WriteLog ($json.files -join ([Environment]::NewLine))
         } };
-        update        = @{ Command='CondaExe'; Args={ ('update', '--prefix', (py 'Path'), '--yes', (verbosity), $package) } };
-        install       = @{ Command='CondaExe'; Args={ ('install', (GetPipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--yes', (verbosity), '--no-shortcuts', $package) } };
-        install_dry   = @{ Command='CondaExe'; Args={ ('install', (GetPipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--dry-run', (verbosity), $package) } };
-        install_nodeps= @{ Command='CondaExe'; Args={ ('install', (GetPipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--yes', (verbosity), '--no-shortcuts', '--no-deps', '--no-update-dependencies', $package) } };
-        uninstall     = @{ Command='CondaExe'; Args={ ('uninstall', '--prefix', (py 'Path'), '--yes', (verbosity), $package) } };
-        deps_reverse  = @{ Command='CondaExe'; Args={ ('search', <#'--json',#> '--reverse-dependency', (verbosity), $package) }; <# PostprocessOutput={
+        update        = @{ Command='CondaExe'; Args={ ('update', '--prefix', (py 'Path'), '--yes', (verbosity), (targets)) } };
+        install       = @{ Command='CondaExe'; Args={ ('install', (GetPipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--yes', (verbosity), '--no-shortcuts', (targets -Version)) } };
+        install_dry   = @{ Command='CondaExe'; Args={ ('install', (GetPipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--dry-run', (verbosity), (targets -Version)) } };
+        install_nodeps= @{ Command='CondaExe'; Args={ ('install', (GetPipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--yes', (verbosity), '--no-shortcuts', '--no-deps', '--no-update-dependencies', (targets -Version)) } };
+        uninstall     = @{ Command='CondaExe'; Args={ ('uninstall', '--prefix', (py 'Path'), '--yes', (verbosity), (targets)) } };
+        deps_reverse  = @{ Command='CondaExe'; Args={ ('search', <#'--json',#> '--reverse-dependency', (verbosity), (targets)) }; <# PostprocessOutput={
             WriteLog ($output `
                 | ConvertFrom-Json `
                 | Get-Member -Type NoteProperty `
@@ -5107,6 +5107,19 @@ Function global:ExecuteAction {
             $functions = @{  # funcs to be called from ActionCommands
                 py={ param($property) $interpreter."$property" };
                 verbosity=${function:global:FormatArgumentsForLogVerbosity};
+                targets={
+                        param([switch] $Version, [string] $Separator = ' ')
+                        $packages = [System.Collections.Generic.List[string]]::new()
+                        foreach ($dataRow in $dataRows) {
+                            if ($Version -and (-not [string]::IsNullOrWhiteSpace($dataRow.Installed))) {
+                                $null = $packages.Add("{0}=={1}" -f ($dataRow.Package,$dataRow.Installed))
+                            } else {
+                                $null = $packages.Add($dataRow.Package)
+                            }
+                        }
+                        $packages = $packages -join $Separator
+                        return $packages
+                    };
                 }
 
             trap {
@@ -5122,14 +5135,9 @@ Function global:ExecuteAction {
                     throw [Exception]::new("action $actionId is unavailable for type $type")
                 }
 
-                $packages = [System.Collections.Generic.List[string]]::new()
-                foreach ($dataRow in $dataRows) {
-                    $null = $packages.Add("{0}=={1}" -f ($dataRow.Package,$dataRow.Installed))
-                }
-                $packages = $packages -join ' '
-                WriteLog "Running $($actionId) on $packages" -Background LightPink
+                WriteLog "Running $($actionId)" -Background LightPink
 
-                $variables = @{ package=$packages; count=$dataRows.Count; }  # vars for ActionCommands
+                $variables = @{ dataRows=$dataRows; count=$dataRows.Count; }  # vars for ActionCommands
             } else {  # Serial operation on [String type, DataRow package]
                 $dataRow = $element
                 $package, $installed, $type = $dataRow.Package, $dataRow.Installed, $dataRow.Type
@@ -5141,7 +5149,7 @@ Function global:ExecuteAction {
 
                 WriteLog "Running $($actionId) on $package" -Background LightPink
 
-                $variables = @{ package=$package; version=$installed; }
+                $variables = @{ dataRows=@($dataRow); }
             }
 
             $isInternalCommand = $action.Command -is [ScriptBlock]  # if it's not an external process then handle it right away (causes hang on long op)
@@ -5176,7 +5184,7 @@ Function global:ExecuteAction {
             $taskProcessDone = $process.StartWithLogging($true, $true)
 
             $reportLocals = @{
-                dataRow=$dataRow;
+                # dataRow=$dataRow;
                 process=$process;
                 logFrom=$logFrom;
                 functionContext=$FunctionContext;
