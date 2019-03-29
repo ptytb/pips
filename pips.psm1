@@ -126,9 +126,9 @@ $global:ActionCommands = @{
             WriteLog ($json.files -join ([Environment]::NewLine))
         } };
         update        = @{ Command='CondaExe'; Args={ ('update', '--prefix', (py 'Path'), '--yes', (verbosity), $package) } };
-        install       = @{ Command='CondaExe'; Args={ ('install', (Get-PipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--yes', (verbosity), '--no-shortcuts', $package) } };
-        install_dry   = @{ Command='CondaExe'; Args={ ('install', (Get-PipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--dry-run', (verbosity), $package) } };
-        install_nodeps= @{ Command='CondaExe'; Args={ ('install', (Get-PipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--yes', (verbosity), '--no-shortcuts', '--no-deps', '--no-update-dependencies', $package) } };
+        install       = @{ Command='CondaExe'; Args={ ('install', (GetPipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--yes', (verbosity), '--no-shortcuts', $package) } };
+        install_dry   = @{ Command='CondaExe'; Args={ ('install', (GetPipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--dry-run', (verbosity), $package) } };
+        install_nodeps= @{ Command='CondaExe'; Args={ ('install', (GetPipsSetting 'CondaChannels' -AsArgs -First), '--prefix', (py 'Path'), '--yes', (verbosity), '--no-shortcuts', '--no-deps', '--no-update-dependencies', $package) } };
         uninstall     = @{ Command='CondaExe'; Args={ ('uninstall', '--prefix', (py 'Path'), '--yes', (verbosity), $package) } };
         deps_reverse  = @{ Command='CondaExe'; Args={ ('search', <#'--json',#> '--reverse-dependency', (verbosity), $package) }; <# PostprocessOutput={
             WriteLog ($output `
@@ -545,7 +545,7 @@ Function global:DeleteCurrentInterpreter() {
     }
 }
 
-Function global:Get-PipsSetting($name, [switch] $AsArgs, [switch] $First) {
+Function global:GetPipsSetting($name, [switch] $AsArgs, [switch] $First) {
     switch ($name)
     {
         "CondaChannels" {
@@ -1167,7 +1167,7 @@ Function global:GetCondaJsonAsync([bool] $outdatedOnly) {
     if ($outdatedOnly) {
         $null = $arguments.Add('search')
         $null = $arguments.Add('--outdated')
-        $null = $arguments.Add((Get-PipsSetting 'CondaChannels' -AsArgs -First))
+        $null = $arguments.Add((GetPipsSetting 'CondaChannels' -AsArgs -First))
     } else {
         $null = $arguments.Add('list')
         $null = $arguments.Add('--no-pip')
@@ -4478,7 +4478,7 @@ Function Get-CondaSearchResults($request) {
     #   anaconda = main, free, pro, msys2[windows]
     # --info should give better details but not supported on every conda
     $totalCount = 0
-    $channels = Get-PipsSetting 'CondaChannels'
+    $channels = GetPipsSetting 'CondaChannels'
 
     Function EnsureProperties {
         param($Object, $QueryNameLabel, $Separator = ', ')
