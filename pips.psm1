@@ -1016,7 +1016,7 @@ Function AddButtons {
         AddButton "Sel All Visible" { SetVisiblePackageCheckboxes $true } -Modes @{
                 ([MainFormModes]::AltModeA)=@{Text='Sel conda'; Click={ SetVisiblePackageCheckboxes $true @('conda') ; [System.Threading.Tasks.Task]::FromResult(@{}) }};
                 ([MainFormModes]::AltModeB)=@{Text='Sel pip'; Click={ SetVisiblePackageCheckboxes $true @('pip', 'wheel', 'sdist') ; [System.Threading.Tasks.Task]::FromResult(@{}) }};
-                ([MainFormModes]::AltModeC)=@{Text='Inverse'; Click={ SetVisiblePackageCheckboxes -Inverse ; [System.Threading.Tasks.Task]::FromResult(@{}) }};
+                ([MainFormModes]::AltModeC)=@{Text='Inverse visible'; Click={ SetVisiblePackageCheckboxes -Inverse ; [System.Threading.Tasks.Task]::FromResult(@{}) }};
             };
         AddButton "Select None" { SetAllPackageCheckboxes($false) } ;
         AddButton "Check Deps" ${function:CheckDependencies} -AsyncHandlers ;
