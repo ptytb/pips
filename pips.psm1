@@ -1004,11 +1004,11 @@ Function Add-Input ($handler) {
 
 Function AddButtons {
     $global:WIDGET_GROUP_COMMAND_BUTTONS = @(
-        AddButton "Check Updates" ${function:GetPythonPackages} -AsyncHandlers -Modes @{
+        AddButton "Check Updates" { GetPythonPackages $true } -AsyncHandlers -Modes @{
             ([MainFormModes]::AltModeA)=@{Text='Check conda'; Click={ ; [System.Threading.Tasks.Task]::FromResult(@{}) } }
             ([MainFormModes]::AltModeB)=@{Text='Check pip'; Click={ ; [System.Threading.Tasks.Task]::FromResult(@{}) } }
             };
-        AddButton "List Installed" { GetPythonPackages($false) } -AsyncHandlers -Modes @{
+        AddButton "List Installed" { GetPythonPackages $false } -AsyncHandlers -Modes @{
             ([MainFormModes]::AltModeA)=@{Text='List only conda'; Click={ ; [System.Threading.Tasks.Task]::FromResult(@{}) } }
             ([MainFormModes]::AltModeB)=@{Text='List only pip'; Click={ ; [System.Threading.Tasks.Task]::FromResult(@{}) } }
             ([MainFormModes]::AltModeC)=@{Text='List w/o builtin'; Click={ ; [System.Threading.Tasks.Task]::FromResult(@{}) } }
@@ -4773,40 +4773,46 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
         $null = $allTasks.Add($taskCondaList)
     }
 
-    $continuationAddBuiltinPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
-        param([System.Threading.Tasks.Task] $task)
-        $builtinPackages = $task.Result
-        if ($builtinPackages -eq $null) {
-            throw [Exception]::new("Empty response from builtin packages.")
-        }
-        return [Tuple]::Create($builtinPackages, 'builtin')
-    })
-    $taskGetBuiltinPackages = GetPythonBuiltinPackagesAsync
-    $taskAddBuiltinPackages = $taskGetBuiltinPackages.ContinueWith($continuationAddBuiltinPackages,
-        [System.Threading.CancellationToken]::None,
-        ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
-            [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
-        $global:UI_SYNCHRONIZATION_CONTEXT)
-    $null = $allTasks.Add($taskAddBuiltinPackages)
-
-    # Other packages are packages that were found but do not belong to any other list.
-    # This might happen because of name discrepancies, being a part of package, or improperly uninstalled package
-
-    $continuationGetAndFilterOtherPackages = New-RunspacedDelegate `
-        ([Func[System.Threading.Tasks.Task, object]] ${function:GetPythonOtherPackagesAsync})
+    if (-not $outdatedOnly) {
+        $continuationAddBuiltinPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
+            param([System.Threading.Tasks.Task] $task)
+            $builtinPackages = $task.Result
+            if ($builtinPackages -eq $null) {
+                throw [Exception]::new("Empty response from builtin packages.")
+            }
+            return [Tuple]::Create($builtinPackages, 'builtin')
+        })
+        $taskGetBuiltinPackages = GetPythonBuiltinPackagesAsync
+        $taskAddBuiltinPackages = $taskGetBuiltinPackages.ContinueWith($continuationAddBuiltinPackages,
+            [System.Threading.CancellationToken]::None,
+            ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
+                [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
+            $global:UI_SYNCHRONIZATION_CONTEXT)
+        $null = $allTasks.Add($taskAddBuiltinPackages)
+    }
 
     # WriteLog $allTasks -Background DarkCyan -Foreground Yellow
 
     try {
         $gathered = [System.Threading.Tasks.Task]::WhenAll($allTasks)
 
-        # 'other' packages come last to the party
+        if (-not $outdatedOnly) {
+            # Other packages are packages that were found but do not belong to any other list.
+            # This might happen because of name discrepancies, being a part of the package, or improperly uninstalled package
 
-        $taskAllDone = $gathered.ContinueWith($continuationGetAndFilterOtherPackages,
-            [System.Threading.CancellationToken]::None,
-            ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
-                [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
-            $global:UI_SYNCHRONIZATION_CONTEXT)
+            $continuationGetAndFilterOtherPackages = New-RunspacedDelegate `
+                ([Func[System.Threading.Tasks.Task, object]] ${function:GetPythonOtherPackagesAsync})
+
+            # 'other' packages come last to the party
+
+            $taskAllDone = $gathered.ContinueWith($continuationGetAndFilterOtherPackages,
+                [System.Threading.CancellationToken]::None,
+                ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
+                    [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
+                $global:UI_SYNCHRONIZATION_CONTEXT)
+        } else {
+            $taskAllDone = $gathered
+        }
 
         $taskReport = $taskAllDone.ContinueWith($continuationAllDone,
             [System.Threading.CancellationToken]::None,
