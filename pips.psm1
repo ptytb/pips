@@ -4825,15 +4825,6 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
     }
 
     return $taskReport
-
-    if (-not $outdatedOnly) {
-        $builtinPackages = GetPythonBuiltinPackages
-        Add-PackagesToTable $builtinPackages 'builtin'
-
-
-        $builtinCount = $builtinPackages.Count
-        $otherCount = $otherPackages.Count
-    }
 }
 
 Function global:SetVisiblePackageCheckboxes {
