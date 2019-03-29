@@ -1111,46 +1111,53 @@ Function global:GetPythonBuiltinPackagesAsync() {
 }
 
 Function global:GetPythonOtherPackagesAsync {
-    $delegate = New-RunspacedDelegate([Func[object, object]] {
-        param([object] $locals)
+    param([System.Threading.Tasks.Task] $task)
 
-        $otherLibs = [System.Collections.Generic.List[PSCustomObject]]::new()
-        $path = GetCurrentInterpreter 'Path'
-        $libs = "${path}\Lib\site-packages"
-        $ignore = [regex] '\.dist-info$|\.egg-info$|\.egg$|^__pycache__$'
-        $filter = [regex] '\.py.?$'
+    # array of Tuple[hashtable[] Packages, string Type]
+    [object[]] $tuplesPackagesType = $task.Result
 
-        if (Exists-Directory $libs) {
-            foreach ($item in dir $libs) {
-                if ($item -is [System.IO.DirectoryInfo]) {
-                    if (-not (Exists-File "$libs\$item\__init__.py")) {
-                        continue
-                    }
-                    $packageName = "$item"
-                } elseif ($item -is [System.IO.FileInfo]) {
-                    if ($packageName -notmatch $filter) {
-                        continue
-                    }
-                    $packageName = "$item" -replace $filter,''
-                }
-                if (($packageName -match $ignore) `
-                    -or ((Test-PackageInList $packageName) -ne -1)`
-                    -or ((Test-PackageInList ($packageName -replace '_','-')) -ne -1)) {
+    $notOthers = [System.Collections.Generic.HashSet[string]]::new()
+    foreach ($tuple in $tuplesPackagesType) {
+        $packages, $null = $tuple.Item1, $tuple.Item2
+        foreach ($package in $packages) {
+            $null = $notOthers.Add($package.Package.ToLower().Replace('-','_'))
+        }
+    }
+
+    # WriteLog ($notOthers.GetEnumerator() -join ' ') -Background Yellow
+
+    $otherLibs = [System.Collections.Generic.List[PSCustomObject]]::new()
+    $path = GetCurrentInterpreter 'Path'
+    $libs = "${path}\Lib\site-packages"
+    $ignore = [regex] '\.dist-info$|\.egg-info$|\.egg$|^__pycache__$'
+    $filter = [regex] '\.py.?$'
+
+    if (Exists-Directory $libs) {
+        foreach ($item in Get-ChildItem $libs) {
+            if ($item -is [System.IO.DirectoryInfo]) {
+                if (-not (Exists-File "$libs\$item\__init__.py")) {
                     continue
                 }
-                $null = $otherLibs.Add([PSCustomObject] @{Package=$packageName; Type='other'})
+                $packageName = "$item"
+            } elseif ($item -is [System.IO.FileInfo]) {
+                if ($packageName -notmatch $filter) {
+                    continue
+                }
+                $packageName = "$item" -replace $filter,''
             }
+            if ($packageName -match $ignore) {
+                continue
+            }
+            if ($notOthers.Contains($packageName.ToLower().Replace('-','_'))) {
+                continue
+            }
+
+            $null = $otherLibs.Add([PSCustomObject] @{Package=$packageName; Type='other'})
         }
+    }
 
-        return ,$otherLibs
-    })
-
-    $token = [System.Threading.CancellationToken]::None
-    $options = ([System.Threading.Tasks.TaskCreationOptions]::AttachedToParent)
-    $taskGetOtherPackages = [System.Threading.Tasks.Task]::Factory.StartNew($delegate, @{}, $token, $options,
-        $global:UI_SYNCHRONIZATION_CONTEXT)
-
-    return $taskGetOtherPackages
+    $otherPackages = [Tuple]::Create($otherLibs, 'other')
+    return ,($tuplesPackagesType + $otherPackages)
 }
 
 Function global:GetCondaJsonAsync([bool] $outdatedOnly) {
@@ -4782,38 +4789,36 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
         $global:UI_SYNCHRONIZATION_CONTEXT)
     $null = $allTasks.Add($taskAddBuiltinPackages)
 
-    # other packages are packages that were found but do not belong to any other list
+    # Other packages are packages that were found but do not belong to any other list.
+    # This might happen because of name discrepancies, being a part of package, or improperly uninstalled package
 
-    $continuationAddOtherPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
-        param([System.Threading.Tasks.Task] $task)
-        $otherPackages = $task.Result
-        if ($otherPackages -eq $null) {
-            throw [Exception]::new("Empty response from other packages.")
-        }
-        return [Tuple]::Create($otherPackages, 'other')
-    })
-    $taskGetOtherPackages = GetPythonOtherPackagesAsync
-    $taskAddOtherPackages = $taskGetOtherPackages.ContinueWith($continuationAddOtherPackages,
-        [System.Threading.CancellationToken]::None,
-        ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
-            [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
-        $global:UI_SYNCHRONIZATION_CONTEXT)
-    $null = $allTasks.Add($taskAddOtherPackages)
+    $continuationGetAndFilterOtherPackages = New-RunspacedDelegate `
+        ([Func[System.Threading.Tasks.Task, object]] ${function:GetPythonOtherPackagesAsync})
 
     # WriteLog $allTasks -Background DarkCyan -Foreground Yellow
 
     try {
         $gathered = [System.Threading.Tasks.Task]::WhenAll($allTasks)
-        $taskAllDone = $gathered.ContinueWith($continuationAllDone,
+
+        # 'other' packages come last to the party
+
+        $taskAllDone = $gathered.ContinueWith($continuationGetAndFilterOtherPackages,
             [System.Threading.CancellationToken]::None,
             ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
                 [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
             $global:UI_SYNCHRONIZATION_CONTEXT)
+
+        $taskReport = $taskAllDone.ContinueWith($continuationAllDone,
+            [System.Threading.CancellationToken]::None,
+            ([System.Threading.Tasks.TaskContinuationOptions]::AttachedToParent -bor
+                [System.Threading.Tasks.TaskContinuationOptions]::ExecuteSynchronously),
+            $global:UI_SYNCHRONIZATION_CONTEXT)
+
     } catch [System.AggregateException] {
         WriteLog "One or more tasks have failed" -Background DarkRed
     }
 
-    return $taskAllDone
+    return $taskReport
 
     if (-not $outdatedOnly) {
         $builtinPackages = GetPythonBuiltinPackages
