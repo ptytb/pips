@@ -144,6 +144,15 @@ $global:ActionCommandInheritance = @{
     pip=('wheel', 'sdist', 'builtin', 'other', 'git', 'https');
 }
 
+Function global:RegisterPackageTypes([string] $baseType, [string[]] $types) {
+    if ($global:ActionCommandInheritance.ContainsKey($baseType)) {
+        $global:ActionCommandInheritance[$baseType] = `
+            $global:ActionCommandInheritance[$baseType] + $types
+    } else {
+        $null = $global:ActionCommandInheritance.Add($baseType, $types)
+    }
+}
+
 Function global:GetActionCommand($type, $command) {
     if ($global:ActionCommands.ContainsKey($type) -and $global:ActionCommands.Item($type).ContainsKey($command)) {
         return ,$global:ActionCommands.Item($type).Item($command)
@@ -5111,10 +5120,29 @@ Function global:ExecuteAction {
                         param([switch] $Version, [string] $Separator = ' ')
                         $packages = [System.Collections.Generic.List[string]]::new()
                         foreach ($dataRow in $dataRows) {
-                            if ($Version -and (-not [string]::IsNullOrWhiteSpace($dataRow.Installed))) {
-                                $null = $packages.Add("{0}=={1}" -f ($dataRow.Package,$dataRow.Installed))
+                            $name, $installed, $type = $dataRow.Package, $dataRow.Installed, $dataRow.Type
+
+                            $pluginHookError = $false
+                            foreach ($plugin in $global:plugins) {
+                                $info = $plugin.PackageActionHook($name, $installed, $type,
+                                    (GetCurrentInterpreter 'Version'), (GetCurrentInterpreter 'Bits'),
+                                    ([ref] $pluginHookError))
+
+                                if ($pluginHookError) {
+                                    throw [Exception]::new("Interrupted because of an error produced by plugin $($plugin.GetPluginName())")
+                                    break
+                                }
+
+                                if ($info) {
+                                    $name, $installed, $type = $info.Name, $info.Version, $info.Type
+                                    break  # plugin has returned modified fields in info
+                                }
+                            }
+
+                            if ($Version -and (-not [string]::IsNullOrWhiteSpace($installed))) {
+                                $null = $packages.Add("{0}=={1}" -f ($name, $installed))
                             } else {
-                                $null = $packages.Add($dataRow.Package)
+                                $null = $packages.Add($name)
                             }
                         }
                         $packages = $packages -join $Separator
@@ -5621,7 +5649,11 @@ Function LoadPlugins() {
             ${function:PreparePackageAutoCompletion},
             ${function:Recode})
         [void] $global:plugins.Add($instance)
-        [void] $global:packageTypes.AddRange($instance.GetSupportedPackageTypes())
+        foreach ($pair in $instance.GetSupportedPackageTypes().GetEnumerator()) {
+            $baseType, $pluginTypes = $pair.Key, $pair.Value
+            $null = $global:packageTypes.AddRange($pluginTypes)
+            $null = RegisterPackageTypes $baseType $pluginTypes
+        }
         WriteLog $instance.GetDescription()
     }
 }

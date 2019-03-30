@@ -137,8 +137,8 @@ Provides searching, installing and local caching for packages published at Chris
         return [Irvine]::PluginDescription
     }
 
-    [array] GetSupportedPackageTypes() {
-        return @( [Irvine]::InputPackageType )
+    [hashtable] GetSupportedPackageTypes() {
+        return @{ wheel=@([Irvine]::InputPackageType) }
     }
 
     [System.Collections.ArrayList] GetAllPackageNames() {
@@ -204,7 +204,7 @@ Provides searching, installing and local caching for packages published at Chris
         if (-not [string]::IsNullOrEmpty($location)) {
             return @{
                 'Name'=$location;
-                'Version'=$version;
+                'Version'=[string]::Empty;
                 'Type'=[Irvine]::OutputPackageType;
             }
         } else {
