@@ -4482,6 +4482,7 @@ Function GetCondaSearchResults($request) {
         return 0
     }
     $arch = GetCurrentInterpreter 'Arch'
+    $python_version = "py$((GetCurrentInterpreter 'Version') -replace '\.','')"
 
     # channels [-c]:
     #   anaconda = main, free, pro, msys2[windows]
@@ -4521,6 +4522,11 @@ Function GetCondaSearchResults($request) {
             $item = $_.Value
 
             foreach ($package in $item) {
+                if (($package.PSObject.Properties.Name -contains 'build') -and
+                    ($package.build -notmatch $python_version)) {  # test for py version code like 'py37'
+                    continue
+                }
+
                 $row = $global:dataModel.NewRow()
                 $row.Select = $false
                 $row.Package = $name
