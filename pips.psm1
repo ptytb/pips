@@ -4441,7 +4441,7 @@ Function Store-CheckedPipSearchResults() {
     return ,$selected
 }
 
-Function Get-PipSearchResults($request) {
+Function GetPipSearchResults($request) {
     $pip_exe = GetCurrentInterpreter 'PipExe' -Executable
     if (-not $pip_exe) {
         WriteLog 'pip is not found!'
@@ -4475,7 +4475,7 @@ Function Get-PipSearchResults($request) {
     return $count
 }
 
-Function Get-CondaSearchResults($request) {
+Function GetCondaSearchResults($request) {
     $conda_exe = GetCurrentInterpreter 'CondaExe' -Executable
     if (-not $conda_exe) {
         WriteLog 'conda is not found!'
@@ -4548,7 +4548,7 @@ Function Get-CondaSearchResults($request) {
     return $totalCount
 }
 
-Function Get-GithubSearchResults ($request) {
+Function GetGithubSearchResults ($request) {
     $json = DownloadString ($github_search_url -f [System.Web.HttpUtility]::UrlEncode($request))
     $info = $json | ConvertFrom-Json
     $items = $info.'items'
@@ -4567,7 +4567,7 @@ Function Get-GithubSearchResults ($request) {
     return $count
 }
 
-Function global:Get-PluginSearchResults($request) {
+Function global:GetPluginSearchResults($request) {
     $count = 0
     foreach ($plugin in $global:plugins) {
         $packages = $plugin.GetSearchResults(
@@ -4645,10 +4645,10 @@ Function Get-SearchResults($request) {
         $global:dataModel.ImportRow($row)
     }
 
-    $pipCount = Get-PipSearchResults $request
-    $condaCount = Get-CondaSearchResults $request
-    $pluginCount = Get-PluginSearchResults $request
-    $githubCount = Get-GithubSearchResults $request
+    $pipCount = GetPipSearchResults $request
+    $condaCount = GetCondaSearchResults $request
+    $pluginCount = GetPluginSearchResults $request
+    $githubCount = GetGithubSearchResults $request
 
     $global:dataModel.EndLoadData()
     $dataGridView.EndInit()
