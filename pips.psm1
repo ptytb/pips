@@ -1013,19 +1013,19 @@ Function Add-Input ($handler) {
 
 Function AddButtons {
     $global:WIDGET_GROUP_COMMAND_BUTTONS = @(
-        AddButton "Check Updates" { GetPythonPackages $true } -AsyncHandlers -Modes @{
-            ([MainFormModes]::AltModeA)=@{Text='Check conda'; Click={ ; [System.Threading.Tasks.Task]::FromResult(@{}) } }
-            ([MainFormModes]::AltModeB)=@{Text='Check pip'; Click={ ; [System.Threading.Tasks.Task]::FromResult(@{}) } }
+        AddButton "Check Updates" { GetPythonPackages $true -Pip -Conda } -AsyncHandlers -Modes @{
+            ([MainFormModes]::AltModeA)=@{Text='Check conda'; Click={ GetPythonPackages $true -Conda } }
+            ([MainFormModes]::AltModeB)=@{Text='Check pip'; Click={ GetPythonPackages $true -Pip } }
             };
-        AddButton "List Installed" { GetPythonPackages $false } -AsyncHandlers -Modes @{
-            ([MainFormModes]::AltModeA)=@{Text='List only conda'; Click={ ; [System.Threading.Tasks.Task]::FromResult(@{}) } }
-            ([MainFormModes]::AltModeB)=@{Text='List only pip'; Click={ ; [System.Threading.Tasks.Task]::FromResult(@{}) } }
-            ([MainFormModes]::AltModeC)=@{Text='List w/o builtin'; Click={ ; [System.Threading.Tasks.Task]::FromResult(@{}) } }
+        AddButton "List Installed" { GetPythonPackages $false -Pip -Conda -Builtin -Other } -AsyncHandlers -Modes @{
+            ([MainFormModes]::AltModeA)=@{Text='List conda'; Click={ GetPythonPackages $false -Conda } }
+            ([MainFormModes]::AltModeB)=@{Text='List pip'; Click={ GetPythonPackages $false -Pip } }
+            ([MainFormModes]::AltModeC)=@{Text='List builtin'; Click={ GetPythonPackages $false -Builtin } }
             };
         AddButton "Sel All Visible" { SetVisiblePackageCheckboxes $true } -Modes @{
-                ([MainFormModes]::AltModeA)=@{Text='Sel conda'; Click={ SetVisiblePackageCheckboxes $true @('conda') ; [System.Threading.Tasks.Task]::FromResult(@{}) }};
-                ([MainFormModes]::AltModeB)=@{Text='Sel pip'; Click={ SetVisiblePackageCheckboxes $true @('pip', 'wheel', 'sdist') ; [System.Threading.Tasks.Task]::FromResult(@{}) }};
-                ([MainFormModes]::AltModeC)=@{Text='Inverse visible'; Click={ SetVisiblePackageCheckboxes -Inverse ; [System.Threading.Tasks.Task]::FromResult(@{}) }};
+                ([MainFormModes]::AltModeA)=@{Text='Sel conda'; Click={ SetVisiblePackageCheckboxes $true @('conda') }};
+                ([MainFormModes]::AltModeB)=@{Text='Sel pip'; Click={ SetVisiblePackageCheckboxes $true @('pip', 'wheel', 'sdist') }};
+                ([MainFormModes]::AltModeC)=@{Text='Inverse visible'; Click={ SetVisiblePackageCheckboxes -Inverse }};
             };
         AddButton "Deselect" { SetAllPackageCheckboxes $false } ;
         AddButton "Check Deps" ${function:CheckDependencies} -AsyncHandlers ;
@@ -4703,7 +4703,7 @@ Function global:AddPackagesToTable {
     $global:dataModel.EndLoadData()
 }
 
-Function global:GetPythonPackages($outdatedOnly = $true) {
+Function global:GetPythonPackages($outdatedOnly = $true, [switch] $Pip, [switch] $Conda, [switch] $Builtin, [switch] $Other) {
     ClearRows
     InitPackageUpdateColumns $global:dataModel
     $global:outdatedOnly = $outdatedOnly
@@ -4731,7 +4731,7 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
     $allTasks = [System.Collections.Generic.List[System.Threading.Tasks.Task[object]]]::new()
 
     $python_exe = GetCurrentInterpreter 'PythonExe' -Executable
-    if ($python_exe) {
+    if ($python_exe -and $Pip) {
         # Func [Task[string], Tuple`2[System.Management.Automation.PSObject, System.String]]
         $continuationParsePipOutput = New-RunspacedDelegate ([Func[System.Threading.Tasks.Task, object]] {
             param([System.Threading.Tasks.Task] $task)
@@ -4770,7 +4770,7 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
     }
 
     $conda_exe = GetCurrentInterpreter 'CondaExe' -Executable
-    if ($conda_exe) {
+    if ($conda_exe -and $Conda) {
         $continuationAddCondaPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
             param([System.Threading.Tasks.Task] $task)
             $condaPackages = $task.Result
@@ -4788,7 +4788,7 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
         $null = $allTasks.Add($taskCondaList)
     }
 
-    if (-not $outdatedOnly) {
+    if ((-not $outdatedOnly) -and $Builtin) {
         $continuationAddBuiltinPackages = New-RunspacedDelegate([Func[System.Threading.Tasks.Task, object]] {
             param([System.Threading.Tasks.Task] $task)
             $builtinPackages = $task.Result
@@ -4811,7 +4811,7 @@ Function global:GetPythonPackages($outdatedOnly = $true) {
     try {
         $gathered = [System.Threading.Tasks.Task]::WhenAll($allTasks)
 
-        if (-not $outdatedOnly) {
+        if ((-not $outdatedOnly) -and $Other) {
             # Other packages are packages that were found but do not belong to any other list.
             # This might happen because of name discrepancies, being a part of the package, or improperly uninstalled package
 
