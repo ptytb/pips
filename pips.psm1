@@ -3550,7 +3550,7 @@ class DocView {
             }.GetNewClosure())
 
         $this.docView.add_KeyDown({
-            if ($_.KeyCode -eq 'Escape') {
+            if ($_.KeyCode -in ('Escape', 'Q')) {
                 $self.formDoc.Close()
             }
             if ($_.KeyCode -eq 'Enter') {
