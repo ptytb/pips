@@ -26,6 +26,7 @@ $global:outdatedOnly = $true
 $global:interpreters = $null
 $global:autoCompleteIndex = $null
 $Global:interpretersComboBox = $null
+$global:widgetStateTransition = [WidgetStateTransition]::new()
 
 enum InstallAutoCompleteMode {
   Name;
@@ -2871,7 +2872,7 @@ Function CreateMainForm {
     $interpreters = $Script:interpreters
     $trackDuplicateInterpreters = $Script:trackDuplicateInterpreters
 
-    $alternateFunctionality_WidgetStateTransition = [WidgetStateTransition]::new()
+    $alternateFunctionality_WidgetStateTransition = $global:widgetStateTransition
 
     $form.add_KeyDown({
         if ($Global:interpretersComboBox.Focused) {
@@ -5004,7 +5005,7 @@ Function global:SelectPipAction($actionName) {
 }
 
 Function global:WidgetStateTransitionForCommandButton($button) {
-    $widgetStateTransition = [WidgetStateTransition]::new()
+    $widgetStateTransition = $global:widgetStateTransition
 
     $RequestUserAppExit = [System.Windows.Forms.FormClosingEventHandler] {
         param([object] $Sender, [System.Windows.Forms.FormClosingEventArgs] $EventArgs)
