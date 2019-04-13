@@ -291,6 +291,7 @@ $global:EM_SETEVENTMASK = [int] ($WM_USER + 69);
 $global:WM_CHAR = [int] 0x0102
 $global:WM_SCROLL = [int] 276
 $global:WM_VSCROLL = [int] 277
+$global:VK_SPACE = [int] 0x20
 $global:VK_BACKSPACE = [int] 0x08
 $global:SB_LINEUP = [int] 0x00
 $global:SB_LINEDOWN = [int] 0x01
@@ -1631,7 +1632,8 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
         $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
         $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::Suggest
 
-        $null = PostMessage $cb.Handle $WM_CHAR 0x20 0  # write space...
+        $null = $cb.Select($cb.TextLength, 0)
+        $null = PostMessage $cb.Handle $WM_CHAR $VK_SPACE 0  # write space...
         $null = PostMessage $cb.Handle $WM_CHAR $VK_BACKSPACE 0  # and erase it to trigger completion pop-up
     })
 
@@ -1723,7 +1725,8 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
                 $cb.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::SuggestAppend
                 $cb.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
 
-                $null = PostMessage $cb.Handle $WM_CHAR 0x20 0  # write space...
+                $null = $cb.Select($cb.TextLength, 0)
+                $null = PostMessage $cb.Handle $WM_CHAR $VK_SPACE 0  # write space...
                 $null = PostMessage $cb.Handle $WM_CHAR $VK_BACKSPACE 0  # and erase it to trigger completion pop-up
             }
 
