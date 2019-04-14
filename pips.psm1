@@ -186,6 +186,38 @@ Function global:HasUpperChars([string] $text) {
         { $HasUpperChars }
 }
 
+Function global:EnsureProperties {
+    param($Object, $QueryNameLabel, $Separator = ', ')
+
+    if (($Object -eq $null) -or ($Object -isnot [PSCustomObject])) {
+        return [string]::Empty
+    }
+
+    $result = [System.Text.StringBuilder]::new()
+
+    $enumerator = $QueryNameLabel.GetEnumerator()
+    $null = $enumerator.MoveNext()
+    while ($enumerator.Current) {
+        $NameLabel = $enumerator.Current
+        $hasNext = $enumerator.MoveNext()
+        ($PropertyName, $Label) = ($NameLabel.Key, $NameLabel.Value)
+
+        if (($Object.PSObject.Properties.Name -contains $PropertyName) -and
+            (-not ([string]::IsNullOrWhiteSpace($Object."$PropertyName")))) {
+            if (-not [string]::IsNullOrEmpty($Label)) {
+                $null = $result.Append($Label)
+                $null = $result.Append(': ')
+            }
+            $null = $result.Append($Object."$PropertyName")
+            if ($hasNext) {
+                $null = $result.Append($Separator)
+            }
+        }
+    }
+
+    return $result.ToString()
+}
+
 Function global:Sort-Versions {
     param($MaybeVersions, [switch] $Descending)
     [version] $none = [version]::new()
@@ -387,19 +419,14 @@ public static void StopProgram(int pid, CtrlTypes signal)
 }
 '@
 
-Function global:TryTerminateGracefully([System.Diagnostics.Process] $process) {
-    [Console.TerminateGracefully]::StopProgram($process.Id, [Console.TerminateGracefully+CtrlTypes]::CTRL_C_EVENT)
-    if ($process.HasExited) {
-        return
+Function global:TryTerminateGracefully($pid) {
+    trap {
+        continue
     }
-    [Console.TerminateGracefully]::StopProgram($process.Id, [Console.TerminateGracefully+CtrlTypes]::CTRL_BREAK_EVENT)
-    if ($process.HasExited) {
-        return
-    }
-    try {
-        $process.StandardInput.Close()
-    } catch { }
-    $process.Kill()
+    WriteLog "Sent Ctrl-C to $pid"
+    [Console.TerminateGracefully]::StopProgram($pid, [Console.TerminateGracefully+CtrlTypes]::CTRL_C_EVENT)
+    WriteLog "Sent Ctrl-Break to $pid"
+    [Console.TerminateGracefully]::StopProgram($pid, [Console.TerminateGracefully+CtrlTypes]::CTRL_BREAK_EVENT)
 }
 
 
@@ -3936,6 +3963,7 @@ class ProcessWithPipedIO {
                 $this._process.StandardInput.Close()
             } catch { }
             $this._pid = $this._process.Id
+            $null = $global:widgetStateTransition.AddProcess($this._pid)
         } else {
             $this._ConfirmExit([Exception]::new("Failed to start process $($this._command): $exceptionMessage"))
         }
@@ -4027,6 +4055,8 @@ class ProcessWithPipedIO {
 
                                 $self._processOutputEnded = $true
                                 $self._processErrorEnded = $true
+                            } else {
+                                $null = $global:widgetStateTransition.AddProcess($self._pid)
                             }
 
                             $self._hasFinished = $actuallyDead
@@ -4088,6 +4118,7 @@ class ProcessWithPipedIO {
         $delegate = New-RunspacedDelegate ([Action[object]] {
             param([object] $locals)
             $self = $locals.self
+            $global:widgetStateTransition.RemoveProcess($self._pid)
             $exception = $locals.exception
             if (($exception -ne $null) -or ($self._exitCode -eq -1)) {
                 $null = $self._taskCompletionSource.TrySetException([Exception]::new($exception))
@@ -4127,7 +4158,7 @@ class ProcessWithPipedIO {
     Kill() {
         $this._process.CancelOutputRead()
         $this._process.CancelErrorRead()
-        TryTerminateGracefully($this._process)
+        TryTerminateGracefully $this._pid
     }
 
     hidden [int] _FlushContainerToLog($container, $color) {
@@ -4191,11 +4222,13 @@ class WidgetStateTransition {
     hidden [System.Collections.Generic.List[System.Windows.Forms.Control]] $_controls
     hidden [System.Collections.Generic.HashSet[Action]] $_actions
     hidden [System.Collections.Generic.Stack[object]] $_modes
+    hidden [hashtable] $_processes
 
     WidgetStateTransition () {
         $this._states = [System.Collections.Generic.Stack[hashtable]]::new()
         $this._controls = [System.Collections.Generic.List[System.Windows.Forms.Control]]::new()
         $this._modes = [System.Collections.Generic.Stack[object]]::new()
+        $this._processes = @{}
     }
 
     [WidgetStateTransition] Add([System.Windows.Forms.Control] $control) {
@@ -4263,7 +4296,20 @@ class WidgetStateTransition {
         while ($this._states.Count -gt 0) {
             $null = $this.Reverse()
         }
+
+        foreach ($pid in $this._processes.Keys) {
+            $p = try { [System.Diagnostics.Process]::GetProcessById($pid) } catch { $null }
+            if ($p) {
+                $p.Dispose()
+                $p = $null
+                TryTerminateGracefully $pid
+            }
+        }
+        $null = $this._processes.Clear()
+
         $this.Progress(0)
+        $global:statusLabel.Text = [string]::Empty
+
         return $this
     }
 
@@ -4405,6 +4451,55 @@ class WidgetStateTransition {
         _Progress($value)
         return $this
     }
+
+    [WidgetStateTransition] RemoveProcess($pid) {
+        $null = $this._processes.Remove($pid)
+        return $this
+    }
+
+    [WidgetStateTransition] AddProcess($pid) {
+        $p = try { [System.Diagnostics.Process]::GetProcessById($pid) } catch { $null }
+        if ($p) {
+            $info = @{
+                Path=$p.Path;
+                TotalMilliseconds=$p.TotalProcessorTime.TotalMilliseconds;
+                Timestamp=([datetime]::Now);
+                WorkingSet=$p.WorkingSet;
+            }
+
+            $p.Dispose()
+            $p = $null
+        } else {
+            return $this
+        }
+
+        if (-not $this._processes.ContainsKey($pid)) {
+            $null = $this._processes.Add($pid, $info)
+        } else {
+            $prevInfo = $this._processes[$pid]
+
+            $cpu = ((($info.TotalMilliseconds - $prevInfo.TotalMilliseconds) /
+                    (($info.Timestamp - $prevInfo.Timestamp).TotalMilliseconds)) * 100)
+
+            $status = [PSCustomObject] @{
+                Path=$info.Path;
+                CPU=("{0}%" -f [math]::Round($cpu, 0));
+                WorkingSet=("{0} MB" -f [math]::Round($info.WorkingSet / 1048576, 1))
+            }
+
+            $processInfo = EnsureProperties $status @{
+                Path='';
+                CPU='CPU';
+                WorkingSet='memory';
+            }
+
+            $global:statusLabel.Text = $processInfo
+
+            $null = $this._processes[$pid] = $info
+        }
+
+        return $this
+    }
 }
 
 
@@ -4493,27 +4588,6 @@ Function GetCondaSearchResults($request) {
     # --info should give better details but not supported on every conda
     $totalCount = 0
     $channels = GetPipsSetting 'CondaChannels'
-
-    Function EnsureProperties {
-        param($Object, $QueryNameLabel, $Separator = ', ')
-
-        if (($Object -eq $null) -or ($Object -isnot [PSCustomObject])) {
-            return [string]::Empty
-        }
-
-        $result = [System.Collections.Generic.List[string]]::new()
-
-        foreach ($NameLabel in $QueryNameLabel.GetEnumerator()) {
-            ($PropertyName, $Label) = ($NameLabel.Key, $NameLabel.Value)
-
-            if (($Object.PSObject.Properties.Name -contains $PropertyName) -and
-                (-not ([string]::IsNullOrWhiteSpace($Object."$PropertyName")))) {
-                $null = $result.Add([string]::Concat($Label, ': ', $Object."$PropertyName"))
-            }
-        }
-
-        return $result -join $Separator
-    }
 
     foreach ($channel in $channels) {
         WriteLog "Searching on channel: $channel ... " -NoNewline
