@@ -370,8 +370,9 @@ public class RichTextBoxEx : System.Windows.Forms.RichTextBox
     }
 }
 '@ -ReferencedAssemblies 'System.Windows.Forms.dll','System.ComponentModel.Primitives'
-$global:RichTextBox_t = [RichTextBoxEx]
+$global:RichTextBox_t = if ($global:FRAMEWORK_IS_CORE) { [Windows.Forms.RichTextBox] } else { [RichTextBoxEx] }
 
+write-host "core? $global:FRAMEWORK_IS_CORE"
 
 $null = Add-Type -Name TerminateGracefully -Namespace Console -MemberDefinition @'
 // https://stackoverflow.com/questions/813086/can-i-send-a-ctrl-c-sigint-to-an-application-on-windows
@@ -762,6 +763,14 @@ $global:_WritePipLogBacklog = [System.Collections.Generic.List[hashtable]]::new(
 [System.Threading.SpinLock] $global:_LogViewCriticalSection = [System.Threading.SpinLock]::new($false)
 [LogVerbosity] $global:_LogVerbosity = [LogVerbosity]::Normal
 
+Function global:EnsureColor($color) {
+    if ($color -is [Drawing.Color]) {
+        return $color
+    } else {
+        return [Drawing.Color]::FromKnownColor($color)
+    }
+}
+
 Function global:WriteLogHelper {
     param(
         [object[]] $Lines,
@@ -823,10 +832,10 @@ Function global:WriteLogHelper {
         if (($Background -ne $null) -or ($Foreground -ne $null)) {
             $logView.Select($logFrom, $logTo - $logFrom)
             if ($Background -ne $null) {
-                $logView.SelectionBackColor = $Background
+                $logView.SelectionBackColor = (EnsureColor $Background)
             }
             if ($Foreground -ne $null) {
-                $logView.SelectionColor = $Foreground
+                $logView.SelectionColor = (EnsureColor $Foreground)
             }
         }
 
@@ -2033,7 +2042,7 @@ source:name==version | github_user/project@tag | C:\git\repo@tag
 
 Function global:RequestUserString($message, $title, $default, $completionItems = $null, [ref] $ControlKeysState) {
     $Form                            = New-Object system.Windows.Forms.Form
-    $Form.ClientSize                 = '421,247'
+    $Form.ClientSize                 = New-Object System.Drawing.Size 421,247
     $Form.text                       = $title
     $Form.TopMost                    = $false
     $Form.SizeGripStyle = [System.Windows.Forms.SizeGripStyle]::Hide
@@ -2077,8 +2086,8 @@ Function global:RequestUserString($message, $title, $default, $completionItems =
     $TextBox1.Text = $default
     if ($completionItems) {
         $autoCompleteStrings = New-Object System.Windows.Forms.AutoCompleteStringCollection
-        $autoCompleteStrings.AddRange($completionItems)
-        $TextBox1.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::Suggest
+        $null = $autoCompleteStrings.AddRange($completionItems)
+        #$TextBox1.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::Suggest
         $TextBox1.AutoCompleteSource = [System.Windows.Forms.AutoCompleteSource]::CustomSource
         $TextBox1.AutoCompleteCustomSource = $autoCompleteStrings
     }
