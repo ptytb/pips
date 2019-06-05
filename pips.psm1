@@ -1,7 +1,8 @@
 ﻿$PSDefaultParameterValues['*:Encoding'] = 'UTF8'
 $null = Set-StrictMode -Version latest
 
-$global:FRAMEWORK_VERSION = [version]([Runtime.InteropServices.RuntimeInformation]::FrameworkDescription -replace '^.[^\d.]*','')
+$global:FRAMEWORK_VERSION = [version]([Runtime.InteropServices.RuntimeInformation]::FrameworkDescription -replace '^.[^\d.]*(\d+(?:\.\d+)+).*$','$1')
+$global:FRAMEWORK_IS_CORE = [Runtime.InteropServices.RuntimeInformation]::FrameworkDescription -match '.Net Core'
 
 $global:PIPS_SPELLING_PIPE = 'pips_spelling_server'
 $pypi_url = 'https://pypi.python.org/pypi/'
@@ -368,7 +369,7 @@ public class RichTextBoxEx : System.Windows.Forms.RichTextBox
         }
     }
 }
-'@ -ReferencedAssemblies 'System.Windows.Forms.dll'
+'@ -ReferencedAssemblies 'System.Windows.Forms.dll','System.ComponentModel.Primitives'
 $global:RichTextBox_t = [RichTextBoxEx]
 
 
